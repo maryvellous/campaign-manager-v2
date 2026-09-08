@@ -6,7 +6,7 @@ Questa roadmap descrive l'ordine di costruzione della v2 e i gate che impediscon
 
 La priorità iniziale è **V0.1 — Campaign Manager locale**.
 
-Le versioni successive restano intenzionalmente ad alto livello finché la V0.1 non è stabile.
+Le versioni successive possono avere specifiche progettuali già approvate, ma non devono essere implementate prima che la fase precedente superi il proprio gate.
 
 La v2 non deve ereditare automaticamente né il codice né l'interfaccia del progetto precedente.
 
@@ -654,67 +654,107 @@ V0.1 è completa solo se:
 - smoke test desktop passa;
 - non esistono bug noti che possono perdere dati;
 - nessun falso `saved` è possibile;
-- PRODUCT.md, architecture.md, ROADMAP.md, DESIGN_DIRECTION.md e UI_UX_SPEC_V01.md sono coerenti col codice reale;
+- PRODUCT.md, architecture.md, ROADMAP.md, DESIGN_DIRECTION.md, UI_UX_SPEC_V01.md e le altre specifiche normative V0.1 applicabili sono coerenti col codice reale;
 - UI e UX sono validate come nuova esperienza, non come reskin della v1.
 
 ---
 
 # V0.2 — Lavagna locale
 
-Da dettagliare solo dopo il gate V0.1.
+Fonte normativa: `docs/BOARD_SPEC.md`.
 
-Obiettivo:
+## Obiettivo
 
 ```text
 crea board
 → aggiungi contenuti
 → organizza
+→ collega note/estratti
 → salva
 → chiudi
 → riapri
 ```
 
-La UX della board verrà progettata come workspace specifico, non semplicemente aggiunta dentro l'editor note.
+La board è un workspace specifico, freeform e semplice, non un mini-Foundry.
+
+### Include
+
+- formato `*.board.json` versionato;
+- boardId stabile;
+- sei strumenti master;
+- immagini, testo, token, card note/estratti e collegamenti;
+- import asset automatico e portabile;
+- z-order, lock, gruppi semplici;
+- undo/redo, autosave, recovery e conflitti;
+- visibilità preparata che servirà alla futura proiezione live.
+
+### Gate V0.2
+
+Prima della V0.3:
+
+- board create/edit/save/reopen affidabili;
+- nessun path esterno fragile;
+- card da estratto non espongono Markdown privato;
+- asset mancanti non fanno crashare la board;
+- stato `saved` reale;
+- i requisiti `BRD-*` locali superano test/acceptance applicabili.
 
 ---
 
 # V0.3 — Sessione live web
 
-Da dettagliare dopo V0.2 con `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md`.
+Fonti normative:
 
-Obiettivo:
+- `docs/BOARD_SPEC.md` per la proiezione pubblica della board;
+- `docs/LIVE_SESSION_SPEC.md` per lifecycle, join, participant e UX;
+- `docs/PROTOCOL_SPEC.md` per transport, ordering, snapshot e sicurezza del protocollo.
+
+## Obiettivo
 
 ```text
 desktop
 → avvia live session
-→ pubblica board/scena
-→ relay
-→ browser client
-→ sincronizzazione affidabile
+→ giocatori entrano dal browser
+→ waiting state
+→ pubblica/cambia board
+→ snapshot + eventi realtime
+→ token/ping autorizzati
+→ reconnect
+→ termina in sicurezza
 ```
 
-Decisioni già approvate che V0.3 deve rendere possibili:
+### Decisioni fissate
 
-- il client web standalone è pienamente utilizzabile senza Discord;
-- il browser standalone può entrare tramite un **session join code**;
-- il join code del browser è un concetto distinto dal futuro pairing code master↔Discord Activity;
-- la board/scena condivisa è la superficie principale del giocatore;
-- prima della pubblicazione il giocatore vede uno stato di attesa semplice;
-- il client riceve soltanto stato esplicitamente pubblicato dal DM;
-- il controllo dei token è autorizzato e validato lato autorevole;
-- reconnect e snapshot devono essere progettati senza dipendere dall'Embedded App SDK.
+- una sola live session attiva per desktop;
+- un solo host DM, nessun co-DM/handoff V0.3;
+- browser standalone senza account obbligatorio;
+- session join code `ABCD-EFGH`, rotabile;
+- nuovi ingressi bloccabili;
+- relay autorevole soltanto sullo stato runtime accettato;
+- una sola board visibile alla volta, più board preservabili nella stessa sessione;
+- elementi privati non inviati;
+- asset caricati solo quando devono diventare pubblici;
+- token move validato server-side;
+- participant resume tramite snapshot;
+- host disconnect → freeze + 10 minuti di grace;
+- host timeout → sessione chiusa senza scrivere automaticamente la board;
+- chiusura volontaria → scelta esplicita sulle posizioni finali token;
+- protocollo HTTPS + WSS, ticket monouso, `stateSeq`, snapshot come recovery;
+- nessun replay/event log cloud obbligatorio.
 
 ### Gate V0.3
 
-Prima di iniziare V0.4 deve esistere un flusso standalone funzionante:
+Prima della V0.4 devono passare almeno i quality gate `LIVE-QA-*` e `PRO-QA-*`, incluso:
 
 ```text
-browser
-→ entra nella live session
-→ waiting state / board pubblicata
-→ riceve aggiornamenti
-→ può compiere soltanto azioni autorizzate
-→ reconnect senza corrompere lo stato
+1 desktop
++ 8 player simultanei
++ join/reconnect
++ switch tra 3 board
++ token autorizzati/non autorizzati
++ host disconnect/reconnect
++ resync snapshot
++ end session
 ```
 
 Discord non può essere usato per mascherare lacune del protocollo o del relay.
@@ -723,32 +763,42 @@ Discord non può essere usato per mascherare lacune del protocollo o del relay.
 
 # V0.4 — Discord Activity
 
-Fonte progettuale: `docs/DISCORD_ACTIVITY_SPEC.md`.
+Fonti normative:
 
-Il client web funzionante viene adattato al Discord Embedded App SDK.
+- `docs/DISCORD_ACTIVITY_SPEC.md`;
+- `docs/LIVE_SESSION_SPEC.md`;
+- `docs/PROTOCOL_SPEC.md`.
 
-Decisioni già approvate:
+## Obiettivo
 
-- l'Activity è **il tavolo del giocatore**, non un mini Campaign Manager;
-- dentro Discord i giocatori entrano tramite il normale flusso per unirsi alla stessa Activity instance;
-- l'`instanceId` Discord identifica il contesto dell'istanza Activity, non il canale vocale come session ID applicativo;
-- ai giocatori non viene chiesto un codice nel flusso Discord normale;
-- il master associa una volta la live session desktop all'istanza Discord tramite **pairing code breve, temporaneo e monouso**;
-- il relay mantiene il binding runtime `instanceId ↔ liveSessionId`;
-- presenza nell'Activity non concede automaticamente accesso o permessi;
-- la validità dell'istanza e le azioni significative vengono verificate server-side;
-- Discord resta un adapter della Activity, non il fondamento del prodotto o del protocollo live.
+```text
+DM abbina Activity instance alla live session
+→ giocatori fanno Unisciti all'attività
+→ nessun codice giocatore
+→ stessa esperienza live della V0.3
+```
+
+### Decisioni fissate
+
+- Activity = tavolo del giocatore, non mini Campaign Manager;
+- join nativo tramite Activity instance/`instanceId`;
+- canale vocale non usato come session ID;
+- pairing master `ABC-DEF`, monouso, 10 minuti;
+- binding runtime `instanceId ↔ liveSessionId`;
+- identity Discord verificata → participant runtime;
+- Activity del master non è l'host;
+- chiudere la Activity del master non chiude la sessione;
+- fine dell'istanza Discord non chiude il desktop live;
+- nuova istanza richiede nuovo pairing;
+- stessa board/protocollo/permessi del web standalone;
+- player UI responsiva e focalizzata sulla board;
+- browser standalone continua a funzionare senza Discord.
 
 ### Gate V0.4
 
-La Discord Activity è pronta quando:
+Devono passare i criteri `ACT-*` e tutti i regression gate V0.3.
 
-- più utenti che si uniscono alla stessa istanza raggiungono la stessa live session associata;
-- il master esegue il pairing una sola volta per quell'istanza/sessione;
-- pairing code consumati/scaduti non sono riutilizzabili;
-- un'istanza non associata non riceve dati privati della campagna;
-- i giocatori non devono conoscere ID tecnici o scegliere manualmente la campagna;
-- il browser standalone continua a funzionare senza Discord.
+Discord deve ridurre il numero di passaggi necessari al giocatore, non introdurre una seconda lobby.
 
 ---
 
