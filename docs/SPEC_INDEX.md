@@ -2,9 +2,9 @@
 
 ## Scopo
 
-Questo file è il punto di ingresso normativo per progettazione e implementazione.
+Punto di ingresso normativo per progettazione e implementazione.
 
-Un agente deve partire da qui, individuare versione/area interessata e leggere le specifiche applicabili prima di modificare codice o prodotto.
+Un agente deve leggere prima la specifica della versione/area che sta implementando e non anticipare infrastruttura di versioni future.
 
 ---
 
@@ -13,194 +13,183 @@ Un agente deve partire da qui, individuare versione/area interessata e leggere l
 In caso di conflitto:
 
 1. decisioni esplicite più recenti approvate dall'utente;
-2. **`docs/V01_OPERATIONAL_SPEC.md` per qualunque comportamento V0.1**;
-3. `docs/V01_PRODUCT_DECISIONS.md`;
-4. specifica verticale più specifica (`UI_UX`, `DOMAIN`, `STORAGE`, `SEARCH`, `BOARD`, `LIVE`, `PROTOCOL`, `DISCORD`);
-5. `PRODUCT.md`;
-6. `architecture.md`;
-7. `ROADMAP.md`;
-8. `docs/FOUNDATION_GUARDRAILS.md`;
-9. `docs/DESIGN_DIRECTION.md`;
-10. mock/reference artifact.
+2. specifica operativa della versione/area interessata;
+3. specifica verticale più specifica;
+4. `PRODUCT.md`;
+5. `architecture.md`;
+6. `ROADMAP.md`;
+7. `FOUNDATION_GUARDRAILS.md`;
+8. design direction e mock.
 
-Una contraddizione non si risolve inventando un terzo comportamento. Le specifiche più recenti possono anche **semplificare** una soluzione tecnica precedente quando conservano il comportamento di prodotto.
+Per la V0.1, `docs/V01_OPERATIONAL_SPEC.md` prevale sulle formulazioni storiche più complesse o vaghe.
 
 ---
 
-# 2. Costituzione del prodotto
+# 2. Costituzione
 
 ## `PRODUCT.md`
 
-Scopo, utenti, local-first, anti-lock-in e confini generali.
+Scopo, local-first, prodotto DM/player e confini generali.
 
 ## `architecture.md`
 
-Moduli, dipendenze e separazione tra dati persistenti, stato live e UI.
+Confini tra UI, filesystem, board, live, relay, Discord, IA e Compendio.
 
-La struttura repository mostrata è una direzione, non un obbligo a creare package vuoti. V0.1 mantiene un application layer **logico**; la sua collocazione fisica viene scelta durante l'implementazione senza attraversare i confini architetturali.
+Le tecnologie cloud elencate sono implementazioni previste, non dogmi di dominio.
 
 ## `ROADMAP.md`
 
-Ordine di costruzione e gate delle versioni. Le specifiche normative prevalgono sui vecchi riassunti quando una fase è stata progettata più in dettaglio.
+Ordine di costruzione in pochi goal verticali. Le sotto-attività sono checklist, non obbligo di creare micro-progetti o micro-layer.
 
 ---
 
-# 3. Contratto operativo V0.1
+# 3. V0.1 — Campaign Manager locale
 
 ## `docs/V01_OPERATIONAL_SPEC.md`
 
-È la fonte integrata della V0.1.
+Fonte normativa integrata V0.1 per lifecycle, note/cartelle, Markdown/wikilink, save/recovery/conflict, rename/move/trash, search, graph, errori e Windows gate.
 
-Definisce:
+Contiene anche la regola anti-over-engineering: niente transaction framework generico, package vuoti, frontmatter applicativo o optimization gate non misurati.
 
-- ownership applicativa senza imporre package/layer cerimoniali;
-- open/init/switch/close campagna e copie con `CampaignId` duplicato;
-- draft note e titolo automatico 1–3 parole;
-- tab, folder CRUD, Markdown e wikilink;
-- frontmatter preservato ma **non interpretato come metadata applicativo V0.1**;
-- safe save, recovery semplice e conflitti esterni;
-- rename/move con **repair record minimale**, non transaction engine generale;
-- trash tramite cestino;
-- Recenti/Preferiti/sidebar filter;
-- Search centrale e command palette;
-- graph filtering e layout senza persistenza manuale obbligatoria;
-- Settings minime;
-- errori, keyboard, Windows gate;
-- stress test grandi separati dai gate di release.
+## Verticali
 
-Prefisso: `OPS-*`.
+- `docs/V01_PRODUCT_DECISIONS.md`
+- `docs/UI_UX_SPEC_V01.md`
+- `docs/DOMAIN_MODEL.md`
+- `docs/STORAGE_SPEC.md`
+- `docs/SEARCH_SPEC.md`
+- `docs/DESIGN_DIRECTION.md`
 
-Un goal V0.1 deve citare questa specifica oltre alle verticali applicabili.
+Il **Compendio funzionale non appartiene alla V0.1**; la shell può però mostrare la sua schermata WIP neutra secondo `COMPENDIUM_SPEC.md`. Il placeholder non introduce networking o dataset.
 
 ---
 
-# 4. Specifiche verticali V0.1
-
-## `docs/V01_PRODUCT_DECISIONS.md`
-
-Auto-init, copia/ID duplicato, draft note, titolo automatico, rename titolo, wikilink, ricerca centrale, supporto Windows.
-
-## `docs/UI_UX_SPEC_V01.md`
-
-Shell, layout, navigation model, editor/lettura, inspector, search, command palette, graph, save states, panels, keyboard e accessibilità.
-
-## `docs/DOMAIN_MODEL.md`
-
-`CampaignId`, `NoteId`, `FolderId`, `NoteRevision`, note/cartelle, wikilink/backlink, rename/move, trash, conflict e graph projection.
-
-## `docs/STORAGE_SPEC.md`
-
-`campaign.json`, filesystem, safe write, revision, watcher, recovery, preferences, repair metadata, trash, migration ed errori storage.
-
-Quando la formulazione storica parla di operation journal generico, prevale la soluzione minimale definita da `OPS-MOVE-*`.
-
-## `docs/SEARCH_SPEC.md`
-
-Indice derivato, ranking, rebuild, aggiornamenti incrementali e command provider.
-
-La V0.1 indicizza titolo/path/corpo; **alias e altri campi frontmatter non sono feature V0.1**.
-
-## `docs/DESIGN_DIRECTION.md`
-
-Palette, gerarchia, graph colors, forme e motion. I numeri visuali restano default verificabili quando non cambiano la semantica.
-
----
-
-# 5. Board V0.2
+# 4. V0.2 — Board
 
 ## `docs/BOARD_SPEC.md`
 
-Board locale e proiezione live futura: formato, strumenti, elementi, asset, card da estratti note, token, z-order/groups/lock, visibilità, salvataggio e casi limite.
+Definisce board locale, sei strumenti, asset, card da estratti, token, visibilità, prepared/live separation e casi limite.
 
-Prefisso: `BRD-*`.
+Decisione corrente token:
+
+- un giocatore può controllare più token;
+- un token ha al massimo un controller giocatore alla volta;
+- il DM controlla sempre tutti i token.
 
 ---
 
-# 6. Live V0.3
+# 5. V0.3 — Live web standalone
 
 ## `docs/LIVE_SESSION_SPEC.md`
 
-Lifecycle sessione web standalone, identity/join/resume, board switching, asset, token, reconnect, host disconnect e session end.
+Lifecycle, join code web, participants, board switching, asset, token, reconnect, host timeout e fine sessione.
 
-Prefisso: `LIVE-*`.
+**Non contiene Discord pairing.**
 
 ## `docs/PROTOCOL_SPEC.md`
 
-Contratto realtime desktop/relay/player: transport, auth/ticket, versioning, snapshot/resync, comandi, errori e asset.
+HTTPS/WSS, runtime validation, `stateSeq`, snapshot/resync, comandi stretti, autorizzazione e privacy.
 
-Prefisso: `PRO-*`.
+Sono intenzionalmente non normativi finché non misurati:
+
+- frequenza preview;
+- batching in millisecondi;
+- rate-limit numerici;
+- durata precisa dei ticket/URL asset;
+- cache generica di idempotenza.
+
+V0.3 non richiede event sourcing o replay cloud.
 
 ---
 
-# 7. Discord V0.4
+# 6. V0.4 — Discord Activity
 
 ## `docs/DISCORD_ACTIVITY_SPEC.md`
 
-Activity come tavolo del giocatore, Activity instance join, pairing master-only e Discord come adapter del modello live generico.
+Discord è un adapter della live V0.3.
 
-Prefisso: `ACT-*`.
+V0.4 possiede:
 
-Quando un dettaglio è già definito da Live/Protocol, Discord lo eredita invece di crearne una variante.
+- Activity instance;
+- pairing master-only;
+- identity Discord verificata;
+- ingresso giocatori senza codice.
+
+Il browser standalone resta indipendente dall'Embedded App SDK.
 
 ---
 
-# 8. Compendio e fondazione futura
+# 7. Compendio
 
 ## `docs/COMPENDIUM_SPEC.md`
 
-Contratto del compendio sostituibile. L'esistenza della spec non promuove la feature in V0.1.
+Direzione approvata:
+
+```text
+oggi
+Compendio → schermata WIP, nessun backend
+
+futuro
+Compendio → enciclopedia cloud → Copia nelle note
+```
+
+La copia futura crea normale Markdown locale indipendente dalla fonte cloud.
+
+Non sono più normative le vecchie progettazioni premature su fixture locali, SQLite, tassonomie universali, localizzazioni, manifest o schema multi-ruleset. Queste decisioni verranno prese contro il servizio/dataset reale.
+
+---
+
+# 8. Futuro EcoGDR e integrazioni
 
 ## `docs/FOUNDATION_GUARDRAILS.md`
 
-Guardrail EcoGDR futuri senza introdurre account/auth/sync prematuramente.
+Mantiene soltanto agganci minimi:
+
+- local-first;
+- `externalBinding` opzionale futuro;
+- adapter ai bordi;
+- niente auth/sync/API premature;
+- Compendio cloud indipendente dalla campagna locale.
 
 ---
 
 # 9. Mappa area → fonti
 
-| Area | Fonti normative |
+| Area | Fonti |
 |---|---|
-| lifecycle campagna V0.1 | Operational + Storage + UI/UX |
-| note/draft/titolo | Operational + Product Decisions + Domain + Storage |
-| cartelle | Operational + Domain + Storage + UI/UX |
-| Markdown/frontmatter | Operational + Domain |
-| wikilink/backlink | Operational + Domain + UI/UX |
-| save/recovery/conflict | Operational + Storage + UI/UX |
-| rename/move/trash | Operational + Domain + Storage |
-| recenti/preferiti | Operational + UI/UX + Storage |
-| search/command palette | Operational + Search + UI/UX |
+| lifecycle/note/cartelle V0.1 | Operational + Domain + Storage + UI/UX |
+| Markdown/wikilink | Operational + Domain + UI/UX |
+| save/recovery/conflict | Operational + Storage |
+| search | Operational + Search + UI/UX |
 | graph | Operational + Domain + UI/UX + Design |
-| architettura V0.1 | Operational + architecture |
 | board | Board Spec |
-| live session | Live Session + Board |
-| protocollo realtime | Protocol + Live Session |
-| Discord | Discord Activity + Live/Protocol |
-| compendio | Compendium Spec |
+| live web | Live Session + Protocol + Board |
+| Discord | Discord Activity + Live + Protocol |
+| Compendio | Compendium Spec |
+| EcoGDR futuro | Foundation Guardrails |
 
 ---
 
-# 10. Documenti ancora da produrre
+# 10. Documenti futuri
 
-Non serve una `WIKILINK_SPEC.md` per sbloccare V0.1.
+Produrre soltanto quando la roadmap li promuove:
 
-Restano da produrre solo quando la roadmap li promuove:
+- `docs/AI_SPEC.md` prima della V0.5;
+- specifiche personaggi/EcoGDR quando diventano feature reali;
+- specifica dati/API del Compendio quando esiste il vero servizio cloud.
 
-1. `docs/AI_SPEC.md` prima della V0.5;
-2. specifiche personaggi/EcoGDR/integrations quando diventano feature reali;
-3. addendum tecnici solo se l'implementazione scopre un problema non coperto.
+Non creare spec tecniche per sistemi ipotetici solo per “future-proofing”.
 
 ---
 
-# 11. Regola anti-over-engineering per i goal
+# 11. Regola per i goal
 
-Un goal deve implementare il **minimo design che soddisfa i requisiti approvati**.
+Un goal deve citare solo le specifiche della versione corrente e le dipendenze realmente necessarie.
 
-Non deve creare framework generici, package vuoti, astrazioni future o ottimizzazioni preventive solo perché la documentazione descrive un concetto separato.
-
-Se una soluzione semplice soddisfa i contract test e conserva i confini di responsabilità, è preferibile a una soluzione più generalizzata.
+Se una specifica futura sembra necessaria per implementare una feature corrente, verificare prima se si sta introducendo over-engineering.
 
 ---
 
 ## Regola finale
 
-La documentazione è sufficiente quando l'agente deve decidere **come scrivere il codice**, ma non deve sentirsi obbligato a costruire infrastruttura che il prodotto non usa.
+La documentazione è sufficiente quando chi implementa deve decidere **come scrivere il codice**, non inventare il prodotto — ma non deve nemmeno costruire oggi infrastruttura per un prodotto futuro ancora indefinito.
