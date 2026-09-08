@@ -8,6 +8,7 @@ Il prodotto deve rendere semplice:
 
 - organizzare note, luoghi, PNG, fazioni, quest e materiale di campagna;
 - collegare le informazioni tra loro tramite wikilink;
+- esplorare le relazioni tra note tramite una vista grafo derivata dai wikilink;
 - usare lavagne visive con mappe, note e token;
 - condividere con i giocatori solo ciò che serve durante una sessione live;
 - interrogare la propria campagna tramite un assistente IA senza perdere il controllo sui dati o sulle modifiche.
@@ -51,10 +52,11 @@ L'esperienza ideale è:
 
 1. apre una cartella di campagna;
 2. crea o modifica contenuti;
-3. prepara una lavagna;
-4. avvia una sessione;
-5. decide cosa mostrare ai giocatori;
-6. chiude l'app senza dover gestire infrastruttura tecnica.
+3. esplora collegamenti e relazioni tra note;
+4. prepara una lavagna;
+5. avvia una sessione;
+6. decide cosa mostrare ai giocatori;
+7. chiude l'app senza dover gestire infrastruttura tecnica.
 
 ### Giocatori
 
@@ -116,6 +118,7 @@ Responsabilità principali:
 - wikilink;
 - metadati;
 - ricerca;
+- vista grafo delle relazioni tra note;
 - lavagne;
 - token;
 - strumenti di sessione;
@@ -173,6 +176,18 @@ Il sistema deve distinguere chiaramente tra:
 - indice di ricerca.
 
 L'indice di ricerca è sempre derivato e ricostruibile.
+
+### Vista grafo
+
+Il grafo della V0.1 è una vista derivata dalle note e dai wikilink, non un database separato della campagna.
+
+- i nodi rappresentano note;
+- le relazioni derivano dai wikilink risolti;
+- filtri, posizione della camera e disposizione visuale sono stato UI/preferenze locali;
+- trascinare un nodo non modifica il contenuto delle note;
+- il grafo deve poter essere ricostruito dai dati autorevoli.
+
+I comportamenti UI/UX dettagliati sono normati da `docs/UI_UX_SPEC_V01.md`.
 
 ---
 
@@ -370,7 +385,8 @@ Esempi:
 - tab selezionato;
 - pannello attivo;
 - zoom;
-- sidebar.
+- sidebar;
+- camera, filtri e selezione del grafo.
 
 Queste categorie non devono essere fuse in un unico store globale.
 
@@ -420,6 +436,7 @@ apri campagna
 → naviga note
 → crea/modifica
 → wikilink
+→ ricerca o esplora nel grafo
 → salva
 → chiudi
 → riapri senza perdere nulla
@@ -430,11 +447,14 @@ Include:
 - shell desktop;
 - filesystem;
 - note;
-- editor;
-- wikilink;
-- ricerca base.
+- editor/lettura;
+- wikilink e backlink;
+- ricerca base;
+- command palette;
+- graph view derivata dai wikilink;
+- recovery e gestione conflitti locali.
 
-Esclude esplicitamente Discord, realtime e IA.
+Esclude esplicitamente Discord, realtime, cloud sync e IA.
 
 ### v0.2 — Lavagne
 
