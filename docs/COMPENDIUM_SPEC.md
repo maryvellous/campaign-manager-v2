@@ -18,9 +18,26 @@ Principio:
 
 # 2. UI attuale: placeholder reale, non finta feature
 
-## CMP-NOW-001 — Voce Compendio
+## CMP-NOW-001 — Voce Compendio nel rail
 
-Il Campaign Manager può esporre una destinazione `Compendio` nella navigazione principale.
+`Compendio` è una destinazione stabile del rail principale.
+
+Ordine previsto del gruppo di navigazione contenuti:
+
+```text
+Note
+Ricerca
+Grafo
+Compendio
+Recenti
+Preferiti
+...
+Impostazioni
+```
+
+`Compendio` viene quindi dopo `Grafo` e prima di `Recenti`.
+
+Questa è un'estensione successiva della shell V0.1 e prevale sul vecchio elenco del rail che non includeva ancora il Compendio.
 
 Aprirla mostra una schermata neutra equivalente a:
 
@@ -56,7 +73,7 @@ Un problema futuro del Compendio non deve impedire di aprire e usare una campagn
 
 ## CMP-HOOK-001 — Vista stabile
 
-La route/view `Compendio` deve poter essere mantenuta quando arriverà il servizio reale, così l'utente non cambia modello mentale.
+La route/view `Compendio` viene mantenuta quando arriverà il servizio reale, così l'utente non cambia modello mentale.
 
 ## CMP-HOOK-002 — Confine applicativo futuro
 
@@ -196,11 +213,12 @@ Nessuna di queste decisioni è requisito per il placeholder attuale.
 
 Per la fase placeholder basta verificare che:
 
-1. `Compendio` apra una schermata WIP chiara;
-2. nessuna chiamata di rete venga fatta;
-3. la presenza del placeholder non interferisca con la campagna locale;
-4. la vista possa in futuro ricevere un service/client senza riscrivere la shell;
-5. non esista un dataset finto da mantenere.
+1. `Compendio` sia raggiungibile dal rail nella posizione approvata;
+2. apra una schermata WIP chiara;
+3. nessuna chiamata di rete venga fatta;
+4. la presenza del placeholder non interferisca con la campagna locale;
+5. la vista possa in futuro ricevere un service/client senza riscrivere la shell;
+6. non esista un dataset finto da mantenere.
 
 ---
 
