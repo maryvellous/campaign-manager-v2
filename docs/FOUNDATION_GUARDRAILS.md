@@ -2,9 +2,7 @@
 
 ## Scopo
 
-Questo documento fissa **solo i vincoli minimi da rispettare oggi** per evitare di dover riprogettare il Campaign Manager quando, in futuro, verrà collegato all'ecosistema EcoGDR.
-
-Non descrive EcoGDR e non introduce feature EcoGDR nella V0.1.
+Questo documento fissa soltanto i vincoli minimi che evitano di chiudere porte future senza costruire oggi feature speculative.
 
 Regola generale:
 
@@ -12,213 +10,98 @@ Regola generale:
 
 ---
 
-## 1. Campaign Manager resta local-first
+# 1. Local-first resta il fondamento
 
-Nelle versioni attuali il Campaign Manager deve funzionare come applicazione locale autonoma.
+Nelle versioni attuali il Campaign Manager funziona come applicazione locale autonoma.
 
-Non si introducono adesso:
+Non si introducono per anticipazione:
 
 - account EcoGDR;
-- login o autenticazione EcoGDR;
-- token o sessioni account;
-- sincronizzazione cloud della campagna;
-- elenco campagne remoto;
-- permessi EcoGDR;
+- login/auth EcoGDR;
+- token/sessioni account;
+- sync cloud della campagna;
+- campagne remote;
+- permessi remoti;
 - pubblicazione verso EcoGDR;
 - dipendenze runtime da servizi EcoGDR.
 
-Queste funzioni verranno progettate quando EcoGDR avrà contratti reali e stabili.
-
-La cartella locale della campagna resta la fonte autorevole per note, preparazione, bozze, asset locali e altri contenuti privati del DM.
+La cartella locale resta autorevole per i contenuti privati del DM.
 
 ---
 
-## 2. Una campagna deve poter essere collegata in futuro senza migrazione
+# 2. Binding remoto futuro opzionale
 
-Il modello dei metadati della campagna deve lasciare spazio a un'associazione remota opzionale, per esempio:
+Una campagna locale deve poter essere collegata in futuro a un sistema esterno senza essere convertita in un formato cloud proprietario.
+
+Il metadata canonico previsto è genericamente:
 
 ```json
 {
-  "name": "Aephoredya",
-  "ecoGdrCampaignId": "cmp_..."
+  "externalBinding": {
+    "provider": "ecogdr",
+    "campaignId": "cmp_..."
+  }
 }
 ```
 
-Il nome preciso e la struttura definitiva possono cambiare quando esisterà il contratto EcoGDR reale. Il requisito importante è che una normale cartella già usata dal Campaign Manager possa essere associata in seguito a una campagna remota **senza essere ricreata, spostata o convertita in un formato cloud proprietario**.
+La struttura può evolvere quando esisterà il contratto reale.
 
-La presenza di un identificatore remoto non deve avere effetti impliciti sui file locali.
-
-In particolare:
+Vincoli:
 
 - collegare non significa sincronizzare;
 - collegare non significa pubblicare;
-- collegare non cambia la fonte autorevole delle note private;
-- rimuovere o perdere il collegamento remoto non deve rendere inutilizzabile la campagna locale.
+- il binding non cambia l'autorità dei file locali;
+- perdere/rimuovere il binding non rende inutilizzabile la campagna.
 
 ---
 
-## 3. EcoGDR deve restare fuori dal core
+# 3. Integrazioni fuori dal core
 
-Il dominio del Campaign Manager non deve dipendere da SDK, API client, modelli HTTP o dettagli interni di EcoGDR.
+SDK, HTTP client e modelli EcoGDR non entrano nel dominio locale.
 
-Quando l'integrazione arriverà, dovrà essere introdotta dietro interfacce o adapter applicativi dedicati.
+Quando serviranno, vivranno dietro piccoli adapter/service applicativi.
 
-Forma concettuale:
-
-```text
-Campaign Manager core
-        ↑
-   contratto locale
-        ↑
-EcoGDR adapter futuro
-        ↑
- EcoGDR API / SDK
-```
-
-Il core può conoscere l'esistenza di un identificatore esterno opzionale nei metadati, ma non deve conoscere come autenticarsi, interrogare o sincronizzare EcoGDR.
-
-Se EcoGDR cambia tecnologia, il dominio locale del Campaign Manager non deve essere riscritto.
+Se il servizio esterno cambia tecnologia, editor, vault e dominio locale non devono essere riscritti.
 
 ---
 
-# Compendio
+# 4. Compendio futuro
 
-## 4. Il compendio è una funzione locale reale
+La direzione aggiornata del Compendio è definita in `docs/COMPENDIUM_SPEC.md`.
 
-Il Campaign Manager deve poter offrire un compendio di regolamenti base anche prima che esista il database condiviso di EcoGDR.
+Il Compendio sarà una **enciclopedia cloud consultabile**. Oggi non costruiamo una sorgente locale temporanea.
 
-Per la prima implementazione è accettabile usare:
+Guardrail minimi:
 
-- fixture versionate;
-- file JSON locali;
-- SQLite locale;
-- altro database temporaneo semplice.
+- la shell può già avere la vista/route `Compendio` come placeholder WIP;
+- nessun database o networking è richiesto finché il vero servizio non esiste;
+- quando arriverà il servizio, la UI parlerà a un piccolo client/service invece di conoscere direttamente il database;
+- le voci reali avranno ID stabili non basati sul titolo;
+- `Copia nelle note` produrrà normale Markdown locale indipendente dalla fonte cloud;
+- indisponibilità del Compendio non compromette la campagna locale;
+- fonti/licenze verranno definite contro il dataset reale, non inventate oggi.
 
-La scelta fisica iniziale non deve diventare parte del dominio o della UI.
-
----
-
-## 5. Il compendio deve avere una sorgente sostituibile
-
-Il Campaign Manager accede al compendio attraverso un contratto equivalente a un `CompendiumRepository`.
-
-Esempio concettuale:
-
-```ts
-interface CompendiumRepository {
-  getEntry(id: CompendiumEntryId, language: LanguageCode): Promise<CompendiumEntry | null>
-  search(query: string, context: CompendiumContext): Promise<CompendiumEntry[]>
-}
-```
-
-La UI e i use case devono dipendere da questo contratto, non dal formato fisico del database temporaneo.
-
-Il percorso previsto è quindi:
-
-```text
-oggi
-UI / use case
-    ↓
-CompendiumRepository
-    ↓
-fixture / database locale temporaneo
-
-futuro
-UI / use case
-    ↓
-CompendiumRepository
-    ↓
-adapter database condiviso EcoGDR
-```
-
-Sostituire la sorgente dati non deve richiedere di riscrivere la UI o la logica di dominio.
+Non vengono anticipati ora modelli universali di ruleset, lingue, localizzazioni, search schema o API.
 
 ---
 
-## 6. Identità delle regole
+# 5. Cose da non progettare ancora
 
-Le voci del compendio non devono essere identificate tramite il nome visualizzato, il nome italiano o altre stringhe localizzate.
+Finché non esistono contratti reali non si decidono in anticipo:
 
-Ogni voce deve avere un ID stabile indipendente dalla lingua.
-
-Il modello deve distinguere almeno:
-
-- `gameSystem` — sistema di gioco;
-- `ruleset` / `edition` — ruleset o edizione;
-- `source` / `manual` — manuale o pacchetto sorgente;
-- `entryId` — identità stabile della voce;
-- `language` — lingua del contenuto visualizzato.
-
-Esempio concettuale:
-
-```text
-entryId: spell.fireball
-ruleset: dnd5e.2014
-source: srd.2014
-language: it
-name: Palla di Fuoco
-```
-
-La stessa regola in inglese mantiene la stessa identità:
-
-```text
-entryId: spell.fireball
-ruleset: dnd5e.2014
-source: srd.2014
-language: en
-name: Fireball
-```
-
-La lingua modifica la rappresentazione, non l'identità della regola.
-
-Ruleset differenti devono poter avere identità o versioni distinte anche quando il nome visualizzato è simile.
-
----
-
-## 7. Vincoli di implementazione da rispettare fin dalla V0.1
-
-Quando vengono costruiti core, storage e compendio:
-
-1. nessun codice EcoGDR concreto entra nel core;
-2. nessun account o networking EcoGDR viene implementato solo per anticipazione;
-3. `CampaignMetadata` deve poter accogliere in futuro un binding remoto opzionale senza migrazione distruttiva del vault;
-4. il compendio viene letto tramite repository/adapter;
-5. gli ID del compendio sono stabili e non localizzati;
-6. ruleset/edizione, sorgente e lingua sono dimensioni esplicite;
-7. fixture o database temporanei sono considerati implementazioni sostituibili;
-8. la UI non deve conoscere né interrogare direttamente il formato fisico del compendio.
-
----
-
-## 8. Cose da non progettare ancora
-
-Finché EcoGDR non fornisce contratti reali, non si decide in anticipo:
-
-- provider di autenticazione;
-- schema dei token;
-- API di account;
-- API di campagne;
-- formato di sincronizzazione;
-- modello definitivo dei permessi;
+- provider auth;
+- schema token/account;
+- API campagne;
+- sync;
+- permessi remoti;
 - protocollo di pubblicazione;
-- struttura fisica del database condiviso del compendio.
-
-Quando queste parti esisteranno, verranno implementate adattando i bordi già predisposti, non riscrivendo il Campaign Manager.
+- struttura database EcoGDR;
+- API/schema definitivi del Compendio;
+- caching/offline del Compendio;
+- localizzazioni e tassonomie universali.
 
 ---
 
 ## Regola finale
 
-La compatibilità futura è riuscita se possiamo fare entrambe queste cose senza cambiare il dominio principale:
-
-```text
-campagna locale esistente
-→ associazione futura a EcoGDR
-```
-
-```text
-compendio locale temporaneo
-→ compendio condiviso EcoGDR
-```
-
-Se per ottenere uno dei due risultati sarà necessario riscrivere editor, vault, core o UI del compendio, questi guardrail non sono stati rispettati.
+La compatibilità futura è riuscita quando possiamo aggiungere servizi reali ai bordi senza cambiare il modo in cui una campagna locale viene letta, scritta e usata offline.
