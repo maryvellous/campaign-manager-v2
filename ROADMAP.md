@@ -680,27 +680,75 @@ La UX della board verrà progettata come workspace specifico, non semplicemente 
 
 # V0.3 — Sessione live web
 
-Da dettagliare dopo V0.2.
+Da dettagliare dopo V0.2 con `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md`.
 
 Obiettivo:
 
 ```text
 desktop
-→ pubblica board
+→ avvia live session
+→ pubblica board/scena
 → relay
 → browser client
 → sincronizzazione affidabile
 ```
 
-Prima client web standalone, poi Discord.
+Decisioni già approvate che V0.3 deve rendere possibili:
+
+- il client web standalone è pienamente utilizzabile senza Discord;
+- il browser standalone può entrare tramite un **session join code**;
+- il join code del browser è un concetto distinto dal futuro pairing code master↔Discord Activity;
+- la board/scena condivisa è la superficie principale del giocatore;
+- prima della pubblicazione il giocatore vede uno stato di attesa semplice;
+- il client riceve soltanto stato esplicitamente pubblicato dal DM;
+- il controllo dei token è autorizzato e validato lato autorevole;
+- reconnect e snapshot devono essere progettati senza dipendere dall'Embedded App SDK.
+
+### Gate V0.3
+
+Prima di iniziare V0.4 deve esistere un flusso standalone funzionante:
+
+```text
+browser
+→ entra nella live session
+→ waiting state / board pubblicata
+→ riceve aggiornamenti
+→ può compiere soltanto azioni autorizzate
+→ reconnect senza corrompere lo stato
+```
+
+Discord non può essere usato per mascherare lacune del protocollo o del relay.
 
 ---
 
 # V0.4 — Discord Activity
 
+Fonte progettuale: `docs/DISCORD_ACTIVITY_SPEC.md`.
+
 Il client web funzionante viene adattato al Discord Embedded App SDK.
 
-Discord resta un adapter della Activity, non il fondamento del prodotto.
+Decisioni già approvate:
+
+- l'Activity è **il tavolo del giocatore**, non un mini Campaign Manager;
+- dentro Discord i giocatori entrano tramite il normale flusso per unirsi alla stessa Activity instance;
+- l'`instanceId` Discord identifica il contesto dell'istanza Activity, non il canale vocale come session ID applicativo;
+- ai giocatori non viene chiesto un codice nel flusso Discord normale;
+- il master associa una volta la live session desktop all'istanza Discord tramite **pairing code breve, temporaneo e monouso**;
+- il relay mantiene il binding runtime `instanceId ↔ liveSessionId`;
+- presenza nell'Activity non concede automaticamente accesso o permessi;
+- la validità dell'istanza e le azioni significative vengono verificate server-side;
+- Discord resta un adapter della Activity, non il fondamento del prodotto o del protocollo live.
+
+### Gate V0.4
+
+La Discord Activity è pronta quando:
+
+- più utenti che si uniscono alla stessa istanza raggiungono la stessa live session associata;
+- il master esegue il pairing una sola volta per quell'istanza/sessione;
+- pairing code consumati/scaduti non sono riutilizzabili;
+- un'istanza non associata non riceve dati privati della campagna;
+- i giocatori non devono conoscere ID tecnici o scegliere manualmente la campagna;
+- il browser standalone continua a funzionare senza Discord.
 
 ---
 
