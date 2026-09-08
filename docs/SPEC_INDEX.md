@@ -182,7 +182,37 @@ Prefisso requisiti: `SEA-*`.
 
 ---
 
-# 5. Compendio
+# 5. Board
+
+## `docs/BOARD_SPEC.md`
+
+Prima specifica normativa della board V0.2 e della sua proiezione live futura.
+
+Definisce già come decisioni approvate:
+
+- board semplice, non VTT universale;
+- sei strumenti master: Seleziona, Mano, Nota/Testo, Immagine, Token, Collegamento;
+- azioni come duplica, blocca, z-order e raggruppa come controlli contestuali;
+- note del vault aggiunte via drag & drop/comando equivalente;
+- tipi di elemento immagine, testo board, nota collegata, token e collegamento;
+- nessun path persistente verso file esterni alla campagna;
+- drag di file esterno = import automatico nella campagna;
+- rimozione dalla board distinta dalla cancellazione fisica dell'asset;
+- board preparata distinta dalla proiezione live;
+- elementi privati mai inviati al client giocatore;
+- pan/zoom indipendenti, ping e comando master `Porta tutti qui`;
+- token dei giocatori controllabili soltanto con autorizzazione validata;
+- sincronizzazione live tramite snapshot + eventi incrementali, non video streaming;
+- asset pesanti pubblicati separatamente dagli eventi realtime;
+- reconnect tramite snapshot corrente.
+
+Prefisso requisiti: `BRD-*`.
+
+La UX del contenuto pubblico delle card di note collegate resta intenzionalmente aperta finché non viene approvata.
+
+---
+
+# 6. Compendio
 
 ## `docs/COMPENDIUM_SPEC.md`
 
@@ -209,7 +239,7 @@ L'esistenza della specifica non significa che networking o database EcoGDR siano
 
 ---
 
-# 6. Live e Discord
+# 7. Live e Discord
 
 ## `docs/DISCORD_ACTIVITY_SPEC.md`
 
@@ -232,11 +262,9 @@ Definisce già come decisioni approvate:
 
 Prefisso requisiti: `ACT-*`.
 
-La specifica è deliberatamente incompleta sui dettagli che appartengono a V0.3/V0.4 e li elenca come decisioni ancora aperte.
-
 ---
 
-# 7. Design e riferimenti
+# 8. Design e riferimenti
 
 ## `docs/DESIGN_DIRECTION.md`
 
@@ -263,7 +291,7 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 
 ---
 
-# 8. Mappa requisito → livello responsabile
+# 9. Mappa requisito → livello responsabile
 
 | Area | Specifica primaria | Livello principale |
 |---|---|---|
@@ -283,6 +311,9 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 | folder colors | UI/UX + Domain + Design | preferences + UI |
 | cestino | UI/UX + Domain + Storage | application + OS adapter |
 | piattaforma V0.1 | V01 Decisions + Architecture/Storage | Windows adapter + quality gate |
+| board locale | Board Spec | board domain + desktop UI + storage |
+| asset board | Board Spec + future board storage detail | desktop/application + storage |
+| proiezione board live | Board Spec + future Live/Protocol Specs | desktop + relay + player client |
 | compendio | Compendium Spec | repository adapter + application |
 | Discord Activity | Discord Activity Spec | activity client + Discord adapter |
 | pairing Discord | Discord Activity Spec + future Live/Protocol Specs | relay + activity + desktop |
@@ -290,14 +321,14 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 
 ---
 
-# 9. Documenti ancora da produrre
+# 10. Documenti ancora da produrre
 
 Per arrivare al modello "pochi goal, poca interpretazione" mancano soprattutto specifiche verticali delle feature successive o documenti più profondi solo dove l'implementazione dimostrerà che servono.
 
 Ordine consigliato:
 
 1. `docs/WIKILINK_SPEC.md` — solo se il livello di dettaglio in `DOMAIN_MODEL.md` e nel registro decisionale non basta durante l'implementazione;
-2. `docs/BOARD_SPEC.md` — prima della V0.2;
+2. completare `docs/BOARD_SPEC.md` prima della V0.2 con formato persistente e UX ancora aperte;
 3. `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md` — prima della V0.3;
 4. approfondire `docs/DISCORD_ACTIVITY_SPEC.md` contro i contratti live/protocol definitivi prima della V0.4;
 5. `docs/AI_SPEC.md` — prima della V0.5;
@@ -307,7 +338,7 @@ Non creare specifiche dettagliate di versioni lontane soltanto per accumulare do
 
 ---
 
-# 10. Regola per i goal di implementazione
+# 11. Regola per i goal di implementazione
 
 Un goal futuro dovrebbe indicare esplicitamente quali famiglie di requisiti implementa.
 
