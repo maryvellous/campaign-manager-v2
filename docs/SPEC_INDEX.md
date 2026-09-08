@@ -138,6 +138,27 @@ Autorità sulla persistenza locale:
 
 Prefisso requisiti: `STO-*`.
 
+## `docs/SEARCH_SPEC.md`
+
+Autorità sulla ricerca locale e sull'indice derivato:
+
+- distinzione tra filtro sidebar, full-text e command palette;
+- documento indicizzato;
+- normalizzazione query;
+- ranking lessicale;
+- boost titolo/percorso/corpo;
+- snippet e risultati;
+- rebuild completo;
+- aggiornamenti incrementali;
+- revisioni indicizzate;
+- separazione da backlink e graph projection;
+- command action provider;
+- schema/versione dell'indice;
+- errori e recovery;
+- contract test search.
+
+Prefisso requisiti: `SEA-*`.
+
 ---
 
 # 5. Compendio
@@ -206,7 +227,8 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 | rename/move | Domain + Storage + UI/UX | application orchestration |
 | wikilink | Domain | core |
 | backlink | Domain | derived projection |
-| ricerca vault | UI/UX + futura Search Spec | derived index/application |
+| ricerca vault | Search + UI/UX | derived index + application |
+| command palette | Search + UI/UX | application + action registry |
 | graph view | UI/UX + Domain | UI + derived projection |
 | folder colors | UI/UX + Domain + Design | preferences + UI |
 | cestino | UI/UX + Domain + Storage | application + OS adapter |
@@ -217,17 +239,16 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 
 # 8. Documenti ancora da produrre
 
-Per arrivare al modello "pochi goal, poca interpretazione" mancano soprattutto specifiche verticali delle feature successive.
+Per arrivare al modello "pochi goal, poca interpretazione" mancano soprattutto specifiche verticali delle feature successive o documenti più profondi solo dove l'implementazione dimostrerà che servono.
 
 Ordine consigliato:
 
-1. `docs/SEARCH_SPEC.md` — full-text, indice, ranking, rebuild, command palette integration;
-2. `docs/WIKILINK_SPEC.md` — solo se il livello di dettaglio in `DOMAIN_MODEL.md` non basta durante l'implementazione;
-3. `docs/BOARD_SPEC.md` — prima della V0.2;
-4. `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md` — prima della V0.3;
-5. `docs/DISCORD_ACTIVITY_SPEC.md` — prima della V0.4;
-6. `docs/AI_SPEC.md` — prima della V0.5;
-7. eventuali spec personaggi/integrations solo quando la roadmap le promuove.
+1. `docs/WIKILINK_SPEC.md` — solo se il livello di dettaglio in `DOMAIN_MODEL.md` non basta durante l'implementazione;
+2. `docs/BOARD_SPEC.md` — prima della V0.2;
+3. `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md` — prima della V0.3;
+4. `docs/DISCORD_ACTIVITY_SPEC.md` — prima della V0.4;
+5. `docs/AI_SPEC.md` — prima della V0.5;
+6. eventuali spec personaggi/integrations solo quando la roadmap le promuove.
 
 Non creare specifiche dettagliate di versioni lontane soltanto per accumulare documentazione: vanno scritte quando le decisioni di prodotto sono abbastanza reali da essere utili.
 
@@ -240,10 +261,11 @@ Un goal futuro dovrebbe indicare esplicitamente quali famiglie di requisiti impl
 Esempio:
 
 ```text
-Implementa il core note V0.1 secondo:
-- DOMAIN_MODEL.md: DOM-ID-*, DOM-NOTE-*, DOM-LINK-*, DOM-REPO-*
-- STORAGE_SPEC.md: STO-PATH-*, STO-REV-*, STO-WRITE-*
-- UI_UX_SPEC_V01.md solo per gli effetti osservabili coinvolti.
+Implementa ricerca e accesso rapido V0.1 secondo:
+- SEARCH_SPEC.md: SEA-CORE-*, SEA-DOC-*, SEA-RANK-*, SEA-IDX-*, SEA-INC-*, SEA-CMD-*
+- DOMAIN_MODEL.md per NoteId, NoteRevision e wikilink canonici
+- STORAGE_SPEC.md per persistenza, revisioni e cache derivate
+- UI_UX_SPEC_V01.md per comportamento osservabile, focus e navigazione.
 
 Non modificare i contratti approvati per semplificare l'implementazione.
 Se trovi una contraddizione tra specifiche, segnala il requisito coinvolto invece di inventare un comportamento.
