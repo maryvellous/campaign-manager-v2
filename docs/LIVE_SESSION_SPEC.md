@@ -1,688 +1,407 @@
 # Campaign Manager v2 — Live Session Specification
 
-## 1. Scopo e stato
+## 1. Scopo
 
-Questo documento definisce il contratto di prodotto e comportamento della **V0.3 — Sessione live web**.
+Questo documento definisce la **V0.3 — Sessione live web standalone**.
 
-La V0.3 deve funzionare interamente con il client web standalone. La Discord Activity V0.4 riusa lo stesso dominio di sessione, lo stesso relay e lo stesso protocollo aggiungendo Discord come adapter di ingresso e identità.
+La V0.3 deve funzionare senza Discord. La Discord Activity entra soltanto in V0.4 e riusa il modello live già funzionante.
 
-I requisiti con prefisso `LIVE-*` sono vincolanti. `docs/BOARD_SPEC.md` resta autorità sul comportamento della board; `docs/PROTOCOL_SPEC.md` è autorità sul trasporto e sui messaggi realtime.
+Prefisso requisiti: `LIVE-*`.
 
 Principio:
 
-> la campagna resta locale; il relay conserva soltanto lo stato temporaneo necessario a far vivere la sessione.
+> la campagna resta locale; il relay conserva soltanto lo stato temporaneo necessario alla sessione.
 
 ---
 
-# 2. Modello di autorità
+# 2. Autorità
 
-## LIVE-AUTH-001 — Tre livelli distinti
+## LIVE-AUTH-001 — Ruoli distinti
 
-Durante una sessione esistono tre autorità diverse:
+- filesystem del DM: autorevole per campagna, board preparate e asset originali;
+- desktop DM: decide cosa pubblicare e quali permessi assegnare;
+- relay/session backend: autorevole per membership, ordering e stato runtime già accettato;
+- client giocatore: non autorevole.
 
-1. **filesystem locale del DM** — autorevole per campagna, note, board preparate e asset originali;
-2. **desktop DM** — autorevole per ciò che viene pubblicato, per i permessi e per le intenzioni del master;
-3. **relay/session backend** — autorevole per membership, ordering e stato runtime già accettato della sessione.
+Il relay non diventa un database della campagna.
 
-Il relay non diventa il database della campagna e il desktop non può fidarsi delle dichiarazioni provenienti dai client giocatore.
+## LIVE-AUTH-002 — Un solo host
 
-## LIVE-AUTH-002 — Client giocatore non trusted
+V0.3 ha un solo host: il Campaign Manager Desktop che avvia la sessione.
 
-Browser standalone e Discord Activity sono client non autorevoli.
-
-Possono richiedere azioni consentite, ma il relay/session authority valida sempre:
-
-- sessione;
-- identità runtime;
-- stato della sessione;
-- permesso sul token;
-- validità del payload.
-
-## LIVE-AUTH-003 — Un solo host DM
-
-V0.3 ha un solo host autorevole: il Campaign Manager Desktop che ha creato la sessione.
-
-Non sono requisiti V0.3:
+Fuori scope:
 
 - co-DM;
-- passaggio di ownership;
-- host dal browser;
-- sessione che continua autonomamente dopo la chiusura volontaria del desktop.
+- handoff host;
+- host browser;
+- sessione autonoma senza desktop.
 
 ---
 
-# 3. Identità, codici e credenziali
+# 3. Identità e ingresso standalone
 
-## LIVE-ID-001 — `liveSessionId`
+## LIVE-ID-001 — Sessione interna
 
-Ogni sessione ha un `liveSessionId` opaco, casuale e non prevedibile, con almeno 128 bit di entropia.
+Ogni sessione ha un `liveSessionId` opaco e non prevedibile. Non viene usato come codice da digitare.
 
-Non viene mostrato come codice da digitare e non contiene `CampaignId`, nome campagna, timestamp leggibile o altre informazioni semantiche.
+Il desktop riceve una credenziale host/resume separata, non salvata nella campagna.
 
-## LIVE-ID-002 — Credenziale host
+## LIVE-CODE-001 — Join code web
 
-Alla creazione della sessione il backend rilascia al desktop una credenziale host/resume ad alta entropia, distinta dal `liveSessionId`.
-
-La credenziale:
-
-- non viene inviata ai giocatori;
-- non viene scritta nei file della campagna;
-- può essere conservata temporaneamente nell'AppData locale per consentire reconnect dopo crash/disconnessione;
-- viene invalidata alla chiusura definitiva della sessione.
-
-## LIVE-CODE-001 — Session join code standalone
-
-Il client web standalone usa un codice leggibile dall'utente.
-
-Formato V0.3:
+Il browser standalone usa un codice breve e leggibile, per esempio:
 
 ```text
 ABCD-EFGH
 ```
 
-Regole:
+Il codice:
 
-- 8 caratteri utili, separatore visuale escluso;
-- alfabeto maiuscolo non ambiguo, evitando caratteri facilmente confondibili;
-- generazione crittograficamente casuale;
-- valido soltanto per la sessione corrente;
-- può essere ruotato dal DM in qualsiasi momento;
-- il vecchio codice smette immediatamente di accettare nuovi ingressi;
-- i partecipanti già autenticati non vengono espulsi dalla rotazione.
+- vale soltanto per la sessione corrente;
+- può essere ruotato dal DM;
+- smette di accettare nuovi ingressi quando ruotato;
+- non espelle partecipanti già autenticati.
 
-Il codice è un meccanismo di ingresso, non l'identità interna della sessione.
+Il formato esatto può cambiare senza cambiare il prodotto, purché resti breve, non ambiguo e sufficientemente difficile da indovinare.
 
-## LIVE-CODE-002 — Pairing code Discord
+## LIVE-ID-002 — Participant identity
 
-Il pairing desktop ↔ Discord Activity usa un codice distinto:
+Ogni giocatore riceve un `participantId` runtime distinto dal nome visualizzato.
 
-```text
-ABC-DEF
-```
+Dopo il primo ingresso riceve una credenziale di resume valida per quella sessione. Un reconnect valido recupera lo stesso partecipante e i suoi permessi.
 
-Regole:
-
-- 6 caratteri utili;
-- casuale e non prevedibile;
-- monouso;
-- scadenza: 10 minuti;
-- consumato immediatamente dopo pairing riuscito;
-- può essere rigenerato se scade;
-- invalidato alla chiusura della sessione.
-
-Non viene usato dai giocatori per entrare nella sessione.
-
-## LIVE-ID-003 — ParticipantId
-
-Ogni partecipante riceve un `participantId` runtime opaco e stabile per la durata della sessione.
-
-Il `participantId` non coincide con il nome visualizzato e non deve essere ricavato dal nome.
-
-## LIVE-ID-004 — Resume del partecipante
-
-Dopo il primo ingresso un client riceve una credenziale di resume ad alta entropia valida soltanto per quella sessione.
-
-Un reconnect con credenziale valida ripristina lo stesso `participantId`, le assegnazioni token e lo stato di presenza.
-
-La credenziale viene invalidata quando:
-
-- il DM rimuove il partecipante;
-- la sessione termina;
-- il backend la revoca per ragioni di sicurezza.
-
----
-
-# 4. Lifecycle della sessione
-
-## LIVE-LIFE-001 — Una sessione attiva per desktop
-
-V0.3 permette al Campaign Manager Desktop di avere **una sola live session attiva alla volta**.
-
-Tentare di avviarne una seconda porta alla sessione esistente invece di crearne una concorrente.
-
-## LIVE-LIFE-002 — Avvio senza wizard
-
-Il flusso normale è:
-
-```text
-DM → Avvia sessione
-→ backend crea liveSessionId + credenziale host
-→ genera session join code
-→ genera pairing code Discord
-→ sessione aperta
-→ giocatori vedono waiting state finché non viene pubblicata una board
-```
-
-Non è richiesto un wizard di configurazione.
-
-Il titolo mostrato ai giocatori usa per default il nome della campagna; il DM può impostare un titolo sessione opzionale senza rinominare la campagna.
-
-## LIVE-LIFE-003 — Stati principali
-
-Lo stato osservabile della sessione distingue almeno:
-
-- `open` — host online, sessione utilizzabile;
-- `host_reconnecting` — connessione host persa entro la finestra di grazia;
-- `ending` — chiusura in corso;
-- `ended` — sessione terminata e non riapribile.
-
-La presentazione del giocatore è separata:
-
-- `waiting` — nessuna board attualmente pubblicata;
-- `board` — una board è attualmente pubblicata.
-
-## LIVE-LIFE-004 — Blocca nuovi ingressi
-
-Il DM dispone di un controllo `Accetta nuovi giocatori`.
-
-Default: attivo.
-
-Quando disattivato:
-
-- nuovi join standalone vengono rifiutati con stato chiaro;
-- nuovi ingressi Discord non ottengono accesso alla sessione applicativa;
-- i partecipanti già autenticati e i loro reconnect continuano a funzionare.
-
-## LIVE-LIFE-005 — Rotazione del join code
-
-Il DM può generare un nuovo session join code senza interrompere la sessione.
-
-L'azione è utile se il codice è stato condiviso accidentalmente.
-
----
-
-# 5. Ingresso standalone
-
-## LIVE-JOIN-001 — Flusso minimo
-
-Il browser standalone segue:
+## LIVE-JOIN-001 — Flusso web
 
 ```text
 apri client web
-→ inserisci session join code
-→ inserisci/scegli nome visualizzato
+→ inserisci join code
+→ inserisci nome visualizzato
 → entra
 ```
 
-Non è richiesto un account Campaign Manager o EcoGDR.
+Nessun account Campaign Manager/EcoGDR è richiesto.
 
-## LIVE-JOIN-002 — Nome visualizzato
+Nomi duplicati sono ammessi; l'identità reale resta `participantId`.
 
-Il nome standalone:
+## LIVE-JOIN-002 — Nessuna approvazione individuale obbligatoria
 
-- viene trim-mato;
-- deve contenere almeno un carattere visibile;
-- ha lunghezza massima ragionevole definita dal protocollo/UI;
-- non è una credenziale;
-- può essere modificato dal partecipante durante la sessione.
+Con codice valido e ingressi aperti, il giocatore entra direttamente.
 
-Nomi duplicati sono consentiti perché l'identità reale è `participantId`; il desktop deve disambiguarli visivamente quando necessario.
+Il DM vede l'ingresso e può rimuovere il partecipante.
 
-## LIVE-JOIN-003 — Ingresso automatico con codice valido
+## LIVE-JOIN-003 — Blocca nuovi ingressi
 
-V0.3 non richiede approvazione manuale uno-per-uno.
+`Accetta nuovi giocatori` è attivo per default.
 
-Un codice valido e ingressi non bloccati portano direttamente nella sessione pubblica.
+Se disattivato:
 
-Il DM riceve feedback non invasivo quando entra un nuovo partecipante e può rimuoverlo successivamente.
-
-## LIVE-JOIN-004 — Rimozione partecipante
-
-Il DM può usare `Rimuovi dalla sessione`.
-
-L'azione:
-
-- chiude l'accesso runtime del partecipante;
-- invalida la sua credenziale di resume;
-- rimuove le sue assegnazioni token;
-- non modifica board o file della campagna.
-
-Nel client standalone una persona rimossa potrebbe tentare un nuovo ingresso usando ancora un join code valido; se serve impedirlo, il DM blocca nuovi ingressi o ruota il codice.
+- nuovi join vengono rifiutati;
+- partecipanti già autenticati e reconnect validi continuano a funzionare.
 
 ---
 
-# 6. Ingresso Discord V0.4 sopra V0.3
+# 4. Lifecycle
 
-## LIVE-DISCORD-001 — Binding dell'istanza
+## LIVE-LIFE-001 — Una sessione attiva per desktop
 
-Dopo pairing riuscito il relay conserva:
+Un desktop può avere una sola live session attiva alla volta.
+
+## LIVE-LIFE-002 — Avvio semplice
 
 ```text
-Discord instanceId ↔ liveSessionId
+Avvia sessione
+→ crea sessione + join code
+→ waiting state
 ```
 
-Il binding è runtime e non viene scritto in `campaign.json` o nella board.
+Nessun pairing Discord viene creato in V0.3.
 
-## LIVE-DISCORD-002 — Identità Discord
+Il pairing è responsabilità esclusiva della V0.4 e di `DISCORD_ACTIVITY_SPEC.md`.
 
-All'interno di un'istanza associata, l'adapter Discord mappa l'utente Discord verificato a un `participantId` della live session.
+## LIVE-LIFE-003 — Stati minimi
 
-Lo stesso utente che lascia e rientra nella stessa sessione recupera la stessa identità runtime quando possibile.
+Sessione:
 
-## LIVE-DISCORD-003 — Chiusura dell'Activity del master
+- `open`;
+- `host_reconnecting`;
+- `ending`;
+- `ended`.
 
-Dopo il pairing, l'Activity aperta dal master non è l'host autorevole.
+Vista giocatore:
 
-Chiuderla non termina la sessione finché il Campaign Manager Desktop resta connesso.
-
-## LIVE-DISCORD-004 — Fine dell'istanza Discord
-
-Se l'istanza Discord cessa di essere valida o tutti la abbandonano:
-
-- il binding Discord può essere invalidato;
-- la live session desktop resta aperta;
-- il client standalone continua a funzionare;
-- una nuova istanza Discord richiede un nuovo pairing code.
+- `waiting` — nessuna board condivisa;
+- `board` — una board è condivisa.
 
 ---
 
-# 7. Partecipanti, presenza e permessi
+# 5. Partecipanti e token
 
-## LIVE-PART-001 — Stato presenza
+## LIVE-PART-001 — Pannello DM compatto
 
-Il desktop mostra almeno per ogni partecipante:
+Per ogni partecipante il desktop mostra almeno:
 
-- nome visualizzato;
-- sorgente `web` o `discord`;
-- `connected` / `disconnected`;
-- token controllabili;
-- azione per rimuoverlo.
+- nome;
+- connected/disconnected;
+- token assegnati;
+- azione `Rimuovi`.
 
-Non è richiesta una dashboard amministrativa complessa.
+Nessuna dashboard amministrativa complessa.
 
-## LIVE-PART-002 — Permessi V0.3
+## LIVE-PART-002 — Capacità giocatore
 
-Un giocatore può soltanto:
+Un giocatore può:
 
-- vedere stato pubblico corrente;
-- pan/zoom locale;
-- creare ping;
-- muovere token assegnati;
-- usare azioni di visualizzazione esplicitamente offerte dal client, come aprire un'immagine pubblica in grande.
+- vedere stato pubblico;
+- pan/zoom;
+- fare ping;
+- muovere i token assegnati;
+- aprire contenuti pubblici quando previsto.
 
-Non può:
+Non può modificare board, reveal/hide, cambiare scena, assegnare token o accedere al vault.
 
-- creare/modificare/eliminare elementi persistenti;
-- cambiare board;
-- reveal/hide;
-- assegnare token;
-- invitare o rimuovere altri partecipanti;
-- accedere a note private, vault, filesystem o impostazioni DM.
+## LIVE-PART-003 — Ownership semplice dei token
 
-## LIVE-PART-003 — Assegnazione token
-
-L'assegnazione è runtime.
-
-Regole:
+Regole V0.3:
 
 - un partecipante può controllare più token;
-- un token può essere controllato da più partecipanti;
+- **un token può avere al massimo un partecipante-controller alla volta**;
 - il DM può sempre muovere qualunque token;
-- le assegnazioni non vengono scritte nel file `*.board.json`;
-- togliere l'assegnazione ha effetto immediato;
-- nascondere un token ai giocatori sospende di fatto il suo controllo remoto perché il client non riceve più il token.
+- l'assegnazione è stato runtime e non viene salvata nel file board;
+- riassegnare un token sostituisce il controller precedente;
+- token nascosto/non pubblicato non è controllabile dal giocatore.
+
+Questa scelta evita concorrenza multi-player sullo stesso token nella prima versione.
 
 ---
 
-# 8. Board e scene nella sessione
+# 6. Board nella sessione
 
 ## LIVE-BOARD-001 — Una board visibile alla volta
 
-Una live session può usare più board, ma i giocatori vedono una sola board alla volta.
+Una sessione può usare più board, ma i giocatori ne vedono una sola alla volta.
 
-## LIVE-BOARD-002 — Prima pubblicazione di una board
+## LIVE-BOARD-002 — Prima pubblicazione
 
-La prima volta che una board viene pubblicata nella sessione:
+Quando una board viene pubblicata per la prima volta nella sessione:
 
 1. il desktop legge la board preparata;
-2. crea uno stato live specifico per quella sessione/board;
-3. include inizialmente soltanto elementi `visibleByDefault`;
-4. prepara/pubblica gli asset necessari;
-5. il relay rende il nuovo stato corrente;
-6. i client ricevono lo snapshot pubblico.
+2. crea lo stato live della board;
+3. include soltanto gli elementi pubblicabili/visibili;
+4. prepara gli asset necessari;
+5. rende disponibile uno snapshot coerente ai giocatori.
 
-La pubblicazione non invia gli elementi privati.
+Elementi privati non vengono inviati.
 
-## LIVE-BOARD-003 — Stato live per board preservato nella sessione
+## LIVE-BOARD-003 — Stato live preservato
 
-Se il DM passa da Board A a Board B e poi torna ad A, la sessione ripristina lo **stato live di A** già maturato nella stessa sessione:
-
-- posizioni live dei token;
-- reveal/hide correnti;
-- stato pubblico corrente degli elementi.
-
-Non ricrea automaticamente A dalla versione preparata a ogni ritorno.
+A → B → A ripristina lo stato live già maturato di A nella stessa sessione, inclusi reveal/hide e posizioni token.
 
 ## LIVE-BOARD-004 — Reset esplicito
 
-Il DM dispone di `Reimposta live da board preparata`.
+`Reimposta live da board preparata` ricostruisce la board live dalla versione persistente e scarta lo stato runtime specifico della board, previa conferma quando necessario.
 
-L'azione:
+## LIVE-BOARD-005 — Cambio scena atomico
 
-- ricostruisce lo stato live della board dalla versione persistente corrente;
-- scarta reveal/hide e posizioni live specifiche di quella board nella sessione;
-- richiede conferma se comporta perdita evidente di stato live.
-
-## LIVE-BOARD-005 — Cambio board atomico
-
-Il cambio della board corrente non avviene elemento per elemento davanti ai giocatori.
-
-Il client mostra un breve stato `Cambio scena…`/loading e poi applica uno snapshot coerente della nuova board.
-
-La board precedente smette di essere accessibile dal client giocatore salvo futura feature esplicita.
+Durante uno switch il client mostra un breve stato di cambio scena e applica poi uno snapshot coerente della nuova board.
 
 ## LIVE-BOARD-006 — Torna in attesa
 
-Il DM può `Smetti di condividere` senza terminare la sessione.
-
-I giocatori tornano al waiting state; lo stato live della board viene conservato per un eventuale ritorno nella stessa sessione.
-
-## LIVE-BOARD-007 — Edit mentre la board è live
-
-Le regole di `BOARD_SPEC.md` restano valide:
-
-- edit persistente di un elemento pubblico confermato dal desktop → aggiornamento della proiezione live;
-- edit di un elemento privato → resta privato;
-- nuovo elemento → salvato nella board preparata ma nasce privato;
-- movimento token live → modifica la posizione runtime, non automaticamente quella preparata.
+`Smetti di condividere` torna al waiting state senza terminare la sessione e senza perdere lo stato live delle board già usate.
 
 ---
 
-# 9. Pubblicazione asset
+# 7. Asset live
 
-## LIVE-ASSET-001 — Upload solo quando serve
+## LIVE-ASSET-001 — Solo quando servono
 
-Un asset della campagna non viene caricato sullo storage live soltanto perché esiste nella board.
+Un asset viene pubblicato nello storage live soltanto quando un contenuto che lo usa deve essere mostrato ai giocatori.
 
-Viene pubblicato quando un elemento che lo usa deve diventare visibile ai giocatori.
-
-## LIVE-ASSET-002 — Pubblicazione atomica
-
-Per un elemento che richiede un asset:
+## LIVE-ASSET-002 — Reveal dopo disponibilità
 
 ```text
-prepara/upload asset
-→ conferma disponibilità live
-→ pubblica/reveal elemento
+upload/preparazione asset
+→ conferma disponibilità
+→ reveal/pubblicazione elemento
 ```
 
-Se l'upload fallisce, il reveal non viene presentato come riuscito e i giocatori non ricevono un elemento rotto come se fosse stato pubblicato correttamente.
+Se l'asset non è disponibile, il reveal non viene dichiarato riuscito.
 
-## LIVE-ASSET-003 — Deduplicazione
+## LIVE-ASSET-003 — Temporanei
 
-La stessa risorsa già pubblicata nella sessione può essere riutilizzata senza nuovo upload, preferibilmente mediante fingerprint del contenuto.
+Gli asset live sono copie temporanee. Il backend li elimina dopo la sessione secondo una policy operativa ragionevole.
 
-## LIVE-ASSET-004 — Accesso temporaneo
+Non è un requisito di prodotto fissare oggi un numero preciso di ore.
 
-Gli asset live sono riferiti tramite `publishedAssetId` e accesso temporaneo autorizzato.
+## LIVE-ASSET-004 — Deduplicazione non obbligatoria
 
-Le credenziali R2 non raggiungono mai desktop renderer non necessario o client giocatore.
+Riutilizzare un asset già caricato è un'ottimizzazione consentita, non un requisito V0.3.
 
-## LIVE-ASSET-005 — Retention
-
-Gli asset pubblicati sono temporanei rispetto alla sessione.
-
-Dopo la fine della sessione il backend deve poterli eliminare automaticamente; target V0.3: cleanup entro 24 ore dalla chiusura.
-
-Il file originale nella campagna non viene toccato.
+Il comportamento corretto viene prima della deduplicazione.
 
 ---
 
-# 10. Movimento token e ping
+# 8. Movimento e ping
 
 ## LIVE-ACT-001 — Movimento autorizzato
 
-Il client può inviare una richiesta di movimento soltanto per un token ricevuto come controllabile.
+Il client richiede il movimento; il backend verifica sempre che il partecipante sia il controller corrente del token.
 
-Il server valida comunque il permesso.
+## LIVE-ACT-002 — Drag fluido, commit finale
 
-## LIVE-ACT-002 — Drag fluido ma stato finale autorevole
+Gli aggiornamenti intermedi del drag possono essere effimeri/coalesced.
 
-Durante un drag possono essere trasmessi aggiornamenti intermedi coalescibili per fluidità.
+Il rilascio produce la posizione live definitiva accettata dall'autorità di sessione.
 
-L'evento finale di rilascio è il commit della posizione live.
+Se il comando viene rifiutato o la connessione cade, il client converge alla posizione autorevole corrente.
 
-Se un aggiornamento viene rifiutato o la connessione fallisce, il client converge all'ultima posizione confermata dall'autorità di sessione.
+## LIVE-ACT-003 — Ping
 
-## LIVE-ACT-003 — Concorrenza
+Il ping:
 
-Se più controller muovono lo stesso token, vale l'ordine accettato dal relay/session authority.
+- è effimero;
+- non viene salvato;
+- esiste solo con una board condivisa;
+- può essere rate-limited per evitare spam.
 
-Nessun client conserva una propria posizione divergente come fonte autorevole.
-
-## LIVE-ACT-004 — Ping
-
-Il ping è effimero:
-
-- visibile ai partecipanti sulla board corrente;
-- non persiste nella board o nello snapshot durable;
-- durata visuale target: circa 3 secondi;
-- può essere rate-limited;
-- non esiste quando la sessione è in waiting state senza board.
+Durata visiva e soglie precise sono dettagli UI/operativi da tarare.
 
 ---
 
-# 11. Reconnect dei giocatori
+# 9. Reconnect
 
-## LIVE-REC-001 — Participant resume
+## LIVE-REC-001 — Giocatore
 
-La perdita del WebSocket non elimina immediatamente il partecipante.
+La perdita della connessione non elimina immediatamente il partecipante.
 
-Il desktop lo mostra come `disconnected` mantenendo identità e assegnazioni.
+Un resume valido ripristina lo stesso `participantId` e riceve uno snapshot pubblico corrente.
 
-## LIVE-REC-002 — Snapshot, non replay obbligatorio
+Non è richiesto replay completo degli eventi persi.
 
-Al reconnect il client autenticato riceve lo snapshot pubblico **corrente** e il proprio set corrente di permessi/token.
+## LIVE-HOST-001 — Master disconnesso
 
-Non deve ricostruire la sessione riproducendo tutta la cronologia degli eventi persi.
+Se l'host perde la connessione senza terminare volontariamente:
 
-## LIVE-REC-003 — Rejoin senza duplicato
-
-Una credenziale di resume valida riattiva il `participantId` esistente invece di creare `Mary (2)` come nuovo partecipante.
-
----
-
-# 12. Disconnessione del master
-
-## LIVE-HOST-001 — Stato `host_reconnecting`
-
-Se il WebSocket del desktop host cade senza una chiusura volontaria, la sessione entra immediatamente in `host_reconnecting`.
-
-I giocatori mantengono visibile l'ultimo snapshot pubblico ma vedono un'indicazione discreta che il master si sta riconnettendo.
-
-## LIVE-HOST-002 — Sessione congelata
-
-Durante `host_reconnecting`:
-
+- sessione → `host_reconnecting`;
+- ultimo stato pubblico resta visibile;
 - pan/zoom locali continuano;
-- nessun nuovo join viene accettato;
-- token move, ping e altre mutazioni condivise vengono sospesi/rifiutati;
-- lo stato pubblico corrente non viene modificato.
+- nuove mutazioni condivise e nuovi join vengono sospesi.
 
-Questo evita che la sessione continui a evolvere senza il suo unico host autorevole.
+## LIVE-HOST-002 — Finestra di grazia
 
-## LIVE-HOST-003 — Finestra di grazia
+La finestra iniziale è **10 minuti**.
 
-Il desktop ha **10 minuti** per riconnettersi usando la propria credenziale host.
+Se il desktop torna con credenziale valida, riprende la stessa sessione.
 
-Se riesce:
-
-- il backend restituisce lo stato live corrente;
-- il desktop riprende la sessione senza ricrearla;
-- i giocatori tornano allo stato normale;
-- i codici e le assegnazioni restano validi salvo esplicita revoca.
-
-## LIVE-HOST-004 — Timeout host
-
-Se il master non torna entro 10 minuti:
-
-- la sessione termina con motivo `host_timeout`;
-- i client vedono `Sessione terminata`;
-- nessuno stato live viene scritto automaticamente nelle board preparate;
-- credenziali, codici e binding vengono invalidati.
+Se scade, la sessione termina con `host_timeout` senza scrivere automaticamente lo stato live nelle board locali.
 
 ---
 
-# 13. Chiusura volontaria e chiusura app
+# 10. Fine sessione
 
 ## LIVE-END-001 — Fine esplicita
 
-Il desktop offre `Termina sessione`.
+`Termina sessione` chiude definitivamente la sessione.
 
-Prima di terminare definitivamente applica il flusso di salvataggio finale delle posizioni token definito in `BOARD_SPEC.md`.
+Prima della chiusura applica il flusso definito in `BOARD_SPEC.md` per decidere se copiare nella board preparata le posizioni finali dei token.
 
-## LIVE-END-002 — Più board modificate
+## LIVE-END-002 — Chiusura app
 
-Se durante la sessione sono state usate più board con token in posizioni finali diverse da quelle preparate, il dialogo finale elenca soltanto le board con differenze rilevanti.
-
-Per ciascuna board il DM può scegliere se applicare le posizioni finali dei token.
-
-Il dialogo offre almeno:
-
-- `Termina e salva le selezionate`;
-- `Termina senza salvare posizioni`;
-- `Annulla`.
-
-Reveal/hide, ping, presenza, assegnazioni e camera non vengono applicati automaticamente.
-
-## LIVE-END-003 — Chiusura dell'app con sessione attiva
-
-Chiudere volontariamente il Campaign Manager mentre una live session è aperta richiede una scelta esplicita.
-
-Default:
+Con sessione attiva, chiudere volontariamente il desktop richiede:
 
 ```text
-Una sessione live è ancora attiva.
 [Termina sessione e chiudi] [Annulla]
 ```
 
-V0.3 non mantiene la sessione attiva in background dopo la chiusura volontaria del desktop.
+V0.3 non mantiene una sessione live in background dopo la chiusura volontaria dell'app.
 
-## LIVE-END-004 — Invalidazione
+## LIVE-END-003 — Invalidazione
 
-Alla fine definitiva:
+A sessione terminata:
 
-- join code invalidato;
-- pairing code invalidato;
-- credenziale host invalidata;
-- credenziali participant/resume invalidate;
-- binding Discord invalidati;
-- nuovi WebSocket rifiutati;
-- client connessi ricevono `session.ended` prima della chiusura quando possibile.
+- join code non è più valido;
+- credenziali host/participant non sono più valide;
+- nuove connessioni vengono rifiutate;
+- lo stato runtime può essere eliminato dopo il cleanup tecnico necessario.
 
-## LIVE-END-005 — Nessuna session history cloud
-
-V0.3 non introduce una cronologia cloud delle sessioni.
-
-Dopo il periodo tecnico necessario a cleanup/retry, lo stato runtime può essere eliminato dal relay.
+V0.3 non conserva una cronologia cloud della sessione.
 
 ---
 
-# 14. Pannello live del DM
+# 11. Pannello live del DM
 
-## LIVE-UX-001 — Pannello compatto
-
-La gestione live deve essere accessibile senza trasformare il Campaign Manager in una console amministrativa.
-
-Il pannello mostra almeno:
+Contiene almeno:
 
 - stato sessione;
-- session join code + `Copia`;
-- pairing code Discord + scadenza/rigenera;
+- join code + Copia;
 - `Accetta nuovi giocatori`;
-- partecipanti e stato connessione;
-- assegnazioni token;
-- board attualmente condivisa;
-- `Smetti di condividere` / cambio board;
+- partecipanti;
+- token assegnati;
+- board condivisa;
+- cambio board / `Smetti di condividere`;
 - `Porta tutti qui`;
 - `Termina sessione`.
 
-## LIVE-UX-002 — Feedback ingresso
+**Non contiene controlli Discord in V0.3.**
 
-Un nuovo ingresso produce feedback leggero al DM, ad esempio toast + comparsa nella lista partecipanti.
+---
 
-Non interrompe la sessione con un modal.
+# 12. Errori osservabili
 
-## LIVE-UX-003 — Errori non ambigui
-
-Il desktop distingue almeno:
+Il prodotto distingue almeno:
 
 - relay non raggiungibile;
-- sessione scaduta/terminata;
+- sessione terminata/non trovata;
 - host non autorizzato;
-- pubblicazione asset fallita;
-- comando rifiutato;
-- participant disconnected;
+- join bloccato/codice non valido;
+- asset non pubblicabile;
+- comando non consentito;
 - reconnect in corso.
 
+Gli errori di rete non devono compromettere i dati locali della campagna.
+
 ---
 
-# 15. Limiti deliberati V0.3
+# 13. Non-obiettivi V0.3
 
-Non sono parte della prima live session:
-
+- Discord pairing/identity;
 - co-DM/handoff;
 - account giocatore obbligatori;
-- chat testuale;
+- chat;
 - voice/video;
-- dadi;
-- iniziativa;
-- fog of war avanzato;
-- registrazione della sessione;
-- replay eventi;
-- editing collaborativo della board;
-- pubblicazione del vault;
+- dadi/initiative/fog avanzato;
+- replay/registrazione sessione;
+- editing collaborativo;
 - sync EcoGDR;
-- sessione che resta attiva senza desktop host.
+- sessione autonoma senza desktop.
 
 ---
 
-# 16. Target di validazione
+# 14. Validazione minima
 
-## LIVE-QA-001 — Concorrenza minima
+Testare almeno:
 
-La V0.3 deve essere validata con almeno:
-
-- 1 desktop host;
-- 8 client giocatore simultanei;
-- più token controllabili;
-- reconnect di almeno 2 client;
-- switch tra almeno 3 board nella stessa sessione.
-
-Otto client sono un **dataset minimo di test**, non un hard cap di prodotto.
-
-## LIVE-QA-002 — Scenari end-to-end
-
-Devono passare almeno:
-
-1. start session → join web → waiting;
-2. publish board → snapshot corretto;
-3. elemento privato non presente nel payload giocatore;
-4. reveal con asset → upload prima del reveal;
-5. token autorizzato mosso e sincronizzato;
-6. token non autorizzato rifiutato;
-7. participant reconnect → stessa identità;
-8. switch A → B → A → stato live A preservato;
-9. unpublish → waiting → republish;
-10. join code ruotato → vecchio codice rifiutato;
-11. host disconnect → freeze → reconnect entro 10 minuti;
-12. host timeout → session end senza scrivere la board;
-13. fine volontaria → scelta posizioni finali;
-14. client lento/perdita evento → resync tramite snapshot;
-15. sessione terminata → tutte le credenziali non più valide.
+- 1 host + 8 player come fixture di carico, non hard cap;
+- join e rimozione;
+- blocco nuovi ingressi;
+- publish/unpublish/switch di più board;
+- elemento privato assente dal payload player;
+- movimento token autorizzato/non autorizzato;
+- riassegnazione token da un giocatore a un altro;
+- reconnect player tramite snapshot;
+- host disconnect/freeze/reconnect/timeout;
+- fine sessione e scelta posizioni token.
 
 ---
 
 ## Regola finale
 
-Una live session deve sembrare al DM una semplice estensione della board:
+La live session deve sembrare:
 
 ```text
 Avvia sessione
 → fai entrare i giocatori
-→ condividi ciò che vuoi
+→ condividi la board
 → gioca
 → termina
 ```
 
-La complessità di rete, autenticazione, ordering e recovery deve esistere sotto questa esperienza, non trasformarsi in lavoro amministrativo per l'utente.
+La rete serve questa esperienza; non la trasforma in amministrazione.
