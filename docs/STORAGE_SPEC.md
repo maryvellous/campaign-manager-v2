@@ -2,544 +2,355 @@
 
 ## 1. Scopo
 
-Questo documento definisce il contratto di persistenza locale della V0.1.
+Questo documento definisce la persistenza locale della V0.1.
 
-L'obiettivo è che una campagna resti:
+Obiettivo:
 
-- leggibile come normale cartella di file;
-- resistente a crash ed errori comuni;
-- priva di salvataggi simulati;
-- protetta da sovrascritture silenziose;
-- separata da cache, preferenze UI e bozze di recovery;
-- portabile senza dipendere da un database proprietario.
+- campagna leggibile come normale cartella di file;
+- save reali e sicuri;
+- nessuna sovrascrittura silenziosa;
+- recovery separata;
+- cache/preferenze eliminabili;
+- niente database proprietario necessario a recuperare il vault.
 
-`docs/DOMAIN_MODEL.md` definisce il significato dei dati. Questo documento definisce **come gli adapter locali li persistono e li proteggono**.
+`V01_OPERATIONAL_SPEC.md` prevale quando definisce una soluzione più semplice allo stesso requisito.
 
 ---
 
 # 2. Classi di dati
 
-## STO-AUTH-001 — Dati autorevoli della campagna
+## STO-AUTH-001 — Autorevoli
 
-Sono autorevoli:
+Sono dati autorevoli:
 
-- file Markdown delle note;
-- asset dell'utente;
-- future board o altri file esplicitamente dichiarati come dati campagna;
-- `campaign.json` per i metadati tecnici minimi della campagna.
+- note Markdown;
+- asset utente;
+- `campaign.json`;
+- futuri file esplicitamente dichiarati contenuto campagna.
 
-La perdita di cache o preferenze locali non deve modificare questi dati.
+## STO-AUTH-002 — Locali non autorevoli
 
-## STO-AUTH-002 — Dati locali non autorevoli
+Vivono fuori dal vault:
 
-Devono vivere fuori dai file di contenuto della campagna:
+- tab/history;
+- recenti/preferiti;
+- pannelli e folder colors;
+- preferenze grafo;
+- search/backlink/graph cache;
+- recovery drafts;
+- piccoli repair record per rename/move incompleti.
 
-- tab aperte;
-- cronologia di navigazione;
-- recenti e preferiti;
-- dimensioni/collasso pannelli;
-- colori cartella per il grafo;
-- camera, filtri, selezione e posizioni manuali del grafo;
-- indice di ricerca;
-- backlink cache;
-- bozze di recovery;
-- journal di operazioni multi-file.
-
-Questi dati possono essere eliminati e ricostruiti o reimpostati senza corrompere il vault.
+La loro perdita non deve corrompere i contenuti.
 
 ## STO-AUTH-003 — Nessuna preferenza nel Markdown
 
-Nessuna preferenza UI viene inserita automaticamente nel frontmatter o nel corpo delle note.
+Preferenze e stato tecnico non vengono inseriti automaticamente nel frontmatter o nel corpo delle note.
 
 ---
 
 # 3. `campaign.json`
 
-## STO-CAM-001 — Posizione
+## STO-CAM-001 — Root metadata
 
-`campaign.json` vive nella root della cartella gestita.
+`campaign.json` vive nella root.
 
-Esempio:
-
-```text
-Aephoredya/
-  campaign.json
-  Notes/
-  Locations/
-  Assets/
-```
-
-## STO-CAM-002 — Schema V0.1
-
-Schema minimo:
+Schema minimo V0.1:
 
 ```json
 {
   "schemaVersion": 1,
-  "campaignId": "7f1ce920-5ea8-4e49-9c73-4b33e5e9c9a1",
-  "name": "Aephoredya"
+  "campaignId": "<uuid>"
 }
 ```
 
-Campo futuro opzionale già compatibile col dominio:
+`name` e il futuro `externalBinding` possono essere opzionali, ma V0.1 non usa networking EcoGDR.
 
-```json
-{
-  "externalBinding": {
-    "provider": "ecogdr",
-    "campaignId": "cmp_..."
-  }
-}
-```
+## STO-CAM-002 — CampaignId
 
-La V0.1 non espone UI o networking per `externalBinding`.
+UUID casuale generato alla prima inizializzazione, indipendente da nome/path.
 
-## STO-CAM-003 — `campaignId`
+## STO-CAM-003 — Prima apertura
 
-`campaignId` è un UUID casuale generato una sola volta alla prima inizializzazione.
+Cartella leggibile+writable senza metadata → crea soltanto `campaign.json`; nessun altro file viene modificato.
 
-Non dipende dal nome o dal path della cartella.
+Metadata esistenti invalidi non vengono sovrascritti automaticamente.
 
-## STO-CAM-004 — Prima apertura di una cartella
+## STO-CAM-004 — Schema
 
-Se la cartella selezionata è leggibile e scrivibile ma non contiene `campaign.json`, l'apertura come campagna gestita può inizializzarla creando il file con `schemaVersion: 1` e un nuovo `campaignId`.
+- corrente → apertura normale;
+- precedente noto → migrazione testata;
+- futuro/non supportato → nessun downgrade automatico.
 
-L'operazione deve essere non distruttiva: nessun altro file viene rinominato, spostato o convertito.
-
-Se esiste già un `campaign.json` non valido, l'app **non lo sovrascrive automaticamente**.
-
-## STO-CAM-005 — Versioni schema
-
-- schema uguale alla versione supportata → apertura normale;
-- schema precedente noto → migrazione esplicita e testata;
-- schema futuro/non supportato → nessun downgrade o rewrite automatico; apertura writable bloccata con errore comprensibile.
+Prima di una migrazione metadata viene conservata una copia recuperabile del file precedente per la durata dell'operazione.
 
 ---
 
-# 4. Layout dello storage applicativo
+# 4. AppData
 
-## STO-APP-001 — App data separato
-
-Preferenze, recovery, indici e journal vivono nella directory applicativa prevista dal sistema operativo, non nel vault dell'utente.
+## STO-APP-001 — Separazione
 
 Forma concettuale:
 
 ```text
 <AppData>/CampaignManagerV2/
-  campaigns/
-    <campaignId>/
-      ui.json
-      recovery/
-      operations/
-  indexes/
-    <campaignId>/
+  campaigns/<campaignId>/
+    ui.json
+    recovery/
+    repairs/
+  indexes/<campaignId>/
 ```
 
-La posizione fisica reale viene risolta dall'adapter Electron e non entra nel core.
+La struttura fisica precisa è implementativa.
 
 ## STO-APP-002 — Campagna spostata
 
-Poiché i dati locali sono keyed by `campaignId`, spostare o rinominare la root della campagna non deve perdere preferenze e recovery una volta riaperta la nuova posizione.
-
-La lista "recenti" deve aggiornare il path noto dopo un'apertura riuscita.
+Preferenze e recovery sono keyed by `campaignId`, quindi spostare la root non deve perdere automaticamente lo stato locale quando la campagna viene riaperta.
 
 ---
 
-# 5. Scoperta delle note
+# 5. Discovery e path
 
-## STO-DISC-001 — File nota
+## STO-DISC-001 — Note
 
-Una nota V0.1 è un file regolare con estensione `.md` sotto la root campagna.
+Nota V0.1 = file regolare `.md` sotto la root.
 
-## STO-DISC-002 — Traversal sicuro
+La scansione:
 
-La scansione ricorsiva non deve mai uscire dalla root della campagna.
+- non esce dalla root;
+- non segue symlink;
+- ignora `campaign.json`, temp file interni, `.git`, `node_modules` e artefatti interni dichiarati.
 
-La V0.1 non segue symlink di file o directory durante l'indicizzazione del vault.
+## STO-PATH-001 — Contratti relativi
 
-I symlink possono essere ignorati o segnalati, ma non attraversati implicitamente.
+Il core usa `NoteId`/`FolderId` relativi; path assoluti restano nell'adapter.
 
-## STO-DISC-003 — File interni da ignorare
+Ogni read/write/rename/move/trash verifica il contenimento nella root.
 
-Non vengono indicizzati come note:
+Traversal e path assoluti ricevuti come identità logica vengono rifiutati.
 
-- `campaign.json`;
-- file temporanei creati dall'adapter;
-- directory `.git`;
-- `node_modules`;
-- altri artefatti interni identificati esplicitamente dal Campaign Manager.
+## STO-PATH-002 — Policy nomi
 
-Non si introduce una regola generica "ignora tutto ciò che inizia con punto" se può nascondere contenuti utente legittimi.
+Creazione/rinomina rifiuta almeno nomi vuoti, separatori, control chars, `.`/`..`, collisioni logiche, nomi Windows riservati e trailing dot/space problematici.
 
-## STO-DISC-004 — Ordinamento
-
-L'ordine fisico restituito dal filesystem non è significativo.
-
-Explorer e ricerca applicano ordinamenti espliciti e deterministici.
+Collisioni solo per case non sono identità distinte.
 
 ---
 
-# 6. Path e nomi
-
-## STO-PATH-001 — Path relativi nel contratto
-
-Il repository converte tra path assoluti del sistema operativo e `NoteId`/`FolderId` relativi.
-
-Il core non riceve path assoluti.
-
-## STO-PATH-002 — Contenimento nella root
-
-Ogni operazione `read`, `write`, `rename`, `move` o `trash` deve verificare che il path risolto resti sotto la root campagna dopo normalizzazione.
-
-Input con traversal (`..`) o path assoluti vengono rifiutati.
-
-## STO-PATH-003 — Policy portability-first
-
-La creazione/rinomina usa una policy compatibile col comune denominatore dei filesystem desktop supportati.
-
-Sono rifiutati almeno:
-
-- separatori di path nel titolo;
-- caratteri di controllo;
-- nomi vuoti;
-- segmenti `.` e `..`;
-- nomi che causerebbero collisione logica con un file/cartella esistente;
-- nomi riservati non portabili sulle piattaforme supportate;
-- trailing dot/space quando non portabili.
-
-L'errore deve indicare cosa correggere.
-
-## STO-PATH-004 — Case collision
-
-Due path che differiscono solo per case non sono accettati come identità distinte dal Campaign Manager.
-
-Questo evita vault che funzionano su un sistema e si rompono su un altro.
-
----
-
-# 7. Encoding e testo
+# 6. Encoding e lettura
 
 ## STO-TEXT-001 — UTF-8
 
-Le note create dall'app sono UTF-8.
+Le nuove note sono UTF-8. I file esistenti UTF-8 vengono letti senza formati proprietari.
 
-File UTF-8 esistenti devono essere letti senza conversioni proprietarie.
+Line ending esistente viene preservato quando pratico.
 
-## STO-TEXT-002 — Line ending
+Il salvataggio non riscrive frontmatter/Markdown non modificato soltanto per comodità del parser.
 
-Quando possibile l'adapter preserva lo stile di line ending già presente nel file (`LF` o `CRLF`).
+## STO-REV-001 — NoteRevision
 
-Una nuova nota usa il default definito dall'app per la piattaforma o dal progetto, purché sia coerente.
+Ogni lettura restituisce una revisione del contenuto abbastanza affidabile da rilevare modifiche concorrenti.
 
-## STO-TEXT-003 — Frontmatter e testo sconosciuto
-
-Il salvataggio ordinario non deve normalizzare o riscrivere porzioni di Markdown non modificate soltanto per convenienza del parser.
-
-Chiavi frontmatter sconosciute devono essere preservate.
+SHA-256 dei byte è una implementazione semplice e raccomandata; `mtime`/size possono essere ottimizzazioni ma non devono introdurre overwrite stale.
 
 ---
 
-# 8. Lettura e revisioni
-
-## STO-REV-001 — Revisione basata sul contenuto
-
-`NoteRevision` rappresenta una fingerprint del contenuto persistito.
-
-Implementazione raccomandata V0.1:
-
-```text
-SHA-256 dei byte del file
-```
-
-`mtime` e dimensione possono essere usati come ottimizzazione, ma non devono essere l'unica protezione se possono produrre falsi negativi.
-
-## STO-REV-002 — Lettura
-
-`get(noteId)` restituisce:
-
-- contenuto Markdown;
-- titolo derivato dal filename;
-- `NoteRevision` della versione effettivamente letta.
-
-## STO-REV-003 — File scomparso
-
-Se il file sparisce tra discovery e lettura, il repository restituisce `not_found` e non crea automaticamente un nuovo file.
-
----
-
-# 9. Scrittura sicura
+# 7. Save sicuro
 
 ## STO-WRITE-001 — Expected revision
 
-Salvare una nota esistente richiede la revisione attesa dall'editor/application service.
+Save di una nota esistente include la revisione attesa. Se il contenuto corrente su disco non corrisponde → `conflict`, nessun overwrite.
 
-Prima del replace, il repository verifica che la versione sul disco corrisponda ancora a quella attesa.
+## STO-WRITE-002 — Replace sicuro
 
-Se non corrisponde → `conflict`.
-
-## STO-WRITE-002 — Scrittura atomica per singolo file
-
-Una scrittura normale non modifica direttamente il file autorevole in-place.
-
-Flusso richiesto:
+Semantica richiesta:
 
 ```text
-validate expected revision
-→ write sibling temp file
-→ flush/close temp
-→ replace target atomically quando supportato
-→ verify target exists/readable
-→ calculate new revision
-→ return saved
+validate revision
+→ scrivi temp
+→ close/flush
+→ replace sicuro/atomico quando supportato
+→ verifica target
+→ calcola nuova revision
+→ saved
 ```
 
-Se la piattaforma richiede una strategia diversa per un replace sicuro, l'adapter può implementarla purché mantenga la stessa semantica osservabile.
+La strategia Windows concreta può variare purché il file precedente non venga deliberatamente perso in caso di errore prima del replace.
 
-## STO-WRITE-003 — Temp file
+## STO-WRITE-003 — Temp
 
-I file temporanei usano un pattern riservato e non vengono indicizzati come note.
+I temp file usano un pattern interno e non compaiono nel vault.
 
-Un crash che lascia un temp file non deve farlo apparire nel vault al riavvio.
+## STO-WRITE-004 — Successo reale
 
-## STO-WRITE-004 — Stato `saved`
-
-Il repository restituisce `saved` soltanto dopo che il target autorevole è stato scritto e la nuova revisione è nota.
-
-Il debounce di autosave appartiene alla UI/applicazione e non cambia questa regola.
-
-## STO-WRITE-005 — Errore di scrittura
-
-Su permission error, disco pieno, path non disponibile o altro errore I/O:
-
-- il file originale non deve essere deliberatamente cancellato;
-- il repository restituisce errore tipizzato;
-- il buffer dell'editor resta responsabilità dell'applicazione/recovery;
-- nessun indicatore può diventare `saved`.
+`saved` soltanto dopo persistenza confermata. Disco pieno, permessi o altri errori I/O producono errore tipizzato e lasciano il buffer all'application/recovery.
 
 ---
 
-# 10. Modifiche esterne
+# 8. Modifiche esterne
 
-## STO-EXT-001 — File watcher come segnale, non verità
+## STO-EXT-001 — Watcher come segnale
 
-Il watcher filesystem notifica possibili cambiamenti. La decisione usa sempre una nuova lettura/revisione, non il solo evento del watcher.
+Il watcher induce una rilettura/revisione; non è da solo prova dello stato del file.
 
-## STO-EXT-002 — Nota pulita
+## STO-EXT-002 — Clean vs dirty
 
-Se la nota non ha modifiche locali e la revisione su disco cambia, l'app può ricaricare la nuova versione preservando il contesto dove possibile.
+- nota clean + revisione cambiata → nuova versione può diventare autorevole;
+- nota dirty + revisione cambiata → conflict, nessun overwrite delle due versioni.
 
-## STO-EXT-003 — Nota dirty
+## STO-EXT-003 — Missing/rename esterno
 
-Se la nota ha un buffer dirty e la revisione su disco cambia:
+File scomparso → `not_found`, nessuna ricreazione automatica.
 
-- autosave viene sospeso;
-- la versione locale non viene sovrascritta;
-- la versione esterna non viene sovrascritta;
-- entrambe diventano disponibili al flusso di confronto/recupero UI.
-
-## STO-EXT-004 — Rename esterno
-
-La V0.1 non deve fingere di poter correlare sempre un delete+create esterno come rinomina certa.
-
-Se la correlazione non è affidabile, segnala file mancante/nuovo file e lascia la decisione esplicita all'utente.
+Delete+create non viene dichiarato rename se non può essere correlato in modo affidabile.
 
 ---
 
-# 11. Recovery drafts
+# 9. Recovery semplice
 
-## STO-REC-001 — Separati dal vault
+## STO-REC-001 — Fuori dal vault
 
-Le bozze di recovery vivono in AppData e non accanto ai file Markdown.
+Le recovery vivono in AppData.
 
-## STO-REC-002 — Contenuto minimo
+## STO-REC-002 — Target
+
+Devono poter proteggere sia una nota esistente sia un draft non ancora materializzato.
+
+Forma concettuale:
 
 ```ts
+type RecoveryTarget =
+  | { kind: 'existing'; noteId: NoteId; baseRevision?: NoteRevision }
+  | { kind: 'new-draft'; draftId: string; parentFolder: FolderId; manualTitle?: string }
+
 interface RecoveryDraft {
   campaignId: CampaignId
-  noteId: NoteId
-  baseRevision?: NoteRevision
+  target: RecoveryTarget
   markdown: string
   capturedAt: string
 }
 ```
 
-Può includere metadata tecnici aggiuntivi purché non sostituisca il file autorevole.
+## STO-REC-003 — Frequenza
 
-## STO-REC-003 — Quando esiste
+La recovery viene aggiornata abbastanza spesso da proteggere da crash realistici.
 
-Quando un buffer contiene modifiche non ancora confermate sul filesystem, deve esistere una strategia di recovery locale sufficientemente frequente da proteggere da crash realistici.
+**Nessun intervallo numerico è imposto dallo storage contract.** La strategia può essere debounce/periodica/event-driven purché non dipenda dal successo del save autorevole.
 
-Il timing preciso è implementativo; non può però dipendere dal fatto che il salvataggio autorevole sia riuscito.
+## STO-REC-004 — Lifecycle
 
-## STO-REC-004 — Cancellazione draft
+Recovery eliminabile soltanto dopo:
 
-Un draft può essere eliminato automaticamente soltanto dopo che il contenuto corrispondente è stato confermato come persistito o l'utente lo ha esplicitamente scartato.
+- persistenza confermata dello stesso contenuto; oppure
+- discard esplicito.
 
-## STO-REC-005 — Recupero alla riapertura
+Alla riapertura:
 
-Se esiste un draft:
+- file invariato → ripristino semplice;
+- file cambiato → conflict flow;
+- file mancante → ricrea/salva come nuova/esporta.
 
-- file ancora alla `baseRevision` → può essere proposto come modifica recuperabile;
-- file cambiato rispetto alla base → confronto esplicito;
-- file mancante → possibilità di ricreare/esportare il contenuto;
-- nessun overwrite automatico di una versione più recente.
-
----
-
-# 12. Preferenze locali per campagna
-
-## STO-PREF-001 — Repository separato
-
-Le preferenze usano un contratto separato dal `CampaignRepository` autorevole.
-
-Esempio concettuale:
-
-```ts
-interface CampaignPreferencesRepository {
-  load(campaignId: CampaignId): Promise<CampaignPreferences>
-  save(campaignId: CampaignId, value: CampaignPreferences): Promise<void>
-}
-```
-
-## STO-PREF-002 — Contenuti
-
-Può contenere:
-
-- tab e tab attiva;
-- cronologia per tab;
-- pannelli e dimensioni;
-- recenti;
-- preferiti;
-- mapping cartella → `GraphFolderColor`;
-- stato grafo;
-- posizioni manuali nodi;
-- altre preferenze esclusivamente UI.
-
-## STO-PREF-003 — Corruzione preferenze
-
-Se `ui.json` è corrotto, la campagna deve comunque aprirsi.
-
-L'app può ripristinare default e segnalare la perdita delle sole preferenze.
+Non è richiesto un framework separato di version history.
 
 ---
 
-# 13. Indici derivati
+# 10. Preferenze
 
-## STO-IDX-001 — Ricostruibili
+## STO-PREF-001 — Separate
 
-Indice full-text, backlink index e graph projection possono essere eliminati e ricostruiti dalle note.
+Le preferenze locali possono contenere tab/history, pannelli, recenti/preferiti, folder colors e stato utile del grafo.
 
-## STO-IDX-002 — Mai gate per il salvataggio
+Posizioni manuali dei nodi possono essere conservate se l'implementazione lo rende semplice, ma **non sono requisito V0.1**.
 
-Un errore nell'aggiornamento dell'indice dopo un salvataggio riuscito non trasforma il salvataggio del file in fallimento.
+## STO-PREF-002 — Corruzione
 
-Deve però marcare l'indice come stale e pianificarne il rebuild.
+`ui.json` corrotto non blocca la campagna. Si ripristinano default e si segnala soltanto la perdita delle preferenze.
 
-## STO-IDX-003 — Nessun contenuto esclusivo
-
-Nessuna informazione che esiste soltanto nell'indice può essere necessaria per ricostruire il vault.
+Un errore di salvataggio preferenze non rende fallito un save Markdown riuscito.
 
 ---
 
-# 14. Rinomina e spostamento fisico
+# 11. Indici derivati
 
-## STO-MOVE-001 — Operazioni atomiche per singolo path
+Search, backlink e graph projection:
 
-`rename`/`move` dell'adapter operano su una singola risorsa e restituiscono il nuovo `NoteId` o un errore tipizzato.
+- sono eliminabili e ricostruibili;
+- non contengono contenuto esclusivo necessario al vault;
+- non fanno fallire un save già riuscito se il loro update fallisce;
+- vengono marcati stale/rebuildati quando necessario.
 
-La riscrittura dei wikilink è coordinata dal use case applicativo, non nascosta dentro l'adapter filesystem.
+---
+
+# 12. Rename/move fisico e repair record
+
+## STO-MOVE-001 — Adapter singola risorsa
+
+Il filesystem adapter rinomina/sposta una risorsa. La riscrittura wikilink e il remap applicativo restano fuori dall'adapter.
 
 ## STO-MOVE-002 — Preflight
 
-Prima di una rinomina/spostamento:
+Prima del move/rename applicativo vengono controllati target, collisioni e le revisioni delle source che dovranno essere riscritte.
 
-- target validato;
-- collisioni controllate;
-- permessi verificabili controllati per quanto possibile;
-- piano di aggiornamento wikilink calcolato.
+## STO-MOVE-003 — Repair record minimale
 
-## STO-MOVE-003 — Operation journal multi-file
+Una operazione che deve rinominare/spostare e poi riscrivere altri file salva prima un piccolo record locale sufficiente a diagnosticare un crash.
 
-Le operazioni che possono modificare più file, come rinomina + aggiornamento di molti wikilink, registrano un journal locale prima di iniziare.
-
-Contenuto concettuale:
+Forma concettuale:
 
 ```ts
-interface OperationJournal {
+interface MoveRepairRecord {
   operationId: string
   kind: 'rename-note' | 'move-note' | 'move-folder'
   campaignId: CampaignId
-  plannedSteps: OperationStep[]
-  completedSteps: string[]
+  oldPath: string
+  newPath: string
   startedAt: string
 }
 ```
 
-Il journal vive in AppData, non nel vault.
+Può contenere altre informazioni strettamente necessarie alla riparazione concreta, ma **non deve diventare un engine generico di planned/completed steps**.
 
-## STO-MOVE-004 — Crash durante operazione multi-file
+## STO-MOVE-004 — Crash
 
-Alla riapertura un journal incompleto deve essere rilevato.
+Alla riapertura:
 
-L'app non dichiara l'operazione riuscita per deduzione. Deve verificare lo stato reale dei file e offrire/effettuare una riconciliazione deterministica secondo il piano registrato.
+1. verifica se old/new path esistono realmente;
+2. ricostruisce dal vault corrente quali link necessitano ancora riparazione;
+3. propone/esegue la riparazione specifica;
+4. elimina il record quando lo stato è coerente.
 
-## STO-MOVE-005 — Esito parziale
+Non sono richiesti rollback automatico, event sourcing o replay generico.
 
-Se alcuni aggiornamenti link falliscono ma il rename/move fisico è avvenuto, l'application service restituisce `partial` con elenco dei file falliti, come definito in `DOMAIN_MODEL.md`.
+## STO-MOVE-005 — Partial
 
----
-
-# 15. Cestino
-
-## STO-TRASH-001 — Adapter di sistema
-
-La V0.1 usa un adapter esplicito verso il cestino del sistema operativo.
-
-```ts
-interface TrashAdapter {
-  trash(path: AbsolutePath): Promise<TrashResult>
-}
-```
-
-L'`AbsolutePath` resta nell'infrastruttura e non entra nel core.
-
-## STO-TRASH-002 — Nessun fallback permanente
-
-Se il cestino non è disponibile o fallisce:
-
-- restituisce `trash_unavailable` o errore appropriato;
-- il file resta al suo posto;
-- nessun `unlink` permanente viene eseguito automaticamente.
-
-## STO-TRASH-003 — Conferme UI prima dell'adapter
-
-Conferma cartella non vuota e buffer pending avvengono prima della richiesta di trash, secondo `UI_UX_SPEC_V01.md`.
+Move fisico riuscito + alcune source non riscrivibili → `partial` con dettaglio; nessuna source stale viene sovrascritta.
 
 ---
 
-# 16. Metadata migrations
+# 13. Cestino
 
-## STO-MIG-001 — Versionate
+V0.1 usa un adapter del cestino di sistema.
 
-Ogni variazione incompatibile di `campaign.json` incrementa `schemaVersion`.
+Se non disponibile/fallisce:
 
-## STO-MIG-002 — Test prima dei dati reali
-
-Ogni migrazione deve avere fixture before/after e test automatici.
-
-## STO-MIG-003 — Backup metadata
-
-Prima di migrare `campaign.json`, viene conservata una copia recuperabile del file precedente almeno per la durata dell'operazione.
-
-## STO-MIG-004 — Nessuna migrazione dei contenuti per convenienza
-
-L'aggiunta di una feature non giustifica la riscrittura massiva delle note Markdown se può essere implementata tramite dati derivati o preferenze separate.
+- errore `trash_unavailable` o appropriato;
+- elemento intatto;
+- nessun fallback a `unlink` permanente.
 
 ---
 
-# 17. Error taxonomy
+# 14. Migrazioni
 
-Il livello storage deve esporre errori strutturati almeno per:
+Solo metadata tecnici versionati richiedono migration schema.
+
+Ogni migrazione incompatibile di `campaign.json` ha test before/after.
+
+Non si riscrivono massivamente note Markdown per introdurre feature che possono restare derivate/locali.
+
+---
+
+# 15. Error taxonomy
+
+Almeno:
 
 ```text
 not_found
@@ -558,100 +369,42 @@ unsupported_schema
 io_error
 ```
 
-Ogni errore può includere una causa tecnica per log diagnostici, ma la UI non deve dipendere dal testo grezzo dell'eccezione.
+La UI usa categorie strutturate, non parsing di stringhe native.
 
 ---
 
-# 18. Test obbligatori
+# 16. Test obbligatori
 
-## STO-TEST-001 — Directory temporanee
+Su directory temporanee verificare almeno:
 
-I test storage usano directory isolate e verificano il filesystem reale prodotto.
+- create/read/update note;
+- create/rename/move cartella;
+- rename/move note;
+- safe write fallito;
+- conflict revision;
+- trash adapter;
+- recovery: file invariato/cambiato/mancante + draft nuovo;
+- repair record con crash dopo rename fisico;
+- Unicode/spazi/traversal/case collision;
+- root spostata/non disponibile;
+- indice eliminato ricostruibile.
 
-## STO-TEST-002 — CRUD
-
-Copertura minima:
-
-- create;
-- read;
-- update;
-- rename;
-- move;
-- trash tramite fake adapter controllabile;
-- cartella create/move se implementata.
-
-## STO-TEST-003 — Conflitto
-
-Read `r1` → modifica esterna → save con `r1` deve produrre `conflict` e conservare la versione esterna.
-
-## STO-TEST-004 — Scrittura fallita
-
-Simulare errore prima del replace deve lasciare intatto il file autorevole precedente.
-
-## STO-TEST-005 — Recovery
-
-Draft presente + file invariato, file cambiato e file mancante devono produrre tre percorsi distinguibili.
-
-## STO-TEST-006 — Journal
-
-Interrompere artificialmente una rinomina multi-file dopo alcuni step deve lasciare un journal rilevabile e uno stato riconciliabile.
-
-## STO-TEST-007 — Path
-
-Testare almeno:
-
-- Unicode;
-- spazi;
-- nomi lunghi realistici;
-- separatori invaldi;
-- traversal;
-- case collision;
-- directory spostata/non disponibile.
-
-## STO-TEST-008 — Scala V0.1
-
-Con almeno 200 note e 15 cartelle, apertura, discovery e rebuild degli indici devono restare funzionalmente corretti. Le prestazioni precise vengono misurate sull'implementazione reale.
+Dataset 200 note / 15 cartelle resta il minimo di validazione funzionale. Dataset più grandi sono stress test, non gate storage.
 
 ---
 
-# 19. Scenari di accettazione
+# 17. Scenari di accettazione
 
-### STO-ACC-001 — Primo open
-
-Selezionare una cartella writable senza `campaign.json` crea soltanto metadata minimi e non altera i Markdown esistenti.
-
-### STO-ACC-002 — Save vero
-
-Dopo un save riuscito, riaprire il file con un processo separato deve mostrare esattamente il contenuto confermato dall'app.
-
-### STO-ACC-003 — Save fallito
-
-Se il replace fallisce, l'app non mostra `saved`; il buffer/recovery resta disponibile e il file precedente non viene deliberatamente eliminato.
-
-### STO-ACC-004 — Conflitto esterno
-
-Un editor dirty non sovrascrive un file modificato da un editor esterno.
-
-### STO-ACC-005 — Cestino
-
-Con adapter `trash_unavailable`, nessuna cancellazione fisica avviene.
-
-### STO-ACC-006 — Preferenze corrotte
-
-Eliminare/corrompere `ui.json` perde al massimo preferenze locali; le note restano apribili.
-
-### STO-ACC-007 — Indice eliminato
-
-Cancellare completamente l'indice locale e riaprire deve permetterne la ricostruzione senza modificare il vault.
-
-### STO-ACC-008 — Spostamento root
-
-Spostare la cartella campagna in un altro path e riaprirla conserva lo stesso `campaignId` e permette di ricollegare preferenze keyed by ID.
-
----
+1. Prima apertura crea solo metadata minimi.
+2. Save riuscito è leggibile identico da processo esterno.
+3. Save fallito non distrugge il file precedente e non produce `saved`.
+4. Modifica esterna concorrente produce conflict.
+5. Cestino indisponibile non cancella nulla.
+6. Preferenze corrotte non compromettono le note.
+7. Eliminare l'indice non modifica il vault e permette rebuild.
+8. Root spostata mantiene `campaignId`.
+9. Crash durante rename/move lascia un repair record sufficiente a verificare/riparare il caso concreto.
 
 ## Regola finale
 
-Il vault deve restare comprensibile anche se l'app sparisce domani.
-
-Se una soluzione di storage rende un file Markdown dipendente da cache, DB locale, store UI o servizio cloud per essere recuperato correttamente, non è compatibile con la V0.1.
+Il vault deve restare comprensibile anche se l'app sparisce domani. La robustezza serve a **non perdere dati**, non a costruire un database transazionale sopra una cartella Markdown.
