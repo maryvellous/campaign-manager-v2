@@ -150,35 +150,67 @@ Le regole comportamentali della V0.1 sono definite in `docs/UI_UX_SPEC_V01.md`.
 
 ## 5. `apps/activity`
 
-È il client destinato ai giocatori, eseguito come Discord Activity.
+È il client destinato ai giocatori.
+
+La prima versione live viene costruita come **client web standalone** in V0.3; in V0.4 lo stesso modello di sessione viene adattato a Discord tramite Embedded App SDK.
 
 Stack:
 
 - React;
 - TypeScript.
 
-Deve essere deliberatamente piccolo.
+Deve essere deliberatamente piccolo e session-oriented.
+
+Principio approvato:
+
+> l'Activity è il tavolo del giocatore, non un mini Campaign Manager.
 
 Responsabilità:
 
-- identificare il giocatore tramite Discord;
 - entrare nella sessione live corretta;
-- mostrare la board pubblicata dal DM;
+- mostrare waiting state quando il DM non ha ancora pubblicato una scena;
+- mostrare la board/scena pubblicata dal DM come superficie principale;
 - ricevere aggiornamenti realtime;
-- inviare le azioni consentite al giocatore;
-- mostrare eventuali dati condivisi, come scheda o token.
+- mostrare soltanto contenuti esplicitamente condivisi;
+- inviare esclusivamente azioni consentite al giocatore;
+- mostrare token e, in futuro, eventuali dati personaggio condivisi.
 
 Non deve conoscere:
 
 - filesystem del DM;
 - API key;
-- struttura interna della campagna;
+- struttura interna completa della campagna;
 - editor completo;
 - indice IA;
 - configurazioni private;
-- note non condivise.
+- note non condivise;
+- vault o graph completo della campagna.
 
-La Activity vede soltanto ciò che il desktop decide di pubblicare nella sessione.
+### Ingresso standalone
+
+Fuori da Discord, il client web può entrare nella sessione tramite un `session join code` gestito dal dominio/protocollo live.
+
+Questo codice non è il pairing code Discord del master.
+
+### Ingresso Discord
+
+Dentro Discord, i giocatori usano il normale flusso per unirsi alla stessa Activity instance. L'`instanceId` identifica il contesto dell'istanza Activity condivisa.
+
+Il canale vocale non viene usato come session ID proprietario del Campaign Manager.
+
+Il master associa una live session desktop all'istanza Discord una volta tramite un pairing code breve, temporaneo e monouso.
+
+Forma concettuale:
+
+```text
+Discord Activity instanceId
+        ↕
+Campaign Manager liveSessionId
+```
+
+Il binding è runtime state del relay/session layer e non diventa metadata persistente della campagna.
+
+La specifica normativa corrente è `docs/DISCORD_ACTIVITY_SPEC.md`.
 
 L'integrazione Discord è un adapter, non il fondamento del client.
 
@@ -186,7 +218,7 @@ L'integrazione Discord è un adapter, non il fondamento del client.
 
 ## 6. `services/relay`
 
-Il relay è il punto di incontro realtime tra desktop e Activity.
+Il relay è il punto di incontro realtime tra desktop e client giocatori.
 
 Tecnologia prevista:
 
@@ -206,7 +238,7 @@ Cloudflare Relay
     ▲
     │ WebSocket
     │
-Discord Activity
+Web client / Discord Activity
 ```
 
 Il computer del DM non espone un server pubblico e non richiede tunnel.
@@ -221,7 +253,20 @@ Gestisce solo lo stato necessario alla sessione live:
 - posizione dei token;
 - presenza;
 - eventi realtime;
-- riferimenti agli asset condivisi.
+- riferimenti agli asset condivisi;
+- autorizzazioni live necessarie;
+- binding temporanei di ingresso, incluso il futuro `instanceId ↔ liveSessionId` Discord.
+
+Il relay/session backend deve validare le azioni significative: essere presenti nell'Activity o dichiarare un token nel client non rende il giocatore autorevole.
+
+Il pairing code Discord:
+
+- appartiene a una live session specifica;
+- è monouso;
+- scade rapidamente;
+- viene consumato dal master per associare desktop e Activity instance;
+- non è una password permanente della campagna;
+- non è richiesto ai giocatori nel flusso Discord normale.
 
 Lo stato persistente della campagna continua a vivere sul desktop.
 
@@ -265,6 +310,8 @@ startSession()
 Il dominio deve poter essere testato senza avviare Electron o un browser.
 
 Il grafo V0.1 **non richiede un dominio autorevole separato**: nodi e archi sono una proiezione delle note e dei wikilink. Eventuali preferenze di layout del grafo sono stato locale dell'applicazione, non contenuto delle note.
+
+Il dominio live futuro non deve dipendere dall'Embedded App SDK. Discord traduce il proprio contesto (`instanceId`, partecipanti, identity) verso i contratti live/protocollo definiti dal progetto.
 
 ---
 
@@ -311,7 +358,7 @@ Le operazioni di eliminazione richieste dalla V0.1 devono usare un adapter che p
 
 ## 9. `packages/protocol`
 
-Definisce il protocollo condiviso tra desktop, relay e Activity nelle versioni realtime.
+Definisce il protocollo condiviso tra desktop, relay e client giocatori nelle versioni realtime.
 
 Contiene esclusivamente:
 
@@ -335,7 +382,9 @@ error
 
 Ogni messaggio deve essere esplicito e versionabile.
 
-Il relay non deve interpretare la logica del Campaign Manager oltre ciò che serve per instradare e validare gli eventi.
+Il protocollo deve funzionare con il client web standalone prima dell'integrazione Discord. Non deve contenere dipendenze dall'Embedded App SDK o usare `instanceId` come identità universale della live session.
+
+Il relay non deve interpretare la logica del Campaign Manager oltre ciò che serve per instradare, autorizzare e validare gli eventi.
 
 Questo package non è richiesto dalla V0.1 locale solo per anticipazione.
 
@@ -426,11 +475,14 @@ Gestiti tramite servizi e repository.
 
 Esempi:
 
+- `liveSessionId`;
 - board attualmente pubblicata;
 - token mostrati ai giocatori;
 - posizioni live;
 - utenti connessi;
-- permessi temporanei.
+- permessi temporanei;
+- join code standalone;
+- pairing/binding Discord temporaneo.
 
 Fonte autorevole durante la sessione: desktop + relay secondo il tipo di dato.
 
@@ -548,12 +600,14 @@ protocol: token.move
    ↓
 Relay
    ↓
-Activity clients
+Web / Activity clients
 ```
 
 Il protocollo deve consentire anche il recupero di uno snapshot completo in caso di riconnessione.
 
 Non si assume che ogni client abbia ricevuto tutti gli eventi precedenti.
+
+Il percorso di ingresso può cambiare tra standalone e Discord, ma una volta associato il client alla `liveSessionId` la semantica della sessione deve essere la stessa.
 
 ---
 
@@ -589,7 +643,9 @@ Principi minimi:
 - payload realtime validati;
 - sessioni identificabili con token non prevedibili;
 - permessi distinti tra DM e giocatore;
-- contenuti privati inviati al relay solo quando esplicitamente condivisi.
+- contenuti privati inviati al relay solo quando esplicitamente condivisi;
+- `instanceId`, `liveSessionId`, token controllato e ruolo dichiarati dal client non sono trusted senza verifica server-side;
+- l'istanza Discord deve poter essere validata server-side usando i meccanismi ufficiali disponibili al momento dell'implementazione.
 
 Il relay deve conoscere il meno possibile.
 
@@ -634,11 +690,18 @@ Test di validazione e compatibilità dei messaggi quando il protocollo verrà in
 
 ### Relay
 
-Test su join/leave, broadcast, reconnect, snapshot, autorizzazione e isolamento tra sessioni quando verrà introdotto.
+Test su join/leave, broadcast, reconnect, snapshot, autorizzazione, isolamento tra sessioni, pairing code e binding Discord quando verranno introdotti.
 
 ### Desktop e Activity
 
 Pochi test end-to-end, concentrati sui flussi realmente critici e sugli scenari di accettazione documentati.
+
+Per V0.4 testare anche:
+
+- stessa Activity instance → stessa live session associata;
+- pairing code monouso/scaduto;
+- istanza non associata senza accesso a dati privati;
+- client standalone ancora funzionante senza Discord.
 
 ---
 
@@ -655,6 +718,7 @@ desktop  ─────→ ui
 
 activity ─────→ protocol
 activity ─────→ ui
+activity ─────→ Discord adapter   (solo V0.4 environment layer)
 
 relay    ─────→ protocol
 
@@ -670,6 +734,8 @@ core     → Electron
 core     → Discord
 core     → Cloudflare
 core     → EcoGDR SDK/API
+
+protocol → Discord SDK
 
 activity → storage
 activity → ai
@@ -710,15 +776,23 @@ crea board
 
 ```text
 desktop
+→ liveSessionId
 → relay
-→ browser client
+→ browser client via join code
 ```
 
-Prima di Discord.
+Il client standalone, il protocollo e il reconnect devono funzionare **prima di Discord**.
 
 ### V0.4 — Discord Activity
 
-Il client web già funzionante viene integrato dentro Discord.
+```text
+Discord Activity instance
+→ pairing master una tantum
+→ instanceId ↔ liveSessionId
+→ stesso client/session model della V0.3
+```
+
+Discord aggiunge identità/contesto/join UX, non sostituisce il protocollo live.
 
 ### V0.5 — IA
 
