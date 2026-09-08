@@ -23,7 +23,7 @@ In caso di conflitto:
 9. `docs/DESIGN_DIRECTION.md`;
 10. mock/reference artifact.
 
-Una contraddizione non si risolve inventando un terzo comportamento. Per V0.1, `V01_OPERATIONAL_SPEC.md` chiude esplicitamente le formulazioni storiche vaghe come `se supportato`, `può`, `default proposto` o `da decidere` quando incidono sul prodotto.
+Una contraddizione non si risolve inventando un terzo comportamento. Le specifiche più recenti possono anche **semplificare** una soluzione tecnica precedente quando conservano il comportamento di prodotto.
 
 ---
 
@@ -31,17 +31,17 @@ Una contraddizione non si risolve inventando un terzo comportamento. Per V0.1, `
 
 ## `PRODUCT.md`
 
-Definisce scopo, utenti, local-first, anti-lock-in e confini generali del prodotto.
+Scopo, utenti, local-first, anti-lock-in e confini generali.
 
 ## `architecture.md`
 
-Definisce moduli, dipendenze e separazione tra dati persistenti, stato live e UI.
+Moduli, dipendenze e separazione tra dati persistenti, stato live e UI.
 
-Per la struttura V0.1, `V01_OPERATIONAL_SPEC.md` rende espliciti `packages/application` e `packages/search` e prevale sulla struttura storica più compatta mostrata in architecture/roadmap.
+La struttura repository mostrata è una direzione, non un obbligo a creare package vuoti. V0.1 mantiene un application layer **logico**; la sua collocazione fisica viene scelta durante l'implementazione senza attraversare i confini architetturali.
 
 ## `ROADMAP.md`
 
-Definisce ordine di costruzione e gate delle versioni. Le specifiche normative prevalgono sui riassunti di roadmap quando una feature è stata progettata più in dettaglio dopo la stesura della roadmap.
+Ordine di costruzione e gate delle versioni. Le specifiche normative prevalgono sui vecchi riassunti quando una fase è stata progettata più in dettaglio.
 
 ---
 
@@ -49,37 +49,28 @@ Definisce ordine di costruzione e gate delle versioni. Le specifiche normative p
 
 ## `docs/V01_OPERATIONAL_SPEC.md`
 
-È la **fonte normativa integrata della V0.1**.
+È la fonte integrata della V0.1.
 
-Chiude in modo operativo:
+Definisce:
 
-- application layer e ownership dei buffer/use case;
-- startup, recent campaigns, open/init/switch/close;
-- assenza di modalità read-only V0.1;
-- duplicazione `CampaignId` e campagne spostate;
-- path policy e case collision;
-- nuova nota come draft, titolo automatico 1–3 parole e materializzazione;
-- tab/history/close behavior;
-- CRUD completo delle cartelle;
-- Markdown CommonMark + GFM;
-- frontmatter YAML e `aliases` canonici;
-- local images e sicurezza dei link;
-- wikilink canonici, code contexts, missing/ambiguous UX e create target;
-- autosave/recovery cadence e recovery per draft non ancora materializzati;
-- external changes, missing file e conflict resolution;
-- rename/move multi-file, ordering, journal e crash recovery forward-only;
-- trash senza permanent-delete fallback;
+- ownership applicativa senza imporre package/layer cerimoniali;
+- open/init/switch/close campagna e copie con `CampaignId` duplicato;
+- draft note e titolo automatico 1–3 parole;
+- tab, folder CRUD, Markdown e wikilink;
+- frontmatter preservato ma **non interpretato come metadata applicativo V0.1**;
+- safe save, recovery semplice e conflitti esterni;
+- rename/move con **repair record minimale**, non transaction engine generale;
+- trash tramite cestino;
 - Recenti/Preferiti/sidebar filter;
-- vista Search, diacritics, index states e command palette minima;
-- graph directed edges, multi-filter folder, descendant semantics e layout persistence;
-- Settings V0.1 minime;
-- error taxonomy e mapping UX;
-- Windows gate e target di robustezza fino a 2.000 note / 100 cartelle;
-- scenari end-to-end `OPS-ACC-*`.
+- Search centrale e command palette;
+- graph filtering e layout senza persistenza manuale obbligatoria;
+- Settings minime;
+- errori, keyboard, Windows gate;
+- stress test grandi separati dai gate di release.
 
-Prefisso requisiti: `OPS-*`.
+Prefisso: `OPS-*`.
 
-Un goal di implementazione V0.1 deve sempre citare questa specifica oltre alle specifiche verticali applicabili.
+Un goal V0.1 deve citare questa specifica oltre alle verticali applicabili.
 
 ---
 
@@ -87,43 +78,31 @@ Un goal di implementazione V0.1 deve sempre citare questa specifica oltre alle s
 
 ## `docs/V01_PRODUCT_DECISIONS.md`
 
-Registro delle decisioni approvate: auto-init campagna, copia/ID duplicato, draft note, titolo automatico, rename titolo, wikilink, ricerca centrale, supporto Windows.
-
-Prefisso: `DEC-V01-*`.
+Auto-init, copia/ID duplicato, draft note, titolo automatico, rename titolo, wikilink, ricerca centrale, supporto Windows.
 
 ## `docs/UI_UX_SPEC_V01.md`
 
-Autorità verticale su shell, layout, navigation model, editor/lettura, inspector, search, command palette, graph, save states, panels, keyboard, accessibility e visual behavior.
-
-Le ambiguità storiche sono risolte da `V01_OPERATIONAL_SPEC.md`.
-
-Prefisso: `UX-*`.
+Shell, layout, navigation model, editor/lettura, inspector, search, command palette, graph, save states, panels, keyboard e accessibilità.
 
 ## `docs/DOMAIN_MODEL.md`
 
-Autorità verticale su `CampaignId`, `NoteId`, `FolderId`, `NoteRevision`, note/cartelle, wikilink/backlink, rename/move, trash, conflict e graph projection.
-
-Prefisso: `DOM-*`.
+`CampaignId`, `NoteId`, `FolderId`, `NoteRevision`, note/cartelle, wikilink/backlink, rename/move, trash, conflict e graph projection.
 
 ## `docs/STORAGE_SPEC.md`
 
-Autorità verticale su `campaign.json`, filesystem, safe write, revision, watcher, recovery, preferences, journal, trash, migration ed errori storage.
+`campaign.json`, filesystem, safe write, revision, watcher, recovery, preferences, repair metadata, trash, migration ed errori storage.
 
-Il formato recovery per draft non materializzati è esteso da `OPS-SAVE-003`.
-
-Prefisso: `STO-*`.
+Quando la formulazione storica parla di operation journal generico, prevale la soluzione minimale definita da `OPS-MOVE-*`.
 
 ## `docs/SEARCH_SPEC.md`
 
-Autorità verticale su indice derivato, ranking, rebuild, aggiornamenti incrementali, command provider e contract test.
+Indice derivato, ranking, rebuild, aggiornamenti incrementali e command provider.
 
-V0.1 rende obbligatori alias canonici e diacritic-insensitive matching tramite l'Operational Spec.
-
-Prefisso: `SEA-*`.
+La V0.1 indicizza titolo/path/corpo; **alias e altri campi frontmatter non sono feature V0.1**.
 
 ## `docs/DESIGN_DIRECTION.md`
 
-Palette, hierarchy, graph colors, shapes e motion. I numeri visuali restano default verificabili quando non modificano la semantica operativa.
+Palette, gerarchia, graph colors, forme e motion. I numeri visuali restano default verificabili quando non cambiano la semantica.
 
 ---
 
@@ -131,9 +110,7 @@ Palette, hierarchy, graph colors, shapes e motion. I numeri visuali restano defa
 
 ## `docs/BOARD_SPEC.md`
 
-Specifica normativa completa della board locale e della sua proiezione live futura.
-
-Definisce formato `*.board.json`, strumenti, elementi, asset, card da estratti note, token, z-order/groups/lock, visibilità, snapshot/eventi, reconnect e fine sessione.
+Board locale e proiezione live futura: formato, strumenti, elementi, asset, card da estratti note, token, z-order/groups/lock, visibilità, salvataggio e casi limite.
 
 Prefisso: `BRD-*`.
 
@@ -143,13 +120,13 @@ Prefisso: `BRD-*`.
 
 ## `docs/LIVE_SESSION_SPEC.md`
 
-Contratto di prodotto della sessione web standalone: lifecycle, host/player identity, join/resume, codes, board switching, asset, token, reconnect, host timeout e session end.
+Lifecycle sessione web standalone, identity/join/resume, board switching, asset, token, reconnect, host disconnect e session end.
 
 Prefisso: `LIVE-*`.
 
 ## `docs/PROTOCOL_SPEC.md`
 
-Contratto realtime tra desktop, relay e player: HTTPS/WSS, ticket, protocol version, `requestId`, `stateSeq`, snapshot/resync, commands, accepted/rejected, rate limits e error taxonomy.
+Contratto realtime desktop/relay/player: transport, auth/ticket, versioning, snapshot/resync, comandi, errori e asset.
 
 Prefisso: `PRO-*`.
 
@@ -159,11 +136,11 @@ Prefisso: `PRO-*`.
 
 ## `docs/DISCORD_ACTIVITY_SPEC.md`
 
-Discord Activity come tavolo del giocatore, Activity instance join, pairing master-only, binding `instanceId ↔ liveSessionId`, sicurezza e Discord come adapter del modello live generico.
+Activity come tavolo del giocatore, Activity instance join, pairing master-only e Discord come adapter del modello live generico.
 
 Prefisso: `ACT-*`.
 
-Quando un dettaglio live/protocollo è già definito da V0.3, la Activity lo eredita invece di inventarne una variante Discord-specific.
+Quando un dettaglio è già definito da Live/Protocol, Discord lo eredita invece di crearne una variante.
 
 ---
 
@@ -171,13 +148,11 @@ Quando un dettaglio live/protocollo è già definito da V0.3, la Activity lo ere
 
 ## `docs/COMPENDIUM_SPEC.md`
 
-Contratto del compendio sostituibile: identità, ruleset, localizzazioni, source/licensing, repository e futuro adapter EcoGDR.
-
-Prefisso: `CMP-*`.
+Contratto del compendio sostituibile. L'esistenza della spec non promuove la feature in V0.1.
 
 ## `docs/FOUNDATION_GUARDRAILS.md`
 
-Guardrail per compatibilità futura EcoGDR senza introdurre account/auth/sync prematuramente.
+Guardrail EcoGDR futuri senza introdurre account/auth/sync prematuramente.
 
 ---
 
@@ -188,7 +163,7 @@ Guardrail per compatibilità futura EcoGDR senza introdurre account/auth/sync pr
 | lifecycle campagna V0.1 | Operational + Storage + UI/UX |
 | note/draft/titolo | Operational + Product Decisions + Domain + Storage |
 | cartelle | Operational + Domain + Storage + UI/UX |
-| Markdown/frontmatter | Operational + Domain + Search |
+| Markdown/frontmatter | Operational + Domain |
 | wikilink/backlink | Operational + Domain + UI/UX |
 | save/recovery/conflict | Operational + Storage + UI/UX |
 | rename/move/trash | Operational + Domain + Storage |
@@ -206,34 +181,26 @@ Guardrail per compatibilità futura EcoGDR senza introdurre account/auth/sync pr
 
 # 10. Documenti ancora da produrre
 
-Non serve più una `WIKILINK_SPEC.md` per sbloccare la V0.1: la semantica operativa è chiusa in `V01_OPERATIONAL_SPEC.md`.
+Non serve una `WIKILINK_SPEC.md` per sbloccare V0.1.
 
-Restano da produrre soltanto quando la roadmap li promuove:
+Restano da produrre solo quando la roadmap li promuove:
 
 1. `docs/AI_SPEC.md` prima della V0.5;
-2. specifiche personaggi/EcoGDR/integrations quando diventano feature concrete;
-3. eventuali addendum tecnici se l'implementazione scopre un problema non coperto dai contract attuali.
-
-Un addendum non può cambiare un comportamento approvato senza decisione di prodotto esplicita.
+2. specifiche personaggi/EcoGDR/integrations quando diventano feature reali;
+3. addendum tecnici solo se l'implementazione scopre un problema non coperto.
 
 ---
 
-# 11. Regola per i goal di implementazione
+# 11. Regola anti-over-engineering per i goal
 
-Un goal V0.1 deve avere forma equivalente a:
+Un goal deve implementare il **minimo design che soddisfa i requisiti approvati**.
 
-```text
-Implementa <area> V0.1 secondo:
-- V01_OPERATIONAL_SPEC.md: OPS-...
-- specifiche verticali applicabili: DOM-/STO-/SEA-/UX-...
+Non deve creare framework generici, package vuoti, astrazioni future o ottimizzazioni preventive solo perché la documentazione descrive un concetto separato.
 
-Non modificare i comportamenti approvati per semplificare l'implementazione.
-Se trovi una contraddizione reale non già risolta dall'Operational Spec, fermati sul requisito coinvolto invece di inventare un comportamento.
-Completa contract test e scenari OPS-ACC applicabili prima di dichiarare il goal concluso.
-```
+Se una soluzione semplice soddisfa i contract test e conserva i confini di responsabilità, è preferibile a una soluzione più generalizzata.
 
 ---
 
 ## Regola finale
 
-La documentazione è sufficiente quando l'agente deve principalmente decidere **come scrivere il codice**, non **che prodotto stiamo costruendo**.
+La documentazione è sufficiente quando l'agente deve decidere **come scrivere il codice**, ma non deve sentirsi obbligato a costruire infrastruttura che il prodotto non usa.
