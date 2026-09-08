@@ -8,7 +8,7 @@ La vecchia repository resta riferimento funzionale/storico, non base da refactor
 
 Principio:
 
-> costruire prima un campaign manager locale solido, poi aggiungere board, live, Discord e IA come strati separati.
+> costruire un prodotto locale solido e aggiungere ogni capacità remota come strato separato soltanto quando serve.
 
 ---
 
@@ -16,38 +16,35 @@ Principio:
 
 ## Local-first
 
-La cartella della campagna sul computer del DM è la fonte autorevole dei dati persistenti.
-
-Note, board e asset devono restare utilizzabili senza Internet.
+La cartella della campagna sul computer del DM è autorevole per note, board e asset.
 
 ## Stato separato per natura
 
-Non si mescolano:
+Distinguere:
 
-1. dati persistenti della campagna;
-2. stato temporaneo della sessione live;
+1. dati persistenti campagna;
+2. stato live temporaneo;
 3. stato UI/preferenze locali;
-4. dati derivati ricostruibili come search/backlink/graph.
+4. dati derivati ricostruibili;
+5. stato/credenziali di servizi esterni fuori dal vault.
 
 ## Confini utili, non layer per principio
 
-UI, filesystem, rete, Discord e IA hanno responsabilità diverse e non vanno mescolati.
+UI, filesystem, realtime, Discord, IA, auth e integrazioni hanno responsabilità diverse.
 
-Questo **non** significa creare package/layer vuoti in anticipo.
+Questo non obbliga a creare package vuoti in anticipo.
 
-Un confine diventa package separato quando dimensione o riuso lo giustificano.
+## Nessuna dipendenza futura anticipata
 
-## Compatibilità futura senza anticipazione
+Compendio, auth ed EcoGDR possono avere oggi un **gancio** senza avere oggi un backend finto.
 
-EcoGDR e Compendio seguono `FOUNDATION_GUARDRAILS.md` e `COMPENDIUM_SPEC.md`.
-
-Non si costruiscono API, auth, sync o modelli universali prima di avere servizi reali.
+Il core locale non importa SDK/API di servizi futuri.
 
 ---
 
 # 3. Repository
 
-Forma prevista, da creare progressivamente:
+Forma prevista, creata progressivamente:
 
 ```text
 campaign-manager-v2/
@@ -65,104 +62,108 @@ campaign-manager-v2/
     ui/
 ```
 
-`storage`, `application`, `search` o altri package separati sono ammessi **solo se servono davvero**; nella V0.1 possono vivere come moduli interni al desktop mantenendo i confini logici definiti da `V01_OPERATIONAL_SPEC.md`.
+`storage`, `application`, `search`, `auth` o `integrations` diventano package separati solo se dimensione/riuso reali lo giustificano.
+
+Un piccolo adapter può vivere inizialmente nel modulo che lo usa.
 
 ---
 
 # 4. Desktop
 
-Stack previsto:
+Stack:
 
 - Electron;
 - React;
 - TypeScript.
 
-Responsabilità:
+Responsabilità nel tempo:
 
 - campagne locali;
-- note/editor/lettura;
+- editor/lettura;
 - wikilink/backlink;
-- ricerca/graph;
+- ricerca/grafo;
 - board;
 - live controls;
-- pubblicazione asset;
-- IA futura;
-- Compendio come vista placeholder oggi e client cloud futuro.
+- IA;
+- Compendio;
+- Account/integrazioni future.
 
 Il renderer React non accede direttamente al filesystem.
 
-Forma desiderata:
+Forma:
 
 ```text
 UI
-→ servizio/use case applicativo
+→ service/use case
 → repository/adapter
 → filesystem / OS / network
 ```
 
-Non:
+---
+
+# 5. V0.1 — Moduli locali
+
+Le responsabilità applicative possono vivere nel desktop finché restano separate logicamente:
 
 ```text
-React component
-→ window.fs
-→ reindex
-→ preferences
-→ networking
+campaign lifecycle
+notes/folders
+save/recovery/conflict
+wikilinks
+search
+backlink/graph projections
+preferences
 ```
+
+Non serve un package per ogni voce.
+
+Normativa: `docs/V01_OPERATIONAL_SPEC.md`.
 
 ---
 
-# 5. Player client / Activity
+# 6. Board
 
-`apps/activity` è il lato del tavolo visto dal giocatore.
+```text
+board preparata (*.board.json)
+          ↓ pubblicazione futura
+stato live temporaneo
+```
 
-### V0.3
+Asset persistenti devono essere interni alla campagna; drag di asset esterno = import.
 
-Funziona come web client standalone con join code.
+Card da estratto contengono soltanto ciò che il DM ha selezionato.
 
-### V0.4
+Normativa: `docs/BOARD_SPEC.md`.
 
-Lo stesso client viene adattato a Discord tramite Embedded App SDK.
+---
+
+# 7. Player client / Activity
+
+`apps/activity` è il tavolo del giocatore.
+
+## V0.3
+
+Web standalone con join code.
+
+## V0.4
+
+Stesso client adattato a Discord.
 
 Conosce solo:
 
 - join/resume;
 - waiting state;
 - board pubblica;
-- snapshot/eventi realtime;
+- snapshot/eventi;
 - pan/zoom/ping;
-- token assegnati;
+- token controllabili;
 - asset pubblici.
 
-Non conosce filesystem, vault, note private, IA o configurazione DM.
-
-Discord è un adapter di ingresso/identity, non il fondamento del player client.
+Non conosce filesystem, vault, note private, API key o configurazione DM.
 
 ---
 
-# 6. Board
-
-La board è un contenuto persistente locale distinto dal suo stato live.
-
-```text
-board preparata (*.board.json)
-          ↓ pubblicazione
-stato live temporaneo
-```
-
-La board resta utilizzabile senza Internet.
-
-Gli asset persistenti referenziati devono essere interni alla campagna; asset esterni trascinati vengono importati.
-
-Specifica: `docs/BOARD_SPEC.md`.
-
----
-
-# 7. Relay realtime
-
-Il relay coordina Desktop e player senza esporre server/porte sul PC del DM.
-
-Forma:
+# 8. Relay realtime
 
 ```text
 Desktop DM
@@ -174,90 +175,208 @@ Relay / coordinatore sessione
 Web Player / Discord Activity
 ```
 
-Il relay è autorevole soltanto per stato runtime accettato della sessione, non per la campagna.
+Il relay è autorevole soltanto per runtime accettato.
 
-Tecnologie attualmente previste:
+Tecnologie previste, non dogmi:
 
 - Cloudflare Worker;
-- Durable Object come coordinatore per sessione;
-- R2 per copie temporanee degli asset pubblicati.
-
-Queste sono **scelte d'implementazione previste**, non principi di dominio. Se al momento della V0.3 una tecnologia equivalente è più semplice o quella prevista è cambiata, può essere sostituita mantenendo i contratti Live/Protocol.
+- Durable Object o equivalente come coordinatore sessione;
+- R2 o equivalente per asset pubblicati temporaneamente.
 
 Non sono ammessi:
 
 - tunnel verso il PC del DM;
-- database cloud completo del vault;
-- upload di contenuti privati non pubblicati.
+- copia cloud generale del vault;
+- upload di privati non pubblicati.
 
 ---
 
-# 8. Protocollo
+# 9. Protocollo
 
-Il protocollo V0.3 usa:
+V0.3 usa:
 
 ```text
-HTTPS → create/join/resume/assets/auth connessione
+HTTPS → create/join/resume/assets/autorizzazione connessione
 WSS   → snapshot + eventi realtime
 ```
 
 Concetti essenziali:
 
 - runtime schema validation;
-- `stateSeq` per mutazioni durevoli;
-- snapshot come recupero da reconnect/gap;
-- comandi specifici e autorizzati;
+- `stateSeq` per stato durevole;
+- snapshot per reconnect/gap;
+- comandi specifici;
+- server-side permission validation;
 - client non trusted.
 
-Non richiede event sourcing o un framework generale di idempotenza.
+Non richiede event sourcing o framework generale di idempotenza.
 
-Specifica: `docs/PROTOCOL_SPEC.md`.
+Normativa: `docs/PROTOCOL_SPEC.md`.
 
 ---
 
-# 9. Compendio
+# 10. Discord
 
-Direzione:
+Discord entra soltanto in V0.4.
+
+Adapter responsibilities:
 
 ```text
-oggi
+Activity instance
+identity Discord verificata
+pairing instance ↔ liveSession
+```
+
+Dopo l'ingresso parla lo stesso protocollo player V0.3.
+
+Normativa: `docs/DISCORD_ACTIVITY_SPEC.md`.
+
+---
+
+# 11. Autenticazione applicativa
+
+Oggi:
+
+```text
+Impostazioni → Account → placeholder
+```
+
+Nessun provider/runtime auth.
+
+Futuro:
+
+```text
+UI account / feature cloud
+→ AuthService piccolo
+→ adapter provider reale
+```
+
+Auth non entra in:
+
+- note/core;
+- board;
+- live credentials V0.3;
+- Discord identity V0.4;
+- API key provider IA.
+
+Token/secret futuri restano fuori dal vault.
+
+Normativa: `docs/AUTHENTICATION_SPEC.md`.
+
+---
+
+# 12. Compendio
+
+Oggi:
+
+```text
 UI Compendio
 → schermata WIP
-
-futuro
-UI Compendio
-→ piccolo service/client
-→ enciclopedia cloud
 ```
 
-Il Campaign Manager non contiene oggi un dataset finto locale.
-
-Una futura azione `Copia nelle note` crea normale Markdown locale indipendente dalla fonte cloud.
-
-Specifica: `docs/COMPENDIUM_SPEC.md`.
-
----
-
-# 10. IA
-
-L'IA resta un modulo separato.
+Futuro:
 
 ```text
-Campaign data / search
-→ AI
-→ proposta
-→ approvazione utente
-→ normali servizi applicativi
-→ filesystem
+UI Compendio
+→ CompendiumService/client
+→ enciclopedia cloud reale
 ```
 
-L'IA non scrive arbitrariamente sul filesystem.
+Nessun dataset locale finto.
 
-Embeddings/vector DB entrano solo se l'uso reale li giustifica.
+`Copia nelle note` usa i normali servizi locali e produce Markdown indipendente.
+
+Normativa: `docs/COMPENDIUM_SPEC.md`.
 
 ---
 
-# 11. UI condivisa
+# 13. IA V0.5
+
+```text
+request
+→ search/read use case controllati
+→ AiProvider adapter
+→ risposta + fonti
+→ eventuale proposta
+→ approvazione
+→ normale note service
+```
+
+Il provider non riceve filesystem arbitrario.
+
+Prima versione:
+
+- search lessicale;
+- read note by `NoteId`;
+- proposta edit singola nota;
+- proposta nuova nota.
+
+Non:
+
+- delete/rename/move;
+- bulk edit;
+- board/live tools;
+- agent framework obbligatorio;
+- vector DB obbligatorio.
+
+Normativa: `docs/AI_SPEC.md`.
+
+---
+
+# 14. Personaggi V0.6
+
+V0.6 riusa le note esistenti come riferimento personaggio.
+
+```text
+BoardToken
+  └─ characterNoteId? → NoteId
+```
+
+Non esiste un character database universale.
+
+La stessa nota può essere collegata a token in board diverse.
+
+Il collegamento è privato al desktop; il player non riceve NoteId/Markdown.
+
+Normativa: `docs/V06_CHARACTERS_INTEGRATIONS_SPEC.md`.
+
+---
+
+# 15. Provider personaggio futuri
+
+Quando esiste EcoGDR/BeFolder o altra sorgente reale:
+
+```text
+Desktop UI
+→ piccolo CharacterProvider/service
+→ adapter API reale
+```
+
+Non serve un plugin framework universale.
+
+La prima integrazione preferisce collegamento/refresh espliciti, non sync continuo.
+
+---
+
+# 16. EcoGDR futuro
+
+`externalBinding` collega semanticamente campagna locale e remota.
+
+```text
+local campaign
+↔ binding opzionale
+↔ remote campaign
+```
+
+Il binding non è sync.
+
+Ogni futura operazione di import/pubblicazione/update è un use case separato progettato contro API reali.
+
+Normativa: `docs/ECOGDR_INTEGRATION_SPEC.md`.
+
+---
+
+# 17. UI condivisa
 
 `packages/ui` contiene componenti realmente condivisi solo quando utile.
 
@@ -265,21 +384,21 @@ Meglio duplicare un piccolo componente desktop/player che creare un'astrazione f
 
 ---
 
-# 12. Regola anti-over-engineering
+# 18. Regola anti-over-engineering
 
-Quando due soluzioni rispettano lo stesso comportamento approvato, preferire quella con:
+Quando due soluzioni rispettano lo stesso comportamento, preferire quella con:
 
 - meno stato;
 - meno livelli;
-- meno servizi da mantenere;
+- meno servizi;
 - meno sincronizzazione;
 - recupero più semplice;
-- possibilità di sostituzione futura.
+- sostituzione futura più facile.
 
-Non generalizzare una soluzione locale finché non esiste un secondo caso reale che richiede l'astrazione.
+Non generalizzare una soluzione finché non esiste un secondo caso reale che richiede l'astrazione.
 
 ---
 
 ## Regola finale
 
-L'architettura è riuscita se ogni versione può essere costruita senza obbligare la precedente a conoscere in anticipo dettagli della successiva.
+L'architettura è riuscita se ogni versione può essere costruita e usata senza fingere che la successiva esista già.
