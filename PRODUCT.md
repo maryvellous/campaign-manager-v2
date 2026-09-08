@@ -1,544 +1,486 @@
 # PRODUCT.md — Diaspro RPG Campaign Manager v2
 
-## 1. Scopo del prodotto
+## 1. Scopo
 
-**Diaspro RPG Campaign Manager v2** è un'applicazione desktop local-first per Dungeon Master che permette di organizzare, consultare e usare durante la partita tutto il materiale di una campagna TTRPG.
+**Diaspro RPG Campaign Manager v2** è un'applicazione desktop local-first per Dungeon Master che permette di organizzare, consultare e usare durante la partita il materiale di una campagna TTRPG.
 
 Il prodotto deve rendere semplice:
 
-- organizzare note, luoghi, PNG, fazioni, quest e materiale di campagna;
-- collegare le informazioni tra loro tramite wikilink;
-- esplorare le relazioni tra note tramite una vista grafo derivata dai wikilink;
-- usare lavagne visive con mappe, note e token;
-- condividere con i giocatori solo ciò che serve durante una sessione live;
-- interrogare la propria campagna tramite un assistente IA senza perdere il controllo sui dati o sulle modifiche.
+- organizzare note e cartelle;
+- collegare informazioni con wikilink;
+- cercare e vedere relazioni tramite grafo;
+- preparare board con mappe, immagini, testi e token;
+- condividere ai giocatori soltanto ciò che il DM decide;
+- usare un assistente IA opzionale senza perdere controllo sui file;
+- aggiungere in futuro servizi cloud/integrations senza trasformare la campagna locale in un database remoto.
 
 La **Desktop App del DM è il prodotto principale**.
 
-Discord Activity, relay realtime e assistente IA sono moduli collegati al Campaign Manager, non il suo fondamento.
-
 ---
 
-## 2. Principio fondamentale
+# 2. Principio fondamentale
 
 La v2 è un progetto nuovo.
 
-La repository precedente viene mantenuta esclusivamente come:
+La repository precedente resta soltanto:
 
-- riferimento funzionale;
+- riferimento funzionale/storico;
 - archivio di idee;
-- fonte per eventuali formati dati o comportamenti da recuperare;
+- eventuale fonte di formati/comportamenti da valutare;
 - esempio di problemi architetturali da non ripetere.
 
-**Non si effettua un refactor progressivo della v1 e non si copia codice senza una motivazione esplicita.**
-
-Ogni componente della v2 deve essere progettato come se il prodotto venisse costruito oggi da zero.
+Non è una base da refactorare e non si copia codice senza motivazione esplicita.
 
 ---
 
-## 3. Utente principale
+# 3. Utenti
 
-### Dungeon Master
+## Dungeon Master
 
-Il DM deve poter gestire una campagna senza conoscere:
+Il DM non deve dover capire database, server, networking o cloud per usare il prodotto.
 
-- database;
-- server;
-- networking;
-- configurazioni cloud;
-- formati proprietari.
+Esperienza ideale:
 
-L'esperienza ideale è:
+```text
+apri una cartella
+→ scrivi e organizza
+→ prepara una board
+→ avvia una sessione
+→ mostra solo ciò che vuoi
+→ chiudi senza gestire infrastruttura
+```
 
-1. apre una cartella di campagna;
-2. crea o modifica contenuti;
-3. esplora collegamenti e relazioni tra note;
-4. prepara una lavagna;
-5. avvia una sessione;
-6. decide cosa mostrare ai giocatori;
-7. chiude l'app senza dover gestire infrastruttura tecnica.
+## Giocatori
 
-### Giocatori
+Non installano Campaign Manager.
 
-I giocatori non devono installare il Campaign Manager.
+Durante il live usano un client web leggero, standalone o dentro Discord, per:
 
-Durante una sessione possono usare una web app leggera, preferibilmente dentro Discord, per vedere ciò che il DM condivide e interagire con gli elementi autorizzati.
-
----
-
-## 4. Principi di prodotto
-
-### Local-first
-
-I dati della campagna appartengono all'utente e risiedono sul suo computer.
-
-La cartella della campagna è la fonte autorevole dei dati persistenti.
-
-Il cloud viene usato solo quando serve per funzionalità live o asset condivisi.
-
-### Nessun lock-in
-
-Le informazioni principali devono essere memorizzate in formati leggibili e portabili.
-
-Preferenze:
-
-- Markdown per le note;
-- JSON per dati strutturati;
-- file `.canvas` o formato equivalente documentato per le lavagne;
-- cartelle normali per immagini e allegati.
-
-### Separazione delle responsabilità
-
-Il prodotto è composto da moduli distinti:
-
-- Campaign Manager Desktop;
-- Discord/Web Activity;
-- Relay realtime;
-- Assistente IA.
-
-Un modulo non deve conoscere dettagli interni degli altri oltre alle interfacce necessarie.
-
-### Complessità solo quando serve
-
-Non viene introdotta infrastruttura perché “potrebbe servire”.
-
-Una tecnologia entra nel progetto solo quando risolve un problema reale della versione corrente.
+- vedere la board pubblica;
+- fare pan/zoom/ping;
+- muovere soltanto token assegnati.
 
 ---
 
-## 5. Desktop Campaign Manager
+# 4. Principi di prodotto
 
-La Desktop App è il cuore del prodotto.
+## Local-first
 
-Responsabilità principali:
+La cartella della campagna sul computer del DM è la fonte autorevole dei dati persistenti.
 
-- apertura e gestione delle campagne;
-- navigazione del vault;
-- editor Markdown;
-- wikilink;
-- metadati;
-- ricerca;
-- vista grafo delle relazioni tra note;
-- lavagne;
-- token;
-- strumenti di sessione;
-- configurazione dell'IA;
-- gestione dell'avvio delle sessioni live.
+Note, board e asset devono restare utilizzabili senza Internet.
 
-La Desktop App deve funzionare normalmente anche senza Discord, relay o assistente IA.
+## Nessun lock-in
+
+Formati principali:
+
+- Markdown per note;
+- JSON documentato per board/dati strutturati;
+- normali cartelle/file per asset.
+
+## Cloud soltanto quando serve
+
+Il cloud entra per funzioni realmente remote:
+
+- live relay;
+- asset pubblicati temporaneamente;
+- futuro Compendio cloud;
+- future integrazioni.
+
+Non ospita automaticamente il vault.
+
+## Account opzionale
+
+Campaign Manager funziona senza account.
+
+Un futuro login viene richiesto soltanto da una feature cloud che ne abbia realmente bisogno.
+
+## Modifiche esplicite
+
+Collegare, copiare, pubblicare e sincronizzare sono azioni diverse.
+
+Nessuna di queste implica automaticamente le altre.
+
+## Complessità solo quando serve
+
+Non si costruiscono framework, database, plugin system o layer perché “potrebbero servire”.
+
+Se due soluzioni danno lo stesso comportamento, si preferisce quella con meno stato e meno manutenzione.
 
 ---
 
-## 6. Campagna e persistenza
+# 5. Desktop Campaign Manager
 
-Una campagna è una normale cartella sul filesystem.
+Responsabilità nel tempo:
 
-Esempio:
+- campagne locali;
+- note/editor/lettura;
+- wikilink/backlink;
+- ricerca e grafo;
+- board;
+- strumenti live;
+- configurazione IA opzionale;
+- Compendio;
+- ganci futuri account/integrazioni.
+
+La Desktop App deve funzionare normalmente anche senza relay, Discord, IA, Compendio cloud o account.
+
+---
+
+# 6. Campagna e persistenza
+
+Una campagna è una normale cartella.
+
+Esempio possibile:
 
 ```text
 My Campaign/
   Notes/
   Characters/
   Locations/
-  Sessions/
   Boards/
   Assets/
   campaign.json
 ```
 
-La struttura non deve essere rigidamente imposta: l'utente può organizzare liberamente le proprie cartelle.
+La struttura non è imposta rigidamente.
 
-`campaign.json` contiene solo metadati e configurazioni strettamente necessarie alla campagna.
+`campaign.json` contiene soltanto metadata tecnici necessari, come `schemaVersion`, `campaignId` ed eventuale futuro `externalBinding`.
 
-Le preferenze puramente UI non devono contaminare i contenuti della campagna se non hanno motivo di essere condivise o portabili.
+Preferenze UI, recovery, indici e credenziali non contaminano il vault.
 
 ---
 
-## 7. Note
+# 7. Note
 
-Le note sono file Markdown.
+Le note sono Markdown.
 
-Funzionalità core:
+Core:
 
-- creazione;
-- modifica;
-- rinomina;
-- eliminazione;
+- create/edit/rename/move/trash;
 - cartelle;
-- wikilink `[[Nota]]`;
+- wikilink;
+- backlink;
 - ricerca;
-- frontmatter opzionale.
+- grafo.
 
-Il sistema deve distinguere chiaramente tra:
+Frontmatter dell'utente viene preservato, ma la V0.1 non introduce un sistema di metadata applicativi/alias solo perché sarebbe possibile.
 
-- contenuto salvato;
-- stato dell'editor;
-- indice di ricerca.
-
-L'indice di ricerca è sempre derivato e ricostruibile.
-
-### Vista grafo
-
-Il grafo della V0.1 è una vista derivata dalle note e dai wikilink, non un database separato della campagna.
-
-- i nodi rappresentano note;
-- le relazioni derivano dai wikilink risolti;
-- filtri, posizione della camera e disposizione visuale sono stato UI/preferenze locali;
-- trascinare un nodo non modifica il contenuto delle note;
-- il grafo deve poter essere ricostruito dai dati autorevoli.
-
-I comportamenti UI/UX dettagliati sono normati da `docs/UI_UX_SPEC_V01.md`.
+Search/backlink/graph sono dati derivati e ricostruibili.
 
 ---
 
-## 8. Lavagne
+# 8. Board
 
-Le lavagne servono per preparazione e gioco.
+Formato persistente:
 
-Devono poter contenere almeno:
+```text
+*.board.json
+```
+
+La board contiene:
 
 - testo;
-- note della campagna;
 - immagini;
 - token;
-- gruppi;
-- collegamenti.
+- card collegate alle note/estratti;
+- gruppi semplici;
+- collegamenti visuali.
 
-La persistenza della lavagna deve essere separata dalla sua sincronizzazione realtime.
+La board preparata è distinta dallo stato live.
 
-Una lavagna deve essere pienamente utilizzabile anche senza avviare una sessione online.
+Asset esterni trascinati vengono importati nella campagna; una board salvata non dipende da path assoluti esterni.
 
----
-
-## 9. Sessione live
-
-Una sessione live è uno stato temporaneo distinto dai dati permanenti della campagna.
-
-Può contenere:
-
-- lavagna attualmente condivisa;
-- token visibili;
-- posizione corrente dei token;
-- giocatori collegati;
-- permessi;
-- eventuali informazioni temporanee della sessione.
-
-Il DM decide esplicitamente cosa viene pubblicato.
-
-La chiusura del relay o la disconnessione di un giocatore non deve compromettere i dati locali della campagna.
+Non è un VTT completo: niente griglia/LOS/automazioni/iniziativa come requisito iniziale.
 
 ---
 
-## 10. Activity giocatori
+# 9. Sessione live
 
-La Activity è una web app separata e leggera.
+Una sessione live è stato temporaneo distinto dai file campagna.
 
-Deve conoscere solo ciò che serve al giocatore.
+Contiene soltanto ciò che serve a giocare:
 
-Può:
+- board corrente e stato pubblico;
+- partecipanti;
+- token/controller;
+- posizioni live;
+- reveal/hide;
+- presenza e stato sessione.
 
-- identificare il giocatore;
-- entrare in una sessione;
-- visualizzare la board condivisa;
-- ricevere aggiornamenti realtime;
-- muovere i token autorizzati;
-- mostrare eventuali informazioni del personaggio.
+Il relay è autorevole sul runtime accettato, non sulla campagna.
 
-Non deve avere accesso a:
+Gli elementi privati non vengono inviati ai player e poi nascosti lato client.
 
-- filesystem del DM;
-- vault completo;
-- note private;
-- API key;
-- configurazione IA;
-- funzioni amministrative.
-
-La Activity deve essere utilizzabile anche fuori da Discord durante lo sviluppo e i test.
-
-L'integrazione Discord è un adapter, non il fondamento del client.
+Reconnect/resync usa snapshot corrente, non replay completo obbligatorio.
 
 ---
 
-## 11. Relay realtime
+# 10. Player web e Discord
 
-Il relay è un servizio cloud minimale.
+Il player web V0.3 funziona standalone con join code e senza account Campaign Manager.
 
-Architettura prevista:
+La V0.4 aggiunge Discord come adapter:
+
+- Activity instance;
+- pairing master-only;
+- identity Discord verificata;
+- join giocatori senza codice manuale.
+
+Discord non crea un secondo protocollo e non diventa l'autorità della sessione.
+
+---
+
+# 11. Relay e asset live
+
+Il desktop apre soltanto connessioni outbound HTTPS/WSS.
+
+Nessun tunnel/server pubblico sul PC del DM.
+
+Tecnologia prevista, sostituibile se necessario:
+
+- Cloudflare Worker;
+- coordinatore stateful per sessione (previsto Durable Object);
+- R2 o equivalente per copie temporanee degli asset pubblicati.
+
+Gli asset live vengono caricati solo quando devono essere mostrati e possono essere rimossi dopo la sessione secondo policy operativa.
+
+Il protocollo trasmette riferimenti, non Base64 pesante dentro ogni evento.
+
+---
+
+# 12. Compendio
+
+Oggi il Compendio è una **destinazione UI WIP** senza backend/dataset finto.
+
+Direzione futura:
 
 ```text
-Desktop DM
-    |
-    | WebSocket
-    v
-Cloudflare Relay
-    ^
-    | WebSocket
-    |
-Player Activity
+Compendio cloud
+→ cerca/esplora
+→ apri voce
+→ leggi
+→ Copia nelle note
+→ Markdown locale indipendente
 ```
 
-Il relay non è il database principale della campagna.
+Il Campaign Manager non modifica la fonte canonica del Compendio.
 
-Serve per:
+Una copia locale non si sincronizza automaticamente con la voce cloud.
 
-- creare e identificare sessioni live;
-- inoltrare eventi realtime;
-- mantenere lo stato temporaneo necessario;
-- distribuire asset condivisi quando opportuno.
+Se il vero servizio non richiede account, Campaign Manager non impone login artificiale.
 
-Il PC del DM non deve esporre direttamente server o porte pubbliche.
-
-Non sono previsti tunnel verso il computer del DM.
+Specifica: `docs/COMPENDIUM_SPEC.md`.
 
 ---
 
-## 12. Asset condivisi
+# 13. Autenticazione applicativa
 
-Le immagini locali restano nella campagna.
-
-Quando un'immagine deve essere mostrata ai giocatori, può essere pubblicata temporaneamente o permanentemente su storage dedicato.
-
-Cloudflare R2 è il candidato principale.
-
-Il protocollo realtime deve trasmettere riferimenti agli asset, non grandi payload Base64 dentro i messaggi WebSocket.
-
----
-
-## 13. Assistente IA
-
-L'IA è un modulo opzionale.
-
-Il Campaign Manager deve rimanere completamente utilizzabile senza configurare alcun provider.
-
-### Funzioni previste
-
-L'assistente può:
-
-- cercare informazioni nella campagna;
-- rispondere a domande;
-- riassumere;
-- trovare contraddizioni;
-- proporre nuovi contenuti;
-- proporre modifiche alle note.
-
-### Regola sulle modifiche
-
-L'IA non modifica direttamente i file della campagna.
-
-Flusso:
+Oggi:
 
 ```text
-richiesta utente
-      ↓
-ricerca nella campagna
-      ↓
-IA
-      ↓
-proposta
-      ↓
-diff / anteprima
-      ↓
-approvazione utente
-      ↓
-Campaign Service
-      ↓
-filesystem
+Impostazioni → Account
+→ messaggio: account non necessario / in arrivo
 ```
 
-Le operazioni distruttive o modificative devono passare attraverso i normali servizi applicativi.
+Nessun login iniziale, avatar finto o token placeholder.
 
-### Retrieval
+Futuro:
 
-La prima implementazione deve privilegiare una soluzione semplice e locale.
+- auth contestuale quando una feature reale lo richiede;
+- preferenza per browser/system auth flow;
+- credenziali fuori dal vault;
+- logout/session expiry degradano soltanto funzioni cloud;
+- live Discord identity e API key IA restano sistemi distinti dall'account Campaign Manager.
 
-BM25 o altra ricerca lessicale è sufficiente finché i requisiti reali non dimostrano la necessità di embeddings o vector database.
-
----
-
-## 14. Tipi di stato
-
-Il progetto distingue esplicitamente tre categorie.
-
-### Dati persistenti della campagna
-
-Esempi:
-
-- note;
-- board;
-- personaggi;
-- configurazione della campagna.
-
-### Stato live
-
-Esempi:
-
-- sessione attiva;
-- giocatori connessi;
-- board pubblicata;
-- posizione realtime dei token.
-
-### Stato UI
-
-Esempi:
-
-- modale aperta;
-- tab selezionato;
-- pannello attivo;
-- zoom;
-- sidebar;
-- camera, filtri e selezione del grafo.
-
-Queste categorie non devono essere fuse in un unico store globale.
+Specifica: `docs/AUTHENTICATION_SPEC.md`.
 
 ---
 
-## 15. Sicurezza
+# 14. Assistente IA V0.5
+
+L'IA è opzionale.
+
+Funzioni iniziali:
+
+- domande sulla campagna;
+- riassunti;
+- confronto/contraddizioni;
+- domande sulla nota/selezione;
+- proposta modifica di una nota;
+- proposta nuova nota.
+
+Retrieval iniziale:
+
+```text
+search locale
+→ note necessarie
+→ provider
+→ risposta + fonti
+```
+
+La prima implementazione usa la ricerca lessicale già esistente; embeddings/vector DB entrano solo se giustificati da test reali.
+
+Le modifiche richiedono diff/anteprima e approvazione.
+
+V0.5 non fornisce all'IA delete/rename/move/bulk edit/board/live commands.
+
+Specifica: `docs/AI_SPEC.md`.
+
+---
+
+# 15. Personaggi e integrazioni V0.6
+
+V0.6 non costruisce un character builder universale.
+
+Una normale nota può essere collegata a un token come nota personaggio.
+
+Flussi:
+
+```text
+token → Collega nota personaggio…
+```
+
+```text
+nota → Crea token da questa nota…
+```
+
+La stessa nota può essere riferimento in più board; la nota resta privata al DM.
+
+Future sorgenti EcoGDR/BeFolder entrano dietro piccoli adapter soltanto quando esiste il provider reale.
+
+Nessun plugin framework, importatore universale o sync continuo come prerequisito.
+
+Specifica: `docs/V06_CHARACTERS_INTEGRATIONS_SPEC.md`.
+
+---
+
+# 16. EcoGDR futuro
+
+Una campagna può in futuro avere un `externalBinding` opzionale.
+
+Flusso previsto:
+
+```text
+Collega campagna
+→ scegli campagna remota
+→ conferma binding
+```
+
+**Collegare non significa sincronizzare o pubblicare.**
+
+Ogni operazione dati futura viene progettata separatamente contro API reali.
+
+Scollegare non elimina dati locali.
+
+Specifica: `docs/ECOGDR_INTEGRATION_SPEC.md`.
+
+---
+
+# 17. Tipi di stato
+
+Il progetto distingue sempre:
+
+1. dati persistenti campagna;
+2. stato live temporaneo;
+3. stato UI/preferenze;
+4. dati derivati ricostruibili;
+5. stato/credenziali di servizi esterni fuori dal vault.
+
+Non vengono fusi in un unico store globale.
+
+---
+
+# 18. Sicurezza
 
 Principi minimi:
 
-- nessun secret nel frontend web;
-- nessuna API key dell'utente inviata ai giocatori;
-- Electron con `contextIsolation` attivo;
-- filesystem accessibile tramite API controllate;
-- validazione dei messaggi realtime;
-- autorizzazione dei movimenti dei token lato autorevole;
-- il client giocatore non è mai considerato trusted.
+- Electron `contextIsolation`;
+- renderer senza filesystem arbitrario;
+- client player non trusted;
+- validazione runtime dei messaggi rete;
+- token movement autorizzato lato server;
+- private data non inviata ai player;
+- API key/token auth fuori dai file campagna;
+- nessun secret nei log/client player.
 
 ---
 
-## 16. Non-obiettivi iniziali
+# 19. Roadmap
 
-La prima fase del progetto non deve tentare di offrire:
-
-- un VTT completo concorrente di Foundry o Roll20;
-- hosting completo delle campagne;
-- multiplayer persistente 24/7;
-- marketplace;
-- sistemi di regole automatici per ogni TTRPG;
-- character builder universale;
-- voice/video;
-- database vettoriale cloud;
-- collaborazione simultanea sull'intero vault;
-- app mobile nativa.
-
-Queste funzionalità potranno essere valutate solo dopo che il nucleo del prodotto sarà stabile.
-
----
-
-## 17. Roadmap di prodotto
-
-### v0.1 — Campaign Manager
-
-Obiettivo:
+Ordine:
 
 ```text
-apri campagna
-→ naviga note
-→ crea/modifica
-→ wikilink
-→ ricerca o esplora nel grafo
-→ salva
-→ chiudi
-→ riapri senza perdere nulla
+V0.1  Campaign Manager locale
+→ V0.2 Board
+→ V0.3 Live web
+→ V0.4 Discord Activity
+→ V0.5 Assistente IA
+→ V0.6 Personaggi leggeri + ganci integrazione
+→ Auth/Compendio cloud quando backend reale esiste
+→ EcoGDR quando API/contratti reali esistono
 ```
 
-Include:
-
-- shell desktop;
-- filesystem;
-- note;
-- editor/lettura;
-- wikilink e backlink;
-- ricerca base;
-- command palette;
-- graph view derivata dai wikilink;
-- recovery e gestione conflitti locali.
-
-Esclude esplicitamente Discord, realtime, cloud sync e IA.
-
-### v0.2 — Lavagne
-
-Include:
-
-- board;
-- note;
-- immagini;
-- token;
-- salvataggio affidabile.
-
-### v0.3 — Live Session
-
-Include:
-
-- relay;
-- protocollo realtime;
-- client web standalone;
-- board condivisa;
-- sincronizzazione token.
-
-### v0.4 — Discord Activity
-
-Il client web già funzionante viene integrato nel Discord Embedded App SDK.
-
-### v0.5 — Assistente IA
-
-Include:
-
-- retrieval locale;
-- chat;
-- domande sulla campagna;
-- proposte di modifica;
-- diff e approvazione.
-
-### v0.6 — Personaggi e integrazioni
-
-Solo dopo l'uso reale del sistema si decide la forma definitiva di:
-
-- schede personaggio;
-- eventuale bot Discord;
-- import/export;
-- ulteriori strumenti di sessione.
+Dettagli operativi: `ROADMAP.md`.
 
 ---
 
-## 18. Gate di sviluppo
+# 20. Non-obiettivi iniziali
 
-Una fase non viene considerata completata perché “sembra funzionare”.
+Non si tenta automaticamente di costruire:
 
-Ogni fase deve avere:
+- VTT completo concorrente Foundry/Roll20;
+- hosting cloud del vault;
+- multiplayer persistente 24/7;
+- marketplace;
+- rules engine universale;
+- character builder universale;
+- voice/video;
+- collaborazione simultanea dell'intero vault;
+- vector database cloud;
+- plugin marketplace;
+- sync cloud bidirezionale generico.
+
+---
+
+# 21. Gate di sviluppo
+
+Una fase è completa solo con:
 
 - requisiti definiti;
-- test automatici per la logica critica;
-- smoke test reale;
-- documentazione aggiornata;
-- nessuna regressione nota bloccante.
+- test della logica critica;
+- smoke/E2E del flusso reale;
+- documentazione allineata;
+- nessuna regressione bloccante;
+- nessuna perdita dati nota.
 
-La fase successiva non deve essere usata per nascondere problemi irrisolti della precedente.
+La fase successiva non viene usata per nascondere problemi della precedente.
 
 ---
 
-## 19. Criteri di successo
+# 22. Criteri di successo
 
 La v2 è riuscita se:
 
-1. una campagna può vivere per anni senza dipendere dai servizi cloud del progetto;
-2. un problema del relay non può corrompere il vault;
-3. Discord può cambiare senza obbligare a riscrivere il Campaign Manager;
-4. un provider IA può cambiare senza modificare l'editor o il filesystem;
-5. ogni modulo può essere testato separatamente;
-6. una nuova feature ha un luogo architetturale evidente in cui essere implementata;
-7. il codice resta comprensibile anche dopo mesi senza lavorarci.
+1. una campagna può vivere per anni senza i servizi cloud del progetto;
+2. relay/cloud/provider IA non possono corrompere il vault;
+3. Discord può cambiare senza riscrivere Campaign Manager;
+4. provider IA può cambiare senza riscrivere editor/filesystem;
+5. account può essere assente senza bloccare il prodotto;
+6. Compendio può essere offline senza bloccare la campagna;
+7. EcoGDR può essere collegato/scollegato senza prendere possesso dei file locali;
+8. ogni nuova feature ha un confine evidente senza creare layer prematuri.
 
 ---
 
-## 20. Regola anti-caos
+## Regola anti-caos
 
-Prima di aggiungere una nuova feature bisogna rispondere a tre domande:
+Prima di aggiungere una feature:
 
 1. **A quale dominio appartiene?**
 2. **Qual è il modulo responsabile?**
-3. **Quale problema reale della versione corrente risolve?**
+3. **Quale problema reale risolve adesso?**
 
-Se non esiste una risposta chiara, la feature non entra ancora nel progetto.
+Se non c'è una risposta chiara, la feature non entra ancora.
 
 **Prima il cavallo. Poi i brillantini.**
