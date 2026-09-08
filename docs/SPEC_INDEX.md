@@ -13,13 +13,14 @@ Un agente o sviluppatore non dovrebbe iniziare una milestone leggendo documenti 
 In caso di conflitto:
 
 1. decisioni esplicite più recenti approvate dall'utente;
-2. specifica normativa più specifica per il comportamento interessato;
-3. `PRODUCT.md`;
-4. `architecture.md`;
-5. `ROADMAP.md`;
-6. `docs/FOUNDATION_GUARDRAILS.md`;
-7. `docs/DESIGN_DIRECTION.md`;
-8. mock/reference artifact.
+2. `docs/V01_PRODUCT_DECISIONS.md` per le decisioni V0.1 già consolidate;
+3. specifica normativa più specifica per il comportamento interessato;
+4. `PRODUCT.md`;
+5. `architecture.md`;
+6. `ROADMAP.md`;
+7. `docs/FOUNDATION_GUARDRAILS.md`;
+8. `docs/DESIGN_DIRECTION.md`;
+9. mock/reference artifact.
 
 Una contraddizione tra documenti non deve essere risolta inventando una terza soluzione: va riallineata la documentazione.
 
@@ -60,7 +61,27 @@ Risponde a:
 
 ---
 
-# 3. Guardrail di fondazione
+# 3. Decisioni e guardrail di fondazione
+
+## `docs/V01_PRODUCT_DECISIONS.md`
+
+Registro normativo delle decisioni V0.1 approvate dopo la prima stesura delle specifiche verticali.
+
+Definisce in particolare:
+
+- inizializzazione automatica e non distruttiva di una nuova cartella campagna;
+- comportamento quando una campagna viene copiata e il `CampaignId` risulta duplicato;
+- nuova nota come draft temporaneo;
+- titolo automatico ricavato dalle prime 1–3 parole significative;
+- collisioni del titolo automatico senza suffissi inventati;
+- conferma della rinomina tramite Invio/blur e annullamento tramite Esc;
+- comportamento dei wikilink univoci, ambigui e mancanti;
+- ricerca full-text come vista centrale distinta dalla command palette;
+- Windows come piattaforma ufficialmente supportata per la V0.1, mantenendo architettura portability-first.
+
+Prefisso decisioni: `DEC-V01-*`.
+
+Quando una formulazione più vecchia in una specifica verticale è incompatibile con questo registro, prevale la decisione registrata qui fino al riallineamento editoriale.
 
 ## `docs/FOUNDATION_GUARDRAILS.md`
 
@@ -219,19 +240,22 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 
 | Area | Specifica primaria | Livello principale |
 |---|---|---|
-| apertura campagna | UI/UX + Storage | desktop/application + storage |
+| apertura campagna | V01 Decisions + UI/UX + Storage | desktop/application + storage |
+| copia/duplicazione campagna | V01 Decisions + Storage | application + storage |
+| nuova nota e titolo automatico | V01 Decisions + UI/UX + Domain + Storage | application orchestration |
 | note e identità | Domain + Storage | core + storage |
 | autosave | UI/UX + Storage | application + storage |
 | recovery | UI/UX + Storage | application + storage |
 | modifica esterna | Domain + Storage + UI/UX | tutti e tre |
-| rename/move | Domain + Storage + UI/UX | application orchestration |
-| wikilink | Domain | core |
+| rename/move | V01 Decisions + Domain + Storage + UI/UX | application orchestration |
+| wikilink | V01 Decisions + Domain | core + UI |
 | backlink | Domain | derived projection |
-| ricerca vault | Search + UI/UX | derived index + application |
+| ricerca vault | V01 Decisions + Search + UI/UX | derived index + application |
 | command palette | Search + UI/UX | application + action registry |
 | graph view | UI/UX + Domain | UI + derived projection |
 | folder colors | UI/UX + Domain + Design | preferences + UI |
 | cestino | UI/UX + Domain + Storage | application + OS adapter |
+| piattaforma V0.1 | V01 Decisions + Architecture/Storage | Windows adapter + quality gate |
 | compendio | Compendium Spec | repository adapter + application |
 | EcoGDR futuro | Foundation Guardrails | future adapter boundary |
 
@@ -243,7 +267,7 @@ Per arrivare al modello "pochi goal, poca interpretazione" mancano soprattutto s
 
 Ordine consigliato:
 
-1. `docs/WIKILINK_SPEC.md` — solo se il livello di dettaglio in `DOMAIN_MODEL.md` non basta durante l'implementazione;
+1. `docs/WIKILINK_SPEC.md` — solo se il livello di dettaglio in `DOMAIN_MODEL.md` e nel registro decisionale non basta durante l'implementazione;
 2. `docs/BOARD_SPEC.md` — prima della V0.2;
 3. `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md` — prima della V0.3;
 4. `docs/DISCORD_ACTIVITY_SPEC.md` — prima della V0.4;
@@ -262,6 +286,7 @@ Esempio:
 
 ```text
 Implementa ricerca e accesso rapido V0.1 secondo:
+- V01_PRODUCT_DECISIONS.md per le decisioni approvate che incidono sul flusso;
 - SEARCH_SPEC.md: SEA-CORE-*, SEA-DOC-*, SEA-RANK-*, SEA-IDX-*, SEA-INC-*, SEA-CMD-*
 - DOMAIN_MODEL.md per NoteId, NoteRevision e wikilink canonici
 - STORAGE_SPEC.md per persistenza, revisioni e cache derivate
