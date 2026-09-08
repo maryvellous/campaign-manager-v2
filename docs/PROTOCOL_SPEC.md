@@ -1,21 +1,16 @@
 # Campaign Manager v2 — Realtime Protocol Specification
 
-## 1. Scopo e stato
+## 1. Scopo
 
-Questo documento definisce il protocollo condiviso tra:
+Questo documento definisce il protocollo condiviso tra Desktop, relay e player web della V0.3. La Discord Activity V0.4 riusa lo stesso protocollo dopo il proprio flusso di ingresso.
 
-- Campaign Manager Desktop;
-- relay/session backend;
-- client web standalone;
-- futura Discord Activity.
-
-La prima versione del protocollo appartiene alla **V0.3**. Discord V0.4 deve usare lo stesso protocollo e aggiungere soltanto l'adapter Discord per identity/join.
-
-I requisiti con prefisso `PRO-*` sono vincolanti.
+Prefisso requisiti: `PRO-*`.
 
 Principio:
 
-> gli eventi realtime sincronizzano lo stato live; non trasferiscono il vault e non diventano un secondo formato della campagna.
+> snapshot corrente per recuperare lo stato; eventi incrementali per rendere il realtime fluido.
+
+Il protocollo non trasferisce il vault e non diventa un secondo formato della campagna.
 
 ---
 
@@ -23,228 +18,122 @@ Principio:
 
 ## PRO-TRANS-001 — HTTPS + WSS
 
-La V0.3 usa:
-
-- **HTTPS** per create/join/resume, gestione codici, ticket WebSocket e pubblicazione/risoluzione asset;
-- **WebSocket sicuro (`wss`)** per stato e azioni realtime.
+- HTTPS per create/join/resume, gestione del join code, autorizzazione connessioni e asset;
+- WSS per snapshot, presenza, board live, token e ping.
 
 Il desktop apre soltanto connessioni in uscita.
 
-## PRO-TRANS-002 — Durable Object per sessione
+## PRO-TRANS-002 — Coordinatore per sessione
 
-Ogni `liveSessionId` viene instradato a una singola unità coordinatrice stateful del relay, prevista come Cloudflare Durable Object.
+Ogni live session deve avere un singolo coordinatore logico capace di serializzare le mutazioni accettate e ricostruire lo stato runtime necessario dopo restart/hibernation.
 
-Quella unità serializza l'ordine delle mutazioni della sessione e mantiene lo stato runtime necessario.
+Cloudflare Durable Objects è l'implementazione prevista, ma il protocollo non dipende dai suoi dettagli interni.
 
-La memoria volatile non è sufficiente: lo stato necessario a sopravvivere a hibernation/restart deve essere ricostruibile dallo storage del session backend.
+## PRO-TRANS-003 — Asset separati
 
-## PRO-TRANS-003 — WebSocket Hibernation
-
-L'implementazione Cloudflare deve preferire la Hibernation WebSocket API quando compatibile con i requisiti correnti.
-
-Per-connection metadata necessari dopo hibernation possono essere conservati negli attachment WebSocket; stato sessione più grande o necessario oltre la singola connessione appartiene allo storage del Durable Object.
-
-## PRO-TRANS-004 — Nessun asset binario nel protocollo eventi
-
-Immagini e file non vengono serializzati in Base64 dentro i messaggi WebSocket.
-
-Il protocollo trasporta soltanto `publishedAssetId` e metadata necessari.
+Immagini e file non viaggiano in Base64 nei messaggi realtime. I messaggi referenziano asset pubblicati separatamente.
 
 ---
 
-# 3. Autenticazione della connessione
+# 3. Autenticazione connessioni
 
-## PRO-AUTH-001 — Credenziali lunghe fuori dalla URL WebSocket
+## PRO-AUTH-001 — Credenziali primarie fuori dalla URL WSS
 
-Host secret e participant resume credential non devono essere messi direttamente nell'URL WebSocket.
+Host secret e participant resume credential non vengono inseriti direttamente nella URL WebSocket.
 
-Il client usa prima HTTPS per ottenere un **WebSocket ticket** breve e monouso.
+HTTPS rilascia una credenziale/ticket breve per aprire la connessione WSS.
 
-## PRO-AUTH-002 — WebSocket ticket
+Scadenza e formato precisi sono dettagli di implementazione e sicurezza da tarare; il ticket deve comunque essere breve, revocabile e non sostituire la credenziale primaria.
 
-Il ticket:
+## PRO-AUTH-002 — Confine non trusted
 
-- è opaco e casuale;
-- identifica sessione + ruolo/partecipante autorizzato;
-- è monouso;
-- scade dopo 60 secondi;
-- non è riutilizzabile dopo upgrade riuscito;
-- può essere trasmesso come parametro dell'URL WebSocket perché la sua vita è brevissima e non sostituisce la credenziale primaria.
+Una connessione non autenticata non riceve snapshot o stato sessione.
 
-## PRO-AUTH-003 — Host ticket
-
-Il desktop ottiene un nuovo ticket presentando la credenziale host/resume valida tramite HTTPS.
-
-## PRO-AUTH-004 — Participant ticket
-
-Il player ottiene un nuovo ticket tramite:
-
-- primo join con session join code;
-- resume con participant resume credential;
-- futura identity Discord verificata e binding `instanceId ↔ liveSessionId`.
-
-## PRO-AUTH-005 — Connessione non autenticata
-
-Una connessione WebSocket senza ticket valido viene rifiutata prima di ricevere snapshot o stato della sessione.
+Identità, ruolo e permessi vengono stabiliti dal backend, non dal payload dichiarato dal client.
 
 ---
 
-# 4. Versionamento
+# 4. Versionamento e validazione
 
-## PRO-VER-001 — Major protocol version
+## PRO-VER-001 — Major version
 
-Ogni messaggio dichiara una major version numerica.
+Il protocollo ha una major version condivisa; la prima implementazione usa `1`.
 
-V0.3 parte con:
+Campi opzionali compatibili possono essere aggiunti nella stessa major. Cambi incompatibili richiedono nuova major.
 
-```text
-protocolVersion = 1
-```
+## PRO-VER-002 — Runtime validation
 
-## PRO-VER-002 — Compatibilità
-
-All'interno della stessa major version:
-
-- nuovi campi opzionali possono essere aggiunti;
-- un client deve ignorare campi sconosciuti che non cambiano il significato fondamentale del messaggio.
-
-Una major version incompatibile viene rifiutata esplicitamente con `PROTOCOL_VERSION_UNSUPPORTED`.
-
-## PRO-VER-003 — Schema validato
-
-Tutti i messaggi inbound vengono validati contro schema runtime condiviso da `packages/protocol`.
-
-TypeScript types senza runtime validation non sono sufficienti sul confine di rete.
+Tutti i messaggi inbound attraversano schema validation runtime condivisa. I soli TypeScript types non bastano sul confine di rete.
 
 ---
 
-# 5. Envelope dei messaggi
+# 5. Messaggi e ordering
 
-## PRO-MSG-001 — Envelope base
+## PRO-MSG-001 — Envelope minimo
 
-Forma concettuale:
+Ogni messaggio necessita almeno di:
 
 ```ts
-interface ProtocolMessage<T = unknown> {
+{
   protocolVersion: 1
   type: string
-  messageId: string
-  sentAt: string
-  payload: T
+  payload: unknown
 }
 ```
 
-`messageId` è opaco e univoco abbastanza da diagnosticare/traceare il messaggio.
+`messageId`, timestamp diagnostici o altri metadata possono esistere quando utili, ma non sono requisiti universali di prodotto.
 
-`sentAt` è informativo; non determina l'ordine autorevole.
+## PRO-MSG-002 — `requestId` per comandi mutanti
 
-## PRO-MSG-002 — Command envelope
+Un comando che richiede una risposta accepted/rejected usa un `requestId` di correlazione.
 
-Una richiesta di mutazione proveniente da un client contiene inoltre:
+Non è richiesto un framework generale di idempotenza con cache temporali prefissate.
 
-```ts
-requestId: string
-```
+Dopo perdita di connessione il client non ritrasmette alla cieca mutazioni vecchie e incerte: si riallinea tramite snapshot e riparte dallo stato corrente.
 
-Il server usa `requestId` per correlare accepted/rejected e per evitare doppia applicazione accidentale di richieste duplicate.
+## PRO-MSG-003 — `stateSeq`
 
-## PRO-MSG-003 — State sequence
+Ogni mutazione durevole dello stato live accettata incrementa un contatore monotono `stateSeq`.
 
-Ogni mutazione **durable dello stato live** accettata incrementa un contatore monotono `stateSeq` della sessione.
+Snapshot ed eventi durevoli dichiarano il `stateSeq` che rappresentano.
 
-Gli eventi di stato server includono il `stateSeq` risultante.
-
-Lo snapshot include il `stateSeq` che rappresenta.
-
-`sentAt` non sostituisce `stateSeq`.
-
-## PRO-MSG-004 — Eventi effimeri fuori dal `stateSeq`
-
-Eventi come preview intermedia del movimento, ping e indicatori puramente transitori possono non incrementare `stateSeq`.
-
-La perdita di un evento effimero non deve rendere inconsistente lo snapshot futuro.
+Eventi puramente effimeri come ping o preview di drag possono restare fuori dalla sequenza.
 
 ---
 
-# 6. Handshake e snapshot
+# 6. Connect, snapshot e resync
 
-## PRO-CONN-001 — `connection.ready`
+## PRO-CONN-001 — Connection ready
 
-Dopo upgrade autenticato il server invia un messaggio `connection.ready` con almeno:
+Dopo autenticazione il server comunica almeno:
 
-- ruolo runtime (`host` o `participant`);
-- `liveSessionId` logico/opaque se necessario internamente;
-- stato lifecycle della sessione;
-- identity del client (`participantId` per player);
+- ruolo runtime;
+- stato lifecycle;
+- `participantId` quando applicabile;
 - `stateSeq` corrente;
-- indicazione del presentation state (`waiting`/`board`).
+- waiting/board.
 
-## PRO-CONN-002 — Snapshot subito dopo connect/reconnect
+## PRO-CONN-002 — Snapshot iniziale
 
-Dopo `connection.ready` il server fornisce lo snapshot necessario al ruolo.
+Subito dopo connect/reconnect il client riceve lo snapshot necessario al proprio ruolo.
 
-Per un partecipante include soltanto:
+Un player riceve soltanto stato pubblico e propri permessi.
 
-- stato pubblico corrente;
-- board pubblica corrente se presente;
-- propri token controllabili;
-- informazioni di sessione necessarie alla UI.
+L'host riceve stato runtime sufficiente a riprendere la sessione.
 
-Non include dati privati del master.
+## PRO-SYNC-001 — Gap
 
-## PRO-CONN-003 — Snapshot host
+Se un client rileva un salto nella sequenza durevole, non inventa gli eventi mancanti: richiede/riceve un nuovo snapshot.
 
-Il desktop riceve lo stato runtime necessario a riprendere la sessione:
+## PRO-SYNC-002 — Nessun replay obbligatorio
 
-- lifecycle;
-- board live conosciute nella sessione;
-- current board;
-- participant presence;
-- assegnazioni;
-- codici/binding in forma sicura o stato equivalente;
-- `stateSeq`.
-
-Non serve rimandare al relay l'intero vault per autenticare il resume.
+V0.3 non richiede event sourcing, log persistente o replay arbitrario.
 
 ---
 
-# 7. Resync e perdita messaggi
+# 7. Comandi host
 
-## PRO-SYNC-001 — Gap detection
-
-Se un client riceve un evento durable con `stateSeq` maggiore del successivo atteso, considera lo stato potenzialmente incompleto.
-
-Non prova a inventare gli eventi mancanti.
-
-## PRO-SYNC-002 — `snapshot.request`
-
-Il client può inviare `snapshot.request`.
-
-Il server risponde con uno snapshot corrente completo per quel ruolo.
-
-## PRO-SYNC-003 — Nessun event replay obbligatorio
-
-V0.3 non richiede un event log persistente né replay arbitrario della cronologia.
-
-Il recovery standard da gap/reconnect è snapshot corrente.
-
-## PRO-SYNC-004 — Client lento
-
-Se un client non riesce a consumare abbastanza velocemente gli eventi:
-
-- gli eventi effimeri possono essere scartati/coalesced;
-- lo stato durable non deve essere dichiarato applicato se il client è chiaramente fuori sync;
-- il client viene portato a un nuovo snapshot quando necessario.
-
----
-
-# 8. Comandi host
-
-I nomi seguenti sono parte del protocollo V1 salvo revisione esplicita della spec prima dell'implementazione.
-
-## PRO-HOST-001 — Sessione/presentazione
-
-Comandi:
+Comandi concettuali minimi:
 
 ```text
 presentation.publishBoard
@@ -252,233 +141,126 @@ presentation.unpublish
 presentation.switchBoard
 presentation.resetBoard
 session.end
-```
 
-Solo l'host può inviarli.
-
-## PRO-HOST-002 — Elementi
-
-Comandi:
-
-```text
 element.reveal
 element.hide
 element.update
 element.remove
-```
 
-`element.reveal` deve contenere soltanto dati pubblicabili dell'elemento.
-
-Il backend non riceve la versione privata completa per poi filtrarla.
-
-## PRO-HOST-003 — Token e permessi
-
-Comandi:
-
-```text
 token.move.commit
-token.assignControllers
-token.clearControllers
-```
+token.assignController
+token.clearController
 
-Il DM è implicitamente autorizzato a muovere tutti i token e non deve essere aggiunto come controller player.
-
-## PRO-HOST-004 — Camera
-
-Comando:
-
-```text
 camera.focus
-```
-
-È one-shot e non crea follow mode.
-
-## PRO-HOST-005 — Partecipanti
-
-Comando:
-
-```text
 participant.remove
 ```
 
-La gestione di join lock e rotazione codici può usare HTTPS management endpoint invece del WebSocket; non deve essere duplicata in due fonti di verità.
+Solo l'host può inviare comandi host.
+
+La gestione del join code può restare su HTTPS management endpoint per non duplicare fonti di verità.
 
 ---
 
-# 9. Comandi giocatore
+# 8. Comandi giocatore
 
 ## PRO-PLAYER-001 — Ping
-
-Comando:
 
 ```text
 ping.create
 ```
 
-Payload minimo:
-
-```ts
-{
-  boardId: string
-  x: number
-  y: number
-}
-```
-
 Valido soltanto sulla board correntemente pubblicata.
 
-## PRO-PLAYER-002 — Movimento token preview
+## PRO-PLAYER-002 — Token move
 
-Durante drag il client può inviare:
+Durante il drag può esistere:
 
 ```text
 token.move.preview
 ```
 
-Il preview:
+È effimero e può essere coalesced/scartato.
 
-- viene validato sul controller;
-- è effimero;
-- può essere coalesced/scartato;
-- non diventa automaticamente posizione durable.
-
-Frequenza client target massima: circa **20 aggiornamenti al secondo**; il server può ridurre/batchare ulteriormente.
-
-## PRO-PLAYER-003 — Movimento token commit
-
-Al rilascio il client invia:
+Al rilascio:
 
 ```text
 token.move.commit
 ```
 
-Il commit:
+Il backend verifica che il partecipante sia il controller corrente del token, aggiorna lo stato durevole e incrementa `stateSeq`.
 
-- viene validato;
-- aggiorna la posizione live durable;
-- incrementa `stateSeq`;
-- produce conferma/broadcast autorevole.
+Frequenza preview, batching e throttling sono dettagli da misurare sull'implementazione reale, non numeri normativi.
 
-## PRO-PLAYER-004 — Nessun comando generico
+## PRO-PLAYER-003 — Nessun patch generico
 
-Non esiste un comando player tipo `board.patch` o `element.modify` che permetta al client di scegliere arbitrariamente cosa cambiare.
-
-Le capacità sono espresse con comandi stretti e specifici.
+Non esistono comandi player generici come `board.patch` o `element.modify` che permettano al client di scegliere arbitrariamente cosa cambiare.
 
 ---
 
-# 10. Eventi server
+# 9. Eventi server
 
-## PRO-EVT-001 — Lifecycle
-
-Eventi durable:
+Il protocollo deve poter rappresentare almeno:
 
 ```text
 session.state
 session.ended
-```
 
-## PRO-EVT-002 — Presentazione
-
-Eventi durable:
-
-```text
 presentation.waiting
 board.snapshot
-board.activated
-```
 
-Il cambio board può essere rappresentato direttamente da nuovo `board.snapshot`; `board.activated` è consentito solo se non crea due meccanismi concorrenti per la stessa transizione.
-
-## PRO-EVT-003 — Elementi
-
-Eventi durable:
-
-```text
 element.revealed
 element.hidden
 element.updated
 element.removed
-```
 
-Un `element.hidden` non contiene il contenuto privato dell'elemento nascosto.
+token.move.preview
+token.position
+token.controller
 
-## PRO-EVT-004 — Token
-
-Eventi:
-
-```text
-token.move.preview   // effimero
-token.position       // durable
-token.controllers    // durable e filtrato per ruolo
-```
-
-Un partecipante riceve soltanto le informazioni necessarie a sapere quali token può controllare; non è necessario esporre la matrice completa dei permessi di tutti.
-
-## PRO-EVT-005 — Presenza
-
-Eventi:
-
-```text
 participant.joined
 participant.updated
 participant.disconnected
 participant.removed
-```
 
-La quantità di presenza mostrata al client giocatore può essere ridotta rispetto al desktop.
-
-## PRO-EVT-006 — Camera e ping
-
-Eventi effimeri:
-
-```text
 camera.focus
 ping.show
 ```
 
+La forma concreta può essere affinata durante implementazione purché non crei due meccanismi concorrenti per la stessa transizione.
+
+Un player riceve solo le informazioni necessarie al proprio ruolo.
+
 ---
 
-# 11. Accepted/rejected
+# 10. Accepted / rejected
 
-## PRO-ACK-001 — Risposta alle richieste mutanti
+## PRO-ACK-001 — Risposta correlata
 
-Ogni comando che può modificare stato produce una risposta correlata a `requestId`:
+Un comando mutante produce:
 
 ```text
 request.accepted
 ```
 
-o
+oppure
 
 ```text
 request.rejected
 ```
 
-## PRO-ACK-002 — Rejection tipizzata
+con lo stesso `requestId`.
 
-`request.rejected` contiene almeno:
+## PRO-ACK-002 — Rifiuto utile
 
-- `requestId`;
-- `code`;
-- messaggio breve safe per UI/log;
-- eventuale stato autorevole minimo necessario a correggere il client.
+Il rifiuto contiene un error code safe per UI e, quando serve, lo stato autorevole minimo per correggere il client (per esempio la posizione corrente di un token).
 
-Per token move rifiutato può includere la posizione autorevole corrente.
-
-## PRO-ACK-003 — Idempotenza
-
-Il server conserva abbastanza informazione recente da riconoscere il riinvio dello stesso `requestId` e non applicare due volte una mutazione non idempotente.
-
-Finestra target minima: 5 minuti o durata tecnica equivalente sufficiente ai reconnect/retry normali.
+Nessun errore espone stack trace, path locali o credenziali.
 
 ---
 
-# 12. Error taxonomy
+# 11. Error taxonomy minima
 
-## PRO-ERR-001 — Codici minimi
-
-Il protocollo/backend deve distinguere almeno:
+Il backend distingue almeno:
 
 ```text
 AUTH_FAILED
@@ -487,13 +269,9 @@ SESSION_ENDED
 HOST_OFFLINE
 JOIN_LOCKED
 CODE_INVALID
-CODE_EXPIRED
-PAIRING_INVALID
-PAIRING_EXPIRED
 PERMISSION_DENIED
 TOKEN_NOT_CONTROLLABLE
 BOARD_NOT_ACTIVE
-BOARD_NOT_FOUND
 ASSET_UNAVAILABLE
 PAYLOAD_INVALID
 RATE_LIMITED
@@ -502,296 +280,118 @@ PROTOCOL_VERSION_UNSUPPORTED
 INTERNAL_ERROR
 ```
 
-Gli errori interni non devono esporre stack trace, path filesystem del DM o credenziali.
+Errori Discord-specifici appartengono all'adapter V0.4, non alla V0.3 standalone.
 
 ---
 
-# 13. Pubblicazione asset
+# 12. Asset
 
-## PRO-ASSET-001 — `publishedAssetId`
+## PRO-ASSET-001 — Riferimento opaco
 
-Il protocollo board referenzia un asset live tramite ID opaco:
-
-```ts
-interface PublishedAssetRef {
-  publishedAssetId: string
-  mimeType: string
-  width?: number
-  height?: number
-}
-```
-
-Il path locale originale non viene inviato ai player.
+La board live usa un `publishedAssetId` o riferimento equivalente; il path locale originale non viene inviato ai player.
 
 ## PRO-ASSET-002 — Upload autorizzato
 
-Il desktop richiede tramite HTTPS un upload authorization per un asset che deve essere pubblicato.
-
-Il backend può restituire una presigned PUT URL o meccanismo equivalente.
-
-Dopo upload riuscito il desktop finalizza la registrazione del `publishedAssetId` prima di rivelare l'elemento.
+Il desktop ottiene autorizzazione temporanea a pubblicare un asset e ne conferma la disponibilità prima del reveal.
 
 ## PRO-ASSET-003 — Download autorizzato
 
-Il player risolve `publishedAssetId` tramite endpoint autorizzato che restituisce accesso temporaneo al file.
+Il player ottiene accesso temporaneo soltanto agli asset pubblicati che gli servono.
 
-Target iniziale per una singola URL di download: circa 1 ora, rinnovabile mentre la sessione è attiva.
+Durata URL/token e strategia di rinnovo vengono tarate durante implementazione.
 
-L'URL non costituisce accesso al bucket generale.
+## PRO-ASSET-004 — Ottimizzazioni facoltative
 
-## PRO-ASSET-004 — Content fingerprint
-
-Il desktop/backend può usare SHA-256 o fingerprint equivalente del file per deduplicare upload identici nella stessa sessione.
-
-Il fingerprint tecnico non sostituisce l'asset locale autorevole.
-
-## PRO-ASSET-005 — Asset hide
-
-Nascondere l'elemento impedisce che nuovi snapshot lo referenzino, ma non promette revoca retroattiva di bytes già scaricati.
+Fingerprint e deduplicazione sono consentiti ma non obbligatori nella prima versione.
 
 ---
 
-# 14. Stato persistito nel relay
+# 13. Stato consentito nel relay
 
-## PRO-STATE-001 — Stato consentito
+Il backend può conservare temporaneamente:
 
-Il session backend può conservare temporaneamente:
-
-- lifecycle/session metadata;
-- current board ID;
-- stato live delle board già usate nella sessione;
+- lifecycle;
+- board corrente;
+- stato live delle board usate;
 - `stateSeq`;
-- participant identities/runtime presence;
-- token controller assignments;
-- hash/stato dei codici;
+- participant identity/presence;
+- token controller e posizioni;
+- stato del join code;
 - credenziali/revoche in forma sicura;
-- Discord instance binding futuro;
-- riferimenti agli asset pubblicati.
+- riferimenti asset pubblicati;
+- futuri binding Discord quando V0.4 è attiva.
 
-## PRO-STATE-002 — Stato vietato per comodità
+Non conserva per comodità:
 
-Il relay non riceve o persiste come copia generale:
-
-- intero vault Markdown;
+- vault Markdown;
 - note private;
-- indice search;
-- graph privato;
-- API key del DM;
-- cartella campagna completa;
+- search index/graph privato;
+- API key;
 - asset non pubblicati.
 
-## PRO-STATE-003 — Contenuto pubblico necessario
+---
 
-Testo/card/metadata già pubblicati possono vivere nello stato runtime perché servono a ricostruire lo snapshot pubblico durante reconnect.
+# 14. Backpressure e rate limiting
 
-Sono comunque dati effimeri della sessione, non fonte autorevole della campagna.
+Il relay deve proteggersi da client lenti e abuso, ma le soglie precise sono operative.
+
+Priorità:
+
+1. preview obsolete possono essere scartate/coalesced;
+2. ping effimeri possono essere limitati;
+3. client troppo indietro torna a snapshot;
+4. un commit durevole non viene dichiarato applicato e poi perso silenziosamente.
+
+Join code, ping e movimento devono essere rate-limited in modo ragionevole senza fissare oggi numeri arbitrari.
 
 ---
 
-# 15. Persistenza e performance degli eventi
+# 15. Logging e privacy
 
-## PRO-PERF-001 — Mutazioni durable
+I log possono contenere codici errore, identificatori tecnici e timing diagnostici.
 
-Devono essere persistite/ricostruibili attraverso restart/hibernation almeno:
+Non devono contenere in chiaro:
 
-- board corrente;
-- reveal/hide;
-- contenuto pubblico corrente;
-- token position commit;
-- assegnazioni;
-- participant/runtime credentials necessari;
-- lifecycle.
+- host/resume secret;
+- ticket;
+- join code completo;
+- URL firmate complete;
+- payload privati della campagna.
 
-## PRO-PERF-002 — Preview non durable
-
-Non è necessario scrivere nello storage del relay ogni pixel di un token durante drag.
-
-`token.move.preview` può restare effimero; `token.move.commit` rappresenta il punto durable.
-
-## PRO-PERF-003 — Batching
-
-Il relay può batchare eventi effimeri ad alta frequenza in piccole finestre temporali, purché:
-
-- non introduca lag percepibile eccessivo;
-- non perda il commit finale;
-- non alteri l'ordine delle mutazioni durable.
-
-Target iniziale ragionevole per batching preview: 50–100 ms.
-
-## PRO-PERF-004 — Backpressure
-
-La perdita controllata deve preferire:
-
-1. scartare preview obsolete;
-2. scartare ping già scaduti;
-3. richiedere/respingere a snapshot un client troppo indietro;
-
-mai scartare silenziosamente un commit durable dichiarandolo applicato.
+Nessun dump indiscriminato di tutti i payload.
 
 ---
 
-# 16. Rate limiting e abuso
+# 16. Package/proprietà architetturale
 
-## PRO-RATE-001 — Codici
+Un eventuale `packages/protocol` contiene schema runtime, tipi condivisi, costanti e fixture di contratto.
 
-Tentativi falliti su join/pairing endpoint devono essere rate-limited per sorgente e, quando utile, per codice/sessione.
+Non contiene React, filesystem, Discord SDK o implementazione Cloudflare.
 
-Target iniziale:
-
-- join code: non più di ~10 tentativi falliti/minuto per sorgente prima di cooldown;
-- pairing code: non più di ~5 tentativi falliti/minuto per sorgente prima di cooldown.
-
-Le soglie possono essere adattate operativamente senza cambiare la UX normale.
-
-## PRO-RATE-002 — Ping
-
-Il relay può rifiutare spam di ping.
-
-Target iniziale: pochi ping al secondo per partecipante, con cooldown progressivo in caso di abuso.
-
-## PRO-RATE-003 — Movimento
-
-Preview di movimento oltre il rate accettato possono essere coalesced/scartati; il commit finale resta separato.
+Se all'inizio il contratto resta piccolo, può essere introdotto solo quando desktop/relay/player hanno davvero bisogno di condividerlo.
 
 ---
 
-# 17. Discord adapter
+# 17. Quality gate
 
-## PRO-DISCORD-001 — Nessun fork del protocollo
+Testare almeno:
 
-La Discord Activity non introduce tipi di board/eventi separati.
-
-Dopo authentication/join, riceve gli stessi messaggi player della web app standalone.
-
-## PRO-DISCORD-002 — Pairing
-
-Il pairing endpoint riceve:
-
-- pairing code;
-- Discord `instanceId` verificabile;
-- identity Discord necessaria al flusso master.
-
-In caso di successo registra il binding runtime e consuma il pairing code.
-
-## PRO-DISCORD-003 — Participant mapping
-
-Il backend usa l'identità Discord verificata per ottenere/creare il `participantId` della sessione.
-
-Il client non può autoassegnarsi un Discord user ID arbitrario nel payload realtime.
-
----
-
-# 18. Logging e privacy
-
-## PRO-LOG-001 — Log tecnico minimo
-
-Il relay può loggare:
-
-- message/error codes;
-- `messageId`/`requestId`;
-- session ID tecnico opportunamente trattato;
-- timing e diagnostica;
-- eventi di connect/disconnect.
-
-## PRO-LOG-002 — No secret nei log
-
-Non devono essere loggati in chiaro:
-
-- host secret;
-- resume credentials;
-- WebSocket ticket;
-- join/pairing code completi;
-- presigned URL complete quando contengono firme;
-- contenuto privato della campagna.
-
-## PRO-LOG-003 — No payload dump indiscriminato
-
-Il debug non deve basarsi sul dump generale di ogni payload, perché i payload pubblicati possono comunque contenere testo della campagna destinato ai giocatori.
-
----
-
-# 19. Quality gates
-
-## PRO-QA-001 — Contract tests
-
-Devono esistere test condivisi che dimostrino almeno:
-
-- valid/invalid schema per ogni comando/evento;
-- major version mismatch;
+- schema valido/non valido;
+- version mismatch;
 - permission enforcement;
 - token move accepted/rejected;
-- duplicate `requestId` non doppio-applicato;
 - `stateSeq` monotono;
-- gap → snapshot request;
+- gap → snapshot;
 - reconnect → snapshot corrente;
 - elemento privato assente dallo snapshot player;
-- codice/binding scaduto non accettato;
-- session ended rifiuta nuovi ticket;
-- host_reconnecting blocca mutazioni player;
-- asset non disponibile impedisce reveal riuscito.
-
-## PRO-QA-002 — Relay lifecycle
-
-Testare il session backend anche attraverso restart/hibernation simulata:
-
-- connessioni ricostruite correttamente;
-- session state durable ripristinato;
-- per-connection identity ripristinata quando supportato;
-- nessun affidamento esclusivo a memoria volatile.
-
-## PRO-QA-003 — Carico minimo
-
-Validare almeno:
-
-- 1 host + 8 player WebSocket simultanei;
-- movimento concorrente di più token;
-- reconnect multipli;
-- board switch;
-- snapshot con una board realisticamente popolata;
-- burst di preview senza perdita del commit finale.
-
-Otto player non costituiscono hard cap.
-
----
-
-# 20. Dipendenze e package
-
-## PRO-ARCH-001 — `packages/protocol`
-
-Contiene:
-
-- schema runtime;
-- tipi TypeScript derivati/coerenti;
-- enum/costanti stabili dei message type/error code;
-- helpers di validazione/versioning;
-- contract fixtures.
-
-Non contiene:
-
-- React;
-- filesystem;
-- Discord SDK;
-- Cloudflare implementation details;
-- logica UI.
-
-## PRO-ARCH-002 — Adapter distinti
-
-```text
-Desktop SessionService ─┐
-                        ├─→ protocol types/schemas
-Web Player Client ──────┤
-Discord Adapter ─────────┤
-Relay Durable Object ────┘
-```
-
-Il protocollo è il contratto condiviso; ogni ambiente mantiene il proprio adapter.
+- session ended rifiuta nuove connessioni;
+- host_reconnecting blocca mutazioni;
+- asset non disponibile impedisce reveal riuscito;
+- 1 host + 8 player come fixture, non hard cap;
+- burst di preview senza perdere il commit finale.
 
 ---
 
 ## Regola finale
 
-Il protocollo deve rendere possibile questa proprietà:
-
-> se un client sparisce, si riconnette o perde eventi, può tornare allo stato corretto senza conoscere il filesystem del DM e senza richiedere il replay completo della storia.
-
-Lo snapshot corrente è la rete di sicurezza; gli eventi incrementali sono l'ottimizzazione realtime.
+Il protocollo è sufficientemente robusto quando un client può perdere eventi o riconnettersi e tornare allo stato corretto tramite snapshot, senza event sourcing e senza conoscere il filesystem del DM.
