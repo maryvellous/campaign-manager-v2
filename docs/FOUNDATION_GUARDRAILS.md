@@ -16,24 +16,39 @@ Nelle versioni attuali il Campaign Manager funziona come applicazione locale aut
 
 Non si introducono per anticipazione:
 
-- account EcoGDR;
-- login/auth EcoGDR;
-- token/sessioni account;
-- sync cloud della campagna;
-- campagne remote;
-- permessi remoti;
-- pubblicazione verso EcoGDR;
-- dipendenze runtime da servizi EcoGDR.
+- account obbligatori;
+- login EcoGDR;
+- cloud sync del vault;
+- campagne remote come fonte autorevole;
+- permessi remoti sul filesystem;
+- pubblicazione automatica;
+- dipendenze runtime da servizi futuri.
 
-La cartella locale resta autorevole per i contenuti privati del DM.
+La cartella locale resta autorevole per i contenuti del DM.
 
 ---
 
-# 2. Binding remoto futuro opzionale
+# 2. Auth come capability, non fondamento
 
-Una campagna locale deve poter essere collegata in futuro a un sistema esterno senza essere convertita in un formato cloud proprietario.
+La direzione completa è in `docs/AUTHENTICATION_SPEC.md`.
 
-Il metadata canonico previsto è genericamente:
+Guardrail:
+
+- nessun login all'avvio finché non esiste una feature reale che lo richiede;
+- `Impostazioni → Account` può esistere come placeholder onesto;
+- auth provider/SDK non entra nel core;
+- token/secret restano fuori dal vault;
+- logout/session expiry non bloccano note/board/live indipendenti;
+- Discord identity, live credentials e provider IA restano separati dall'account applicativo;
+- se un servizio cloud è anonimo, non si impone login artificiale.
+
+---
+
+# 3. Binding remoto futuro opzionale
+
+Una campagna locale deve poter essere collegata a un sistema esterno senza essere convertita in un formato cloud proprietario.
+
+Metadata previsto genericamente:
 
 ```json
 {
@@ -44,61 +59,101 @@ Il metadata canonico previsto è genericamente:
 }
 ```
 
-La struttura può evolvere quando esisterà il contratto reale.
-
 Vincoli:
 
 - collegare non significa sincronizzare;
 - collegare non significa pubblicare;
 - il binding non cambia l'autorità dei file locali;
-- perdere/rimuovere il binding non rende inutilizzabile la campagna.
+- perdere/rimuovere il binding non rende inutilizzabile la campagna;
+- cambiare account non ricollega automaticamente la campagna.
+
+Flussi futuri: `docs/ECOGDR_INTEGRATION_SPEC.md`.
 
 ---
 
-# 3. Integrazioni fuori dal core
+# 4. Integrazioni fuori dal core
 
-SDK, HTTP client e modelli EcoGDR non entrano nel dominio locale.
+SDK, HTTP client e modelli di provider esterni non entrano nel dominio note/board.
 
 Quando serviranno, vivranno dietro piccoli adapter/service applicativi.
 
-Se il servizio esterno cambia tecnologia, editor, vault e dominio locale non devono essere riscritti.
+Non serve un framework plugin universale per supportare il primo provider reale.
 
 ---
 
-# 4. Compendio futuro
+# 5. Compendio futuro
 
-La direzione aggiornata del Compendio è definita in `docs/COMPENDIUM_SPEC.md`.
+Direzione: `docs/COMPENDIUM_SPEC.md`.
 
-Il Compendio sarà una **enciclopedia cloud consultabile**. Oggi non costruiamo una sorgente locale temporanea.
+Il Compendio sarà una **enciclopedia cloud consultabile**.
 
-Guardrail minimi:
+Oggi:
 
-- la shell può già avere la vista/route `Compendio` come placeholder WIP;
-- nessun database o networking è richiesto finché il vero servizio non esiste;
-- quando arriverà il servizio, la UI parlerà a un piccolo client/service invece di conoscere direttamente il database;
-- le voci reali avranno ID stabili non basati sul titolo;
-- `Copia nelle note` produrrà normale Markdown locale indipendente dalla fonte cloud;
-- indisponibilità del Compendio non compromette la campagna locale;
-- fonti/licenze verranno definite contro il dataset reale, non inventate oggi.
+- vista/route WIP;
+- nessun database temporaneo;
+- nessun networking;
+- nessun login finto.
 
-Non vengono anticipati ora modelli universali di ruleset, lingue, localizzazioni, search schema o API.
+Futuro:
+
+- UI → piccolo service/client → vero database;
+- read-only rispetto alla fonte;
+- `Copia nelle note` → normale Markdown locale indipendente;
+- indisponibilità cloud non blocca la campagna;
+- auth soltanto se il vero servizio la richiede.
+
+Schema, lingue, tassonomie, filtri e licenze vengono decisi contro il dataset reale.
 
 ---
 
-# 5. Cose da non progettare ancora
+# 6. Personaggi e provider futuri
 
-Finché non esistono contratti reali non si decidono in anticipo:
+V0.6 riusa le note come riferimento personaggio e le collega ai token.
 
-- provider auth;
-- schema token/account;
-- API campagne;
-- sync;
+Non si crea un character DB universale solo per anticipare EcoGDR/BeFolder.
+
+Quando esiste un provider reale:
+
+- collegamento esplicito;
+- auth se necessaria;
+- refresh/copia espliciti prima di sync continua;
+- indisponibilità provider non rende inutili note/token locali;
+- scollegare non elimina dati locali.
+
+Dettagli: `docs/V06_CHARACTERS_INTEGRATIONS_SPEC.md`.
+
+---
+
+# 7. IA indipendente dai servizi account
+
+V0.5 può funzionare con un provider IA configurato localmente senza richiedere account Campaign Manager.
+
+API key/provider secret:
+
+- fuori dal vault;
+- fuori dai player;
+- separati dall'auth applicativa.
+
+Non si usa il futuro account come pretesto per centralizzare IA o campagna nel cloud.
+
+---
+
+# 8. Cose da non progettare senza contratti reali
+
+Finché non esistono servizi reali non si decidono in anticipo:
+
+- provider auth definitivo;
+- protocollo token/account;
+- API campagne EcoGDR;
+- sync bidirezionale;
 - permessi remoti;
 - protocollo di pubblicazione;
 - struttura database EcoGDR;
 - API/schema definitivi del Compendio;
-- caching/offline del Compendio;
-- localizzazioni e tassonomie universali.
+- caching/offline completo del Compendio;
+- schema universale personaggi;
+- plugin marketplace;
+- importer universale.
 
 ---
 
