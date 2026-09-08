@@ -41,22 +41,16 @@ Prima si decide:
 - come si passa da una nota all'altra;
 - come si evita di perdere contesto;
 - come funzionano tastiera, mouse e drag & drop;
-- quali operazioni meritano un pannello, una palette comandi o un menu contestuale.
+- quali operazioni meritano un pannello, una palette comandi o un menu contestuale;
+- come si passa tra note e graph view senza perdere stato.
 
-Solo dopo si definisce il linguaggio visivo definitivo.
+La specifica normativa della V0.1 è `docs/UI_UX_SPEC_V01.md`.
 
 ### Visual design sotto direzione dell'utente
 
-Palette, tono visivo e alcune scelte di design verranno fornite dall'utente.
+Palette e direzione visuale sono definite in `docs/DESIGN_DIRECTION.md` e `docs/palette.svg`.
 
-Fino a quel momento:
-
-- non si cristallizza una palette definitiva;
-- non si costruisce un design system basato su gusti presunti;
-- non si replica il tema della v1;
-- si possono progettare wireframe, gerarchia, densità e comportamento usando token semantici provvisori.
-
-Il visual design definitivo ha quindi un **gate esplicito di input utente**.
+I valori dimensionali e di timing ripresi dai mock sono **default da validare**, non contratti rigidi. Il comportamento e la gerarchia approvati restano invece vincolanti.
 
 ### Nessuna feature senza collocazione
 
@@ -66,6 +60,12 @@ Ogni feature deve avere:
 2. un modulo responsabile;
 3. un flusso utente definito;
 4. un criterio di completamento verificabile.
+
+### Preparare gli agganci, non il sistema futuro
+
+I soli guardrail per EcoGDR e compendio sostituibile sono in `docs/FOUNDATION_GUARDRAILS.md`.
+
+La V0.1 non introduce account, auth, sync o networking EcoGDR.
 
 ---
 
@@ -82,6 +82,7 @@ Definisce:
 - navigazione;
 - ergonomia;
 - comportamento dei pannelli;
+- graph view;
 - scorciatoie;
 - stati vuoti;
 - errori e recovery;
@@ -98,9 +99,10 @@ Definisce:
 - contrasto;
 - densità;
 - iconografia;
-- componenti visuali.
+- componenti visuali;
+- motion.
 
-Questo workstream parte realmente solo dopo le indicazioni dell'utente.
+La direzione è fissata; tipografia precisa, spacing e alcuni valori dimensionali restano da validare sull'app reale.
 
 ### C. Engineering
 
@@ -114,7 +116,8 @@ Costruisce:
 - servizi applicativi;
 - editor;
 - navigazione;
-- ricerca.
+- ricerca;
+- proiezione grafo locale.
 
 ### D. Quality
 
@@ -126,6 +129,7 @@ Verifica:
 - keyboard navigation;
 - persistenza;
 - recovery;
+- conflitti con modifiche esterne;
 - documentazione.
 
 ---
@@ -141,8 +145,9 @@ apri campagna
 → orientati immediatamente
 → trova o crea una nota
 → naviga tra note collegate
-→ modifica
-→ salva
+→ modifica o leggi
+→ cerca o esplora nel grafo
+→ salva senza perdere il buffer
 → cambia contesto senza perdere il lavoro
 → chiudi
 → riapri
@@ -158,7 +163,11 @@ V0.1 non contiene:
 - IA;
 - schede giocatore;
 - bot;
-- cloud sync.
+- cloud sync;
+- account/auth EcoGDR;
+- importazione generale di file esterni.
+
+La **graph view è invece parte della V0.1**.
 
 ---
 
@@ -181,7 +190,7 @@ Capire cosa deve essere migliorato rispetto alla v1 senza copiarne la struttura.
 
 `docs/UX_BASELINE.md`
 
-Deve descrivere problemi e obiettivi, non proporre ancora una copia migliorata della vecchia UI.
+Deve descrivere problemi e obiettivi, non proporre una copia migliorata della vecchia UI.
 
 ### Gate
 
@@ -193,7 +202,7 @@ Non si considera conclusa finché non sappiamo descrivere in modo semplice:
 - come si cambia nota;
 - come si segue un wikilink;
 - come si torna indietro;
-- come si capisce se qualcosa è salvato.
+- come si capisce se qualcosa è davvero salvato.
 
 ---
 
@@ -201,91 +210,60 @@ Non si considera conclusa finché non sappiamo descrivere in modo semplice:
 
 ### Obiettivo
 
-Disegnare l'interfaccia attorno all'efficienza, prima della grafica definitiva.
+Disegnare l'interfaccia attorno all'efficienza, prima dell'implementazione completa.
 
-### Decisioni da prendere
+### Decisioni fissate
 
-- struttura principale della finestra;
-- navigazione primaria;
-- ruolo della sidebar;
-- comportamento di tab o cronologia;
-- ricerca globale;
-- creazione rapida;
-- apertura di note collegate;
-- back/forward navigation;
-- command palette eventuale;
-- menu contestuali;
-- gestione drag & drop;
-- gestione pannelli secondari;
-- scorciatoie tastiera;
-- comportamento su finestre strette.
+La direzione approvata usa:
 
-### Principi UX
-
-L'interfaccia deve privilegiare:
-
-- continuità del contesto;
-- poche interruzioni modali;
-- azioni frequenti immediatamente accessibili;
-- feedback chiaro sullo stato;
-- navigazione reversibile;
-- riduzione dei click ripetitivi;
-- supporto serio alla tastiera senza rendere necessarie scorciatoie da ricordare;
-- progressive disclosure per funzioni meno comuni.
+- barra superiore;
+- rail principale;
+- sidebar vault;
+- editor/lettura centrale;
+- inspector contestuale non modale;
+- command palette;
+- tab con cronologia per tab;
+- graph view come modalità dell'area centrale;
+- Recenti e Preferiti come filtri della sidebar.
 
 ### Deliverable
 
-`docs/UX_SPEC_V01.md`
+`docs/UI_UX_SPEC_V01.md`
 
-Con:
-
-- mappa dei flussi;
-- wireframe low-fi;
-- comportamento dei pannelli;
-- stati principali;
-- error states;
-- shortcut map.
+La specifica deve contenere requisiti stabili e scenari di accettazione per layout, navigazione, editor, salvataggio, graph view, responsive desktop, keyboard, drag & drop, accessibilità e anti-pattern.
 
 ### Gate
 
-L'interaction model deve essere approvato prima del visual polish definitivo.
+L'implementazione non deve inventare comportamenti in conflitto con la spec. Eventuali modifiche di prodotto richiedono aggiornamento esplicito della documentazione.
 
 ---
 
-## Fase 2 — Input visual design
+## Fase 2 — Visual design
 
 ### Stato
 
-**Dipende dall'utente.**
+**Direzione approvata.**
 
-### Input richiesti
+### Fonti
 
-Almeno:
+- `docs/DESIGN_DIRECTION.md`;
+- `docs/palette.svg`;
+- mock UI approvati come riferimenti visivi.
 
-- palette;
-- indicazioni sul carattere visivo generale;
-- riferimenti o anti-riferimenti utili;
-- preferenza sulla densità dell'interfaccia;
-- eventuali indicazioni su tipografia, bordi, raggi, ombre, decorazioni e motion.
+### Decisioni fissate
 
-Non è necessario che siano specifiche tecniche complete: possono essere anche riferimenti, esempi o sensazioni da tradurre in sistema.
+- background `#1E1333`;
+- gradient companion `#4D3B6B`;
+- surface/highlight `#3D1F48`;
+- controls `#833D6F`;
+- testo bianco;
+- cinque colori dedicati alla codifica del grafo/cartelle;
+- pallino cartella nella sidebar come unica eccezione graph-color fuori dal grafo;
+- motion leggero, liquido, liscio e occasionalmente bubbly.
 
-### Output
+### Default da validare
 
-`docs/DESIGN_DIRECTION.md`
-
-Successivamente:
-
-- token semantici;
-- component primitives;
-- stati hover/focus/disabled;
-- contrasto;
-- scala tipografica;
-- spacing scale.
-
-### Gate
-
-Nessun tema definitivo viene considerato approvato prima di questo passaggio.
+Tipografia precisa, spacing, raggi, timing e dimensioni dei pannelli partono dai mock ma possono essere corretti dopo verifica documentata sull'app reale.
 
 ---
 
@@ -307,7 +285,7 @@ packages/
   ui/
 ```
 
-`activity`, `protocol`, `ai` e `services/relay` possono essere introdotti quando diventano necessari nelle versioni successive, evitando package vuoti creati solo per anticipazione.
+`activity`, `protocol`, `ai` e `services/relay` vengono introdotti quando diventano necessari nelle versioni successive, evitando package vuoti creati solo per anticipazione.
 
 ### Stack
 
@@ -364,6 +342,7 @@ createNote()
 updateNote()
 renameNote()
 deleteNote()
+moveNote()
 ```
 
 ### Regole
@@ -371,6 +350,7 @@ deleteNote()
 - nessuna dipendenza da React;
 - nessuna dipendenza da Electron;
 - nessun accesso filesystem diretto;
+- nessuna dipendenza EcoGDR concreta;
 - errori di dominio espliciti.
 
 ### Gate
@@ -379,7 +359,7 @@ Use case critici testati in isolamento.
 
 ---
 
-## Fase 5 — Storage locale
+## Fase 5 — Storage locale, recovery e operazioni file
 
 ### Obiettivo
 
@@ -393,10 +373,19 @@ Rendere affidabile la cartella campagna come fonte autorevole.
 - lettura/scrittura Markdown;
 - create;
 - rename;
-- delete;
+- move;
+- trash tramite cestino di sistema;
 - gestione path;
 - gestione errori comuni;
+- bozze di recovery separate;
+- rilevazione modifiche esterne;
 - impostazioni locali separate dai dati della campagna.
+
+### Vincoli
+
+- nessun fallback silenzioso dal cestino a cancellazione permanente;
+- `saved` solo dopo conferma reale della persistenza;
+- conflitto esterno + buffer dirty → nessuna sovrascrittura automatica.
 
 ### Test
 
@@ -406,15 +395,18 @@ Su directory temporanee:
 - read;
 - update;
 - rename;
-- delete;
+- move;
+- trash behavior;
 - file mancante;
 - cartella spostata o non disponibile;
 - nomi problematici;
-- contenuto non valido quando applicabile.
+- scrittura fallita;
+- modifica esterna;
+- recovery dopo interruzione.
 
 ### Gate
 
-Una sequenza automatica di operazioni deve lasciare il filesystem nello stato atteso senza dipendere dalla UI.
+Una sequenza automatica di operazioni deve lasciare filesystem e recovery nello stato atteso senza dipendere dalla UI.
 
 ---
 
@@ -430,17 +422,20 @@ Costruire la prima esperienza concreta dell'utente.
 - apertura cartella;
 - eventuale elenco campagne recenti;
 - stato campagna aperta;
-- navigazione principale;
-- struttura dei pannelli secondo `UX_SPEC_V01.md`;
-- gestione loading/error/empty states.
+- barra superiore;
+- rail;
+- sidebar;
+- area centrale;
+- inspector;
+- loading/error/empty states.
 
 ### Vincolo
 
-La shell deve seguire il nuovo interaction model, non la disposizione della v1.
+La shell segue `docs/UI_UX_SPEC_V01.md`, non la disposizione della v1.
 
 ### Gate
 
-Un utente deve poter capire immediatamente:
+Un utente deve capire immediatamente:
 
 - quale campagna è aperta;
 - dove si trovano i contenuti;
@@ -457,103 +452,127 @@ Rendere la navigazione del vault veloce e prevedibile.
 
 ### Include
 
-- albero o modello di navigazione scelto in UX;
+- albero reale del vault;
 - cartelle;
+- filtro per nome;
+- Recenti;
+- Preferiti;
 - create note;
-- create folder se confermato dal modello UX;
+- create folder se previsto;
 - rename;
-- delete;
+- move;
+- trash;
 - menu contestuale;
 - keyboard navigation;
-- drag & drop solo se migliora davvero il flusso definito;
-- stato selezionato chiaro.
+- drag & drop con alternativa tramite comandi;
+- stato selezionato chiaro;
+- assegnazione colore cartella e pallino sidebar.
 
 ### Gate
 
-Le operazioni di gestione note non devono richiedere passaggi inutili o dialoghi modali per azioni quotidiane.
+Le operazioni quotidiane non richiedono modali inutili e tutte le azioni primarie hanno un percorso da tastiera.
 
 ---
 
-## Fase 8 — Editor
+## Fase 8 — Editor, lettura e salvataggio
 
 ### Obiettivo
 
-Scrivere e modificare note senza attrito.
+Scrivere e consultare note senza attrito e senza perdita dati.
 
 ### Include
 
 - Markdown editor;
-- stato dirty esplicito;
-- strategia di salvataggio definita;
+- modalità lettura nella stessa area;
+- stato dirty/saving/saved/error;
+- autosave;
+- `Ctrl/Cmd+S`;
+- bozze recovery;
 - protezione da perdita dati;
-- apertura note;
-- cambio nota;
-- eventuali tab/history secondo UX spec;
-- frontmatter senza renderlo invasivo;
-- preview o rendering solo nel modo deciso dalla UX.
+- apertura/cambio note;
+- tab e cronologia;
+- frontmatter non invasivo;
+- undo/redo editor separato dalla cronologia di navigazione.
 
-### Decisioni da fissare prima dell'implementazione
+### Default proposto
 
-- autosave vs save esplicito o modello ibrido;
-- comportamento quando si cambia nota con modifiche pendenti;
-- recovery dopo crash;
-- comportamento di undo/redo.
+Autosave dopo circa 600 ms di inattività, da validare sull'app reale.
 
 ### Gate
 
-Nessun percorso normale deve poter perdere modifiche silenziosamente.
+Nessun percorso normale deve poter perdere modifiche silenziosamente o simulare un salvataggio riuscito.
 
 ---
 
-## Fase 9 — Wikilink e navigazione contestuale
+## Fase 9 — Wikilink, backlink e navigazione contestuale
 
 ### Obiettivo
 
-Trasformare le note in una rete navigabile senza introdurre ancora il grafo visuale.
+Trasformare le note in una rete navigabile.
 
 ### Include
 
 - parsing `[[Nota]]`;
 - risoluzione link;
-- link inesistente;
-- creazione nota da link se prevista dalla UX;
+- backlink;
+- link inesistente o ambiguo esplicito;
 - apertura rapida;
-- back/forward;
-- suggerimenti durante la scrittura se approvati nel modello UX.
+- back/forward per tab;
+- aggiornamento dei wikilink risolti durante rename;
+- suggerimenti durante la scrittura se coerenti con la spec.
 
 ### Gate
 
-Seguire una catena di note e tornare al punto precedente deve essere rapido e prevedibile.
+Seguire una catena di note, tornare indietro e rinominare una nota deve essere rapido, prevedibile e verificabile.
 
 ---
 
-## Fase 10 — Ricerca e accesso rapido
+## Fase 10 — Ricerca, command palette e graph view
 
 ### Obiettivo
 
-Evitare che la struttura a cartelle diventi l'unico modo di trovare informazioni.
+Evitare che la struttura a cartelle sia l'unico modo di trovare e comprendere informazioni.
 
-### V0.1
+### Ricerca
 
-- ricerca per nome;
-- full-text search locale semplice;
+- filtro nome sidebar separato;
+- full-text locale;
 - risultati con contesto minimo;
-- apertura immediata;
-- eventuale command palette se prevista dalla UX.
+- apertura immediata.
 
-Non include ancora RAG o IA.
+### Command palette
+
+- `Ctrl/Cmd+K`;
+- note + azioni distinguibili;
+- frecce/Invio/Esc;
+- focus restituito correttamente.
+
+### Graph view
+
+- nodi = note;
+- archi = wikilink risolti;
+- dati derivati e ricostruibili;
+- pan e zoom;
+- drag nodo solo visuale;
+- dettaglio flottante;
+- apertura nota dal grafo;
+- filtri e legenda derivati dalle cartelle reali;
+- colore nodo derivato dalla cartella e dalla sua eredità;
+- `Centra vista`, `Cancella selezione`, `Ripristina filtri` separati;
+- stato locale del grafo ripristinabile.
 
 ### Gate
 
-Ricerca e filesystem devono restare separati: l'indice può essere eliminato e ricostruito.
+Ricerca e grafo possono essere eliminati e ricostruiti senza modificare i file Markdown. Le interazioni rispettano i requisiti `UX-SEARCH-*`, `UX-CMD-*` e `UX-GRAPH-*`.
 
 ---
 
 ## Fase 11 — Visual system e polish
 
-### Prerequisito
+### Prerequisiti
 
-`DESIGN_DIRECTION.md` approvato.
+- `docs/DESIGN_DIRECTION.md`;
+- `docs/UI_UX_SPEC_V01.md`.
 
 ### Obiettivo
 
@@ -577,9 +596,7 @@ Applicare il linguaggio visivo definitivo senza cambiare arbitrariamente i fluss
 
 ### Regola
 
-Il polish visivo non deve ridurre l'efficienza per preservare un'estetica.
-
-Se estetica e usabilità entrano in conflitto, il problema va ridisegnato invece di nasconderlo.
+Il polish visivo non deve ridurre l'efficienza. Se estetica e usabilità entrano in conflitto, il problema va ridisegnato invece di nasconderlo.
 
 ---
 
@@ -594,37 +611,51 @@ Verificare la V0.1 come prodotto, non come insieme di feature.
 1. nuova apertura app;
 2. apertura campagna;
 3. creazione nota;
-4. scrittura e salvataggio;
+4. scrittura/autosave;
 5. creazione wikilink;
-6. navigazione link;
+6. navigazione link/backlink;
 7. back navigation;
-8. ricerca nota;
-9. rename;
-10. delete;
-11. chiusura;
-12. riapertura;
-13. recovery da almeno un errore filesystem realistico.
+8. ricerca;
+9. graph view e ritorno all'editor;
+10. rename con aggiornamento link;
+11. move;
+12. trash;
+13. errore salvataggio;
+14. modifica esterna/conflitto;
+15. chiusura;
+16. riapertura/recovery.
 
-### Verifiche UX
+### Casi di carico UX
 
-- nessuna azione primaria nascosta senza motivo;
-- nessuna modale usata come sostituto di una buona navigazione;
-- focus keyboard prevedibile;
-- feedback di salvataggio chiaro;
-- errori comprensibili;
-- layout utilizzabile alle dimensioni finestra previste;
-- nessuna perdita di contesto evitabile.
+Verificare almeno:
+
+- 200 note;
+- 15 cartelle;
+- nomi lunghi;
+- molte tab;
+- nota estesa;
+- backlink numerosi;
+- graph view con note isolate e sottocartelle;
+- 1440×900;
+- 1024×768;
+- 720×600;
+- zoom/testo 200%.
+
+### Accessibilità
+
+WCAG 2.2 AA è l'obiettivo di verifica per i criteri applicabili; non è una conformità dichiarata in anticipo.
 
 ### Gate finale V0.1
 
 V0.1 è completa solo se:
 
 - tutti i flussi critici funzionano;
-- test core e storage passano;
+- test core/storage/search/graph passano;
 - smoke test desktop passa;
 - non esistono bug noti che possono perdere dati;
-- PRODUCT.md, architecture.md e ROADMAP.md sono coerenti col codice reale;
-- UI e UX sono state validate come nuova esperienza, non come reskin della v1.
+- nessun falso `saved` è possibile;
+- PRODUCT.md, architecture.md, ROADMAP.md, DESIGN_DIRECTION.md e UI_UX_SPEC_V01.md sono coerenti col codice reale;
+- UI e UX sono validate come nuova esperienza, non come reskin della v1.
 
 ---
 
