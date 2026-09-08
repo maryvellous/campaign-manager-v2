@@ -2,9 +2,9 @@
 
 ## Scopo
 
-Questo file è il punto di ingresso per chi deve progettare o implementare il Campaign Manager v2.
+Questo file è il punto di ingresso normativo per progettazione e implementazione.
 
-Un agente o sviluppatore non dovrebbe iniziare una milestone leggendo documenti a caso: deve partire da questo indice, individuare le specifiche applicabili e rispettarne l'ordine di autorità.
+Un agente deve partire da qui, individuare versione/area interessata e leggere le specifiche applicabili prima di modificare codice o prodotto.
 
 ---
 
@@ -13,16 +13,17 @@ Un agente o sviluppatore non dovrebbe iniziare una milestone leggendo documenti 
 In caso di conflitto:
 
 1. decisioni esplicite più recenti approvate dall'utente;
-2. `docs/V01_PRODUCT_DECISIONS.md` per le decisioni V0.1 già consolidate;
-3. specifica normativa più specifica per il comportamento interessato;
-4. `PRODUCT.md`;
-5. `architecture.md`;
-6. `ROADMAP.md`;
-7. `docs/FOUNDATION_GUARDRAILS.md`;
-8. `docs/DESIGN_DIRECTION.md`;
-9. mock/reference artifact.
+2. **`docs/V01_OPERATIONAL_SPEC.md` per qualunque comportamento V0.1**;
+3. `docs/V01_PRODUCT_DECISIONS.md`;
+4. specifica verticale più specifica (`UI_UX`, `DOMAIN`, `STORAGE`, `SEARCH`, `BOARD`, `LIVE`, `PROTOCOL`, `DISCORD`);
+5. `PRODUCT.md`;
+6. `architecture.md`;
+7. `ROADMAP.md`;
+8. `docs/FOUNDATION_GUARDRAILS.md`;
+9. `docs/DESIGN_DIRECTION.md`;
+10. mock/reference artifact.
 
-Una contraddizione tra documenti non deve essere risolta inventando una terza soluzione: va riallineata la documentazione.
+Una contraddizione non si risolve inventando un terzo comportamento. Per V0.1, `V01_OPERATIONAL_SPEC.md` chiude esplicitamente le formulazioni storiche vaghe come `se supportato`, `può`, `default proposto` o `da decidere` quando incidono sul prodotto.
 
 ---
 
@@ -30,297 +31,206 @@ Una contraddizione tra documenti non deve essere risolta inventando una terza so
 
 ## `PRODUCT.md`
 
-Risponde a:
-
-- cos'è il prodotto;
-- chi serve;
-- cosa deve fare;
-- cosa non vuole diventare;
-- quali sono i principi local-first e anti-lock-in.
+Definisce scopo, utenti, local-first, anti-lock-in e confini generali del prodotto.
 
 ## `architecture.md`
 
-Risponde a:
+Definisce moduli, dipendenze e separazione tra dati persistenti, stato live e UI.
 
-- quali moduli esistono;
-- quali dipendenze sono ammesse;
-- dove vive una responsabilità;
-- quali dati sono autorevoli, derivati, live o UI;
-- quali confini non devono essere attraversati.
+Per la struttura V0.1, `V01_OPERATIONAL_SPEC.md` rende espliciti `packages/application` e `packages/search` e prevale sulla struttura storica più compatta mostrata in architecture/roadmap.
 
 ## `ROADMAP.md`
 
-Risponde a:
-
-- in quale ordine si costruisce;
-- cosa appartiene a ciascuna versione;
-- quali gate devono essere superati;
-- cosa non va anticipato.
+Definisce ordine di costruzione e gate delle versioni. Le specifiche normative prevalgono sui riassunti di roadmap quando una feature è stata progettata più in dettaglio dopo la stesura della roadmap.
 
 ---
 
-# 3. Decisioni e guardrail di fondazione
+# 3. Contratto operativo V0.1
+
+## `docs/V01_OPERATIONAL_SPEC.md`
+
+È la **fonte normativa integrata della V0.1**.
+
+Chiude in modo operativo:
+
+- application layer e ownership dei buffer/use case;
+- startup, recent campaigns, open/init/switch/close;
+- assenza di modalità read-only V0.1;
+- duplicazione `CampaignId` e campagne spostate;
+- path policy e case collision;
+- nuova nota come draft, titolo automatico 1–3 parole e materializzazione;
+- tab/history/close behavior;
+- CRUD completo delle cartelle;
+- Markdown CommonMark + GFM;
+- frontmatter YAML e `aliases` canonici;
+- local images e sicurezza dei link;
+- wikilink canonici, code contexts, missing/ambiguous UX e create target;
+- autosave/recovery cadence e recovery per draft non ancora materializzati;
+- external changes, missing file e conflict resolution;
+- rename/move multi-file, ordering, journal e crash recovery forward-only;
+- trash senza permanent-delete fallback;
+- Recenti/Preferiti/sidebar filter;
+- vista Search, diacritics, index states e command palette minima;
+- graph directed edges, multi-filter folder, descendant semantics e layout persistence;
+- Settings V0.1 minime;
+- error taxonomy e mapping UX;
+- Windows gate e target di robustezza fino a 2.000 note / 100 cartelle;
+- scenari end-to-end `OPS-ACC-*`.
+
+Prefisso requisiti: `OPS-*`.
+
+Un goal di implementazione V0.1 deve sempre citare questa specifica oltre alle specifiche verticali applicabili.
+
+---
+
+# 4. Specifiche verticali V0.1
 
 ## `docs/V01_PRODUCT_DECISIONS.md`
 
-Registro normativo delle decisioni V0.1 approvate dopo la prima stesura delle specifiche verticali.
+Registro delle decisioni approvate: auto-init campagna, copia/ID duplicato, draft note, titolo automatico, rename titolo, wikilink, ricerca centrale, supporto Windows.
 
-Definisce in particolare:
-
-- inizializzazione automatica e non distruttiva di una nuova cartella campagna;
-- comportamento quando una campagna viene copiata e il `CampaignId` risulta duplicato;
-- nuova nota come draft temporaneo;
-- titolo automatico ricavato dalle prime 1–3 parole significative;
-- collisioni del titolo automatico senza suffissi inventati;
-- conferma della rinomina tramite Invio/blur e annullamento tramite Esc;
-- comportamento dei wikilink univoci, ambigui e mancanti;
-- ricerca full-text come vista centrale distinta dalla command palette;
-- Windows come piattaforma ufficialmente supportata per la V0.1, mantenendo architettura portability-first.
-
-Prefisso decisioni: `DEC-V01-*`.
-
-## `docs/FOUNDATION_GUARDRAILS.md`
-
-Definisce il minimo necessario per non dover riscrivere il Campaign Manager quando arriverà EcoGDR.
-
-Regola:
-
-> preparare gli agganci, non costruire ancora il ponte.
-
----
-
-# 4. Specifiche normative V0.1
+Prefisso: `DEC-V01-*`.
 
 ## `docs/UI_UX_SPEC_V01.md`
 
-Autorità sui comportamenti osservabili dell'interfaccia: layout, navigazione, editor, salvataggio, recovery, vault explorer, search, command palette, graph view, focus, tastiera, drag & drop e accessibilità.
+Autorità verticale su shell, layout, navigation model, editor/lettura, inspector, search, command palette, graph, save states, panels, keyboard, accessibility e visual behavior.
 
-Prefisso requisiti: `UX-*`.
+Le ambiguità storiche sono risolte da `V01_OPERATIONAL_SPEC.md`.
+
+Prefisso: `UX-*`.
 
 ## `docs/DOMAIN_MODEL.md`
 
-Autorità su significato dei dati e use case core: campagna, note, cartelle, identità, wikilink, backlink, rename/move, cestino, conflitti e graph projection.
+Autorità verticale su `CampaignId`, `NoteId`, `FolderId`, `NoteRevision`, note/cartelle, wikilink/backlink, rename/move, trash, conflict e graph projection.
 
-Prefisso requisiti: `DOM-*`.
+Prefisso: `DOM-*`.
 
 ## `docs/STORAGE_SPEC.md`
 
-Autorità sulla persistenza locale: `campaign.json`, path, filesystem, revisioni, scrittura sicura, watcher, recovery, preferenze, indici derivati, journal, trash, migrazioni ed errori.
+Autorità verticale su `campaign.json`, filesystem, safe write, revision, watcher, recovery, preferences, journal, trash, migration ed errori storage.
 
-Prefisso requisiti: `STO-*`.
+Il formato recovery per draft non materializzati è esteso da `OPS-SAVE-003`.
+
+Prefisso: `STO-*`.
 
 ## `docs/SEARCH_SPEC.md`
 
-Autorità sulla ricerca locale: full-text, indice derivato, ranking, rebuild, aggiornamenti incrementali, command palette e contract test.
+Autorità verticale su indice derivato, ranking, rebuild, aggiornamenti incrementali, command provider e contract test.
 
-Prefisso requisiti: `SEA-*`.
+V0.1 rende obbligatori alias canonici e diacritic-insensitive matching tramite l'Operational Spec.
 
----
-
-# 5. Board — V0.2
-
-## `docs/BOARD_SPEC.md`
-
-Specifica normativa completa della board V0.2 e dei comportamenti della sua proiezione live usati in V0.3.
-
-Definisce:
-
-- formato persistente `*.board.json`, `boardId` stabile e creazione/rinomina;
-- autosave, recovery e conflitti;
-- sei strumenti master: Seleziona, Mano, Nota/Testo, Immagine, Token, Collegamento;
-- selezione singola/multipla, resize, nudge e undo/redo;
-- z-order, lock e gruppi semplici;
-- testo board;
-- immagini e import automatico in `Assets/Board/`;
-- nessun path persistente verso file esterni;
-- card collegate a note e card da estratti selezionati;
-- comando `Porta sulla board…`;
-- estratti come snapshot sicuri, modificabili sulla board ma mai sincronizzati automaticamente col Markdown privato;
-- comportamento su rename/move/delete della nota sorgente;
-- token, immagini opzionali e assegnazione runtime ai giocatori;
-- collegamenti visuali e privacy degli endpoint;
-- board freeform senza griglia/snap nella V0.2;
-- visibilità privata di default e distinzione tra default preparato e reveal/hide live;
-- pan/zoom indipendenti, ping e comando one-shot `Porta tutti qui`;
-- fine sessione con scelta esplicita se applicare le posizioni finali dei token alla board preparata;
-- casi limite e scenari di accettazione.
-
-Prefisso requisiti: `BRD-*`.
-
----
-
-# 6. Live session e protocollo — V0.3
-
-## `docs/LIVE_SESSION_SPEC.md`
-
-Autorità sul comportamento della sessione live.
-
-Definisce:
-
-- autorità distinte filesystem / desktop DM / relay;
-- un solo host DM e una sola live session attiva per desktop;
-- `liveSessionId`, host resume credential e participant identity;
-- session join code standalone `ABCD-EFGH`;
-- pairing code Discord `ABC-DEF`, monouso, 10 minuti;
-- start senza wizard, join lock e rotazione join code;
-- ingresso standalone senza account obbligatorio;
-- participant presence, removal e token assignments runtime;
-- una board visibile alla volta ma più board preservate nella stessa sessione;
-- switch atomico, waiting state e reset live esplicito;
-- pubblicazione asset on-demand e cleanup;
-- token preview/commit e ping;
-- participant reconnect tramite resume;
-- host disconnect con freeze + 10 minuti di grace;
-- chiusura volontaria, chiusura app e salvataggio finale delle posizioni token;
-- pannello live DM compatto;
-- limiti intenzionali e scenari end-to-end.
-
-Prefisso requisiti: `LIVE-*`.
-
-## `docs/PROTOCOL_SPEC.md`
-
-Autorità sul contratto realtime condiviso.
-
-Definisce:
-
-- HTTPS per create/join/ticket/assets + WSS per realtime;
-- Durable Object per sessione e WebSocket Hibernation;
-- ticket WebSocket monouso da 60 secondi;
-- protocol versioning e runtime schema validation;
-- envelope, `requestId`, `stateSeq` e distinzione durable/effimero;
-- snapshot al connect/reconnect e resync senza event replay obbligatorio;
-- comandi host e player stretti;
-- token preview a frequenza limitata + commit autorevole;
-- server events, accepted/rejected e idempotenza;
-- error taxonomy;
-- `publishedAssetId`, upload/download temporanei e fingerprint;
-- stato consentito/vietato nel relay;
-- batching/backpressure e rate limiting;
-- Discord adapter senza fork del protocollo;
-- logging/privacy e quality gates.
-
-Prefisso requisiti: `PRO-*`.
-
----
-
-# 7. Discord Activity — V0.4
-
-## `docs/DISCORD_ACTIVITY_SPEC.md`
-
-Autorità sulla UX e sull'adapter Discord.
-
-Definisce:
-
-- Activity come tavolo del giocatore;
-- waiting state e board come superficie principale;
-- layout player utilizzabile anche su viewport piccoli;
-- join tramite Activity instance/`instanceId`;
-- pairing code master-only;
-- binding runtime `instanceId ↔ liveSessionId`;
-- identity Discord verificata → `participantId`;
-- Activity del master distinta dall'host desktop;
-- comportamento quando tutti lasciano l'istanza;
-- stessi permessi, board switching e host reconnect della live session;
-- nessun protocollo Discord-specifico;
-- browser standalone sempre supportato.
-
-Prefisso requisiti: `ACT-*`.
-
----
-
-# 8. Compendio
-
-## `docs/COMPENDIUM_SPEC.md`
-
-Autorità sul contratto del compendio, indipendentemente dal momento in cui la feature verrà inserita nella roadmap.
-
-Definisce identità, ruleset, sorgenti, lingue, `CompendiumRepository`, fixture temporanee, licensing e futuro adapter EcoGDR.
-
-Prefisso requisiti: `CMP-*`.
-
----
-
-# 9. Design e riferimenti
+Prefisso: `SEA-*`.
 
 ## `docs/DESIGN_DIRECTION.md`
 
-Autorità sulla direzione visiva: palette, gerarchia colori, graph colors, forme, motion e reduced motion.
-
-## `docs/palette.svg`
-
-Reference palette originale.
-
-## `docs/references/README.md`
-
-Registro dei mock canonici approvati e delle rispettive impronte.
+Palette, hierarchy, graph colors, shapes e motion. I numeri visuali restano default verificabili quando non modificano la semantica operativa.
 
 ---
 
-# 10. Mappa requisito → livello responsabile
+# 5. Board V0.2
 
-| Area | Specifica primaria | Livello principale |
-|---|---|---|
-| apertura campagna | V01 Decisions + UI/UX + Storage | desktop/application + storage |
-| copia/duplicazione campagna | V01 Decisions + Storage | application + storage |
-| nuova nota e titolo automatico | V01 Decisions + UI/UX + Domain + Storage | application orchestration |
-| note e identità | Domain + Storage | core + storage |
-| autosave/recovery | UI/UX + Storage | application + storage |
-| rename/move | V01 Decisions + Domain + Storage + UI/UX | application orchestration |
-| wikilink/backlink | V01 Decisions + Domain | core + derived projection |
-| ricerca vault | V01 Decisions + Search + UI/UX | derived index + application |
-| graph view | UI/UX + Domain | UI + derived projection |
-| board locale | Board Spec | board domain + desktop UI + storage |
-| asset board | Board Spec | desktop/application + storage |
-| note/estratti sulla board | Board Spec + Domain | board application + note references |
-| token board | Board Spec | board domain + live runtime later |
-| lifecycle live | Live Session Spec | desktop session service + relay |
-| ingresso standalone | Live Session + Protocol | web client + relay |
-| participant/token permissions | Live Session + Protocol | relay authority + desktop UI |
-| board live/switch | Board + Live Session + Protocol | desktop + relay + player client |
-| asset live | Board + Live Session + Protocol | desktop + R2/relay + player client |
-| realtime transport | Protocol Spec | protocol package + relay adapters |
-| reconnect/resync | Live Session + Protocol | relay + all clients |
-| Discord Activity | Discord Activity + Live Session + Protocol | activity client + Discord adapter |
-| pairing Discord | Discord Activity + Live Session + Protocol | relay + activity + desktop |
-| compendio | Compendium Spec | repository adapter + application |
-| EcoGDR futuro | Foundation Guardrails | future adapter boundary |
+## `docs/BOARD_SPEC.md`
+
+Specifica normativa completa della board locale e della sua proiezione live futura.
+
+Definisce formato `*.board.json`, strumenti, elementi, asset, card da estratti note, token, z-order/groups/lock, visibilità, snapshot/eventi, reconnect e fine sessione.
+
+Prefisso: `BRD-*`.
 
 ---
 
-# 11. Documenti ancora da produrre
+# 6. Live V0.3
 
-Le specifiche Board V0.2, Live V0.3, Protocol V0.3 e Discord V0.4 ora hanno contratti di prodotto sostanziali.
+## `docs/LIVE_SESSION_SPEC.md`
 
-Restano soprattutto:
+Contratto di prodotto della sessione web standalone: lifecycle, host/player identity, join/resume, codes, board switching, asset, token, reconnect, host timeout e session end.
 
-1. `docs/WIKILINK_SPEC.md` — solo se `DOMAIN_MODEL.md` e le decisioni V0.1 si dimostrano insufficienti durante l'implementazione;
-2. `docs/AI_SPEC.md` — prima della V0.5;
-3. eventuali spec personaggi/EcoGDR/integrations solo quando la roadmap le promuove;
-4. eventuali approfondimenti di performance/limiti soltanto dopo misure sull'implementazione reale.
+Prefisso: `LIVE-*`.
 
-Non creare specifiche dettagliate di versioni lontane soltanto per accumulare documentazione.
+## `docs/PROTOCOL_SPEC.md`
+
+Contratto realtime tra desktop, relay e player: HTTPS/WSS, ticket, protocol version, `requestId`, `stateSeq`, snapshot/resync, commands, accepted/rejected, rate limits e error taxonomy.
+
+Prefisso: `PRO-*`.
 
 ---
 
-# 12. Regola per i goal di implementazione
+# 7. Discord V0.4
 
-Un goal futuro deve indicare esplicitamente quali famiglie di requisiti implementa e non può modificare i contratti approvati soltanto per semplificare il codice.
+## `docs/DISCORD_ACTIVITY_SPEC.md`
 
-Esempio V0.3:
+Discord Activity come tavolo del giocatore, Activity instance join, pairing master-only, binding `instanceId ↔ liveSessionId`, sicurezza e Discord come adapter del modello live generico.
+
+Prefisso: `ACT-*`.
+
+Quando un dettaglio live/protocollo è già definito da V0.3, la Activity lo eredita invece di inventarne una variante Discord-specific.
+
+---
+
+# 8. Compendio e fondazione futura
+
+## `docs/COMPENDIUM_SPEC.md`
+
+Contratto del compendio sostituibile: identità, ruleset, localizzazioni, source/licensing, repository e futuro adapter EcoGDR.
+
+Prefisso: `CMP-*`.
+
+## `docs/FOUNDATION_GUARDRAILS.md`
+
+Guardrail per compatibilità futura EcoGDR senza introdurre account/auth/sync prematuramente.
+
+---
+
+# 9. Mappa area → fonti
+
+| Area | Fonti normative |
+|---|---|
+| lifecycle campagna V0.1 | Operational + Storage + UI/UX |
+| note/draft/titolo | Operational + Product Decisions + Domain + Storage |
+| cartelle | Operational + Domain + Storage + UI/UX |
+| Markdown/frontmatter | Operational + Domain + Search |
+| wikilink/backlink | Operational + Domain + UI/UX |
+| save/recovery/conflict | Operational + Storage + UI/UX |
+| rename/move/trash | Operational + Domain + Storage |
+| recenti/preferiti | Operational + UI/UX + Storage |
+| search/command palette | Operational + Search + UI/UX |
+| graph | Operational + Domain + UI/UX + Design |
+| architettura V0.1 | Operational + architecture |
+| board | Board Spec |
+| live session | Live Session + Board |
+| protocollo realtime | Protocol + Live Session |
+| Discord | Discord Activity + Live/Protocol |
+| compendio | Compendium Spec |
+
+---
+
+# 10. Documenti ancora da produrre
+
+Non serve più una `WIKILINK_SPEC.md` per sbloccare la V0.1: la semantica operativa è chiusa in `V01_OPERATIONAL_SPEC.md`.
+
+Restano da produrre soltanto quando la roadmap li promuove:
+
+1. `docs/AI_SPEC.md` prima della V0.5;
+2. specifiche personaggi/EcoGDR/integrations quando diventano feature concrete;
+3. eventuali addendum tecnici se l'implementazione scopre un problema non coperto dai contract attuali.
+
+Un addendum non può cambiare un comportamento approvato senza decisione di prodotto esplicita.
+
+---
+
+# 11. Regola per i goal di implementazione
+
+Un goal V0.1 deve avere forma equivalente a:
 
 ```text
-Implementa sessione live standalone secondo:
-- BOARD_SPEC.md per la proiezione pubblica della board;
-- LIVE_SESSION_SPEC.md per lifecycle, join, participant e UX;
-- PROTOCOL_SPEC.md per transport, schema, stateSeq, snapshot e permessi;
-- architecture.md per i confini desktop/relay/client.
+Implementa <area> V0.1 secondo:
+- V01_OPERATIONAL_SPEC.md: OPS-...
+- specifiche verticali applicabili: DOM-/STO-/SEA-/UX-...
 
-Non aggiungere dipendenze Discord alla V0.3.
-Non trasferire dati privati della campagna al relay per filtrarli lato client.
-Completa i quality gate LIVE-QA-* e PRO-QA-* applicabili.
+Non modificare i comportamenti approvati per semplificare l'implementazione.
+Se trovi una contraddizione reale non già risolta dall'Operational Spec, fermati sul requisito coinvolto invece di inventare un comportamento.
+Completa contract test e scenari OPS-ACC applicabili prima di dichiarare il goal concluso.
 ```
-
-Se trova una contraddizione, segnala il requisito coinvolto invece di inventare un comportamento.
 
 ---
 
