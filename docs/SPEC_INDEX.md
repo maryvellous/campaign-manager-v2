@@ -209,7 +209,34 @@ L'esistenza della specifica non significa che networking o database EcoGDR siano
 
 ---
 
-# 6. Design e riferimenti
+# 6. Live e Discord
+
+## `docs/DISCORD_ACTIVITY_SPEC.md`
+
+Prima specifica normativa della Discord Activity futura (V0.4).
+
+Definisce già come decisioni approvate:
+
+- Activity come "tavolo del giocatore", non mini Campaign Manager;
+- waiting state e board condivisa come superficie principale;
+- visibilità soltanto di contenuti pubblicati dal DM;
+- controllo limitato ai token autorizzati;
+- ingresso Discord tramite la stessa Activity instance/`instanceId`;
+- nessun codice richiesto ai giocatori nel flusso Discord normale;
+- pairing code breve, temporaneo e monouso usato soltanto dal master per associare desktop e Activity instance;
+- binding runtime `instanceId ↔ liveSessionId` nel relay;
+- web client standalone precedente a Discord;
+- session join code separato per il fallback/browser standalone;
+- Discord SDK come adapter, non dipendenza del dominio live;
+- validazione server-side dell'istanza e dei permessi.
+
+Prefisso requisiti: `ACT-*`.
+
+La specifica è deliberatamente incompleta sui dettagli che appartengono a V0.3/V0.4 e li elenca come decisioni ancora aperte.
+
+---
+
+# 7. Design e riferimenti
 
 ## `docs/DESIGN_DIRECTION.md`
 
@@ -236,7 +263,7 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 
 ---
 
-# 7. Mappa requisito → livello responsabile
+# 8. Mappa requisito → livello responsabile
 
 | Area | Specifica primaria | Livello principale |
 |---|---|---|
@@ -257,11 +284,13 @@ Registro dei mock canonici approvati e delle rispettive impronte.
 | cestino | UI/UX + Domain + Storage | application + OS adapter |
 | piattaforma V0.1 | V01 Decisions + Architecture/Storage | Windows adapter + quality gate |
 | compendio | Compendium Spec | repository adapter + application |
+| Discord Activity | Discord Activity Spec | activity client + Discord adapter |
+| pairing Discord | Discord Activity Spec + future Live/Protocol Specs | relay + activity + desktop |
 | EcoGDR futuro | Foundation Guardrails | future adapter boundary |
 
 ---
 
-# 8. Documenti ancora da produrre
+# 9. Documenti ancora da produrre
 
 Per arrivare al modello "pochi goal, poca interpretazione" mancano soprattutto specifiche verticali delle feature successive o documenti più profondi solo dove l'implementazione dimostrerà che servono.
 
@@ -270,7 +299,7 @@ Ordine consigliato:
 1. `docs/WIKILINK_SPEC.md` — solo se il livello di dettaglio in `DOMAIN_MODEL.md` e nel registro decisionale non basta durante l'implementazione;
 2. `docs/BOARD_SPEC.md` — prima della V0.2;
 3. `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md` — prima della V0.3;
-4. `docs/DISCORD_ACTIVITY_SPEC.md` — prima della V0.4;
+4. approfondire `docs/DISCORD_ACTIVITY_SPEC.md` contro i contratti live/protocol definitivi prima della V0.4;
 5. `docs/AI_SPEC.md` — prima della V0.5;
 6. eventuali spec personaggi/integrations solo quando la roadmap le promuove.
 
@@ -278,7 +307,7 @@ Non creare specifiche dettagliate di versioni lontane soltanto per accumulare do
 
 ---
 
-# 9. Regola per i goal di implementazione
+# 10. Regola per i goal di implementazione
 
 Un goal futuro dovrebbe indicare esplicitamente quali famiglie di requisiti implementa.
 
