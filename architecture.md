@@ -10,6 +10,8 @@ L'obiettivo architetturale è semplice:
 
 > costruire prima un campaign manager locale solido, poi aggiungere lavagna, realtime, Discord e IA come strati separati.
 
+La V0.1 include anche una **vista grafo locale derivata dai wikilink**: il grafo non introduce una nuova fonte dati e non anticipa infrastruttura cloud.
+
 ---
 
 ## 2. Principi
@@ -32,15 +34,15 @@ Nessun componente deve conoscere dettagli interni di un altro componente quando 
 
 Non si mescolano:
 
-1. **dati persistenti della campagna**
-2. **stato temporaneo della sessione live**
-3. **stato dell'interfaccia**
+1. **dati persistenti della campagna**;
+2. **stato temporaneo della sessione live**;
+3. **stato dell'interfaccia e preferenze locali**.
 
-Queste tre categorie hanno cicli di vita e responsabilità differenti.
+Queste categorie hanno cicli di vita e responsabilità differenti.
 
 ### Dati derivati ricostruibili
 
-Indici di ricerca, cache, embedding e altri dati tecnici devono essere eliminabili e rigenerabili.
+Indici di ricerca, backlink cache, grafo, embedding e altri dati tecnici devono essere eliminabili e rigenerabili.
 
 Non devono mai diventare la fonte autorevole della campagna.
 
@@ -51,6 +53,12 @@ L'IA può leggere, cercare e proporre modifiche.
 Non modifica direttamente i file della campagna.
 
 Ogni modifica persistente passa attraverso i normali servizi applicativi e, quando generata dall'IA, richiede approvazione esplicita.
+
+### Compatibilità futura senza anticipazione
+
+I vincoli minimi per una futura integrazione EcoGDR e per il compendio sostituibile sono definiti in `docs/FOUNDATION_GUARDRAILS.md`.
+
+Non si introducono account, auth, sync o networking EcoGDR nella V0.1.
 
 ---
 
@@ -78,6 +86,8 @@ La repository è un monorepo TypeScript.
 
 L'obiettivo non è massimizzare il numero di package, ma impedire dipendenze sbagliate tra parti del sistema.
 
+Nella V0.1 si creano soltanto i package necessari; `activity`, `protocol`, `ai` e `services/relay` possono essere introdotti quando diventano reali.
+
 ---
 
 ## 4. `apps/desktop`
@@ -86,21 +96,23 @@ L'obiettivo non è massimizzare il numero di package, ma impedire dipendenze sba
 
 Stack previsto:
 
-- Electron
-- React
-- TypeScript
+- Electron;
+- React;
+- TypeScript.
 
 Responsabilità:
 
-- apertura e gestione delle campagne
-- editor di note
-- wikilink e navigazione
-- lavagne
-- personaggi e contenuti di campagna
-- gestione sessione live
-- configurazione del DM
-- interfaccia con l'IA
-- collegamento al relay realtime
+- apertura e gestione delle campagne;
+- editor e lettura delle note;
+- wikilink, backlink e navigazione;
+- ricerca locale;
+- graph view derivata dai wikilink;
+- lavagne;
+- personaggi e contenuti di campagna;
+- gestione sessione live;
+- configurazione del DM;
+- interfaccia con l'IA;
+- collegamento al relay realtime.
 
 Il renderer React **non accede direttamente al filesystem**.
 
@@ -113,7 +125,7 @@ UI
  ↓
 CampaignService
  ↓
-CampaignRepository
+CampaignRepository / NoteRepository
  ↓
 Filesystem adapter
 ```
@@ -132,6 +144,8 @@ reindex
 altro stato globale
 ```
 
+Le regole comportamentali della V0.1 sono definite in `docs/UI_UX_SPEC_V01.md`.
+
 ---
 
 ## 5. `apps/activity`
@@ -140,31 +154,33 @@ altro stato globale
 
 Stack:
 
-- React
-- TypeScript
+- React;
+- TypeScript.
 
 Deve essere deliberatamente piccolo.
 
 Responsabilità:
 
-- identificare il giocatore tramite Discord
-- entrare nella sessione live corretta
-- mostrare la board pubblicata dal DM
-- ricevere aggiornamenti realtime
-- inviare le azioni consentite al giocatore
-- mostrare eventuali dati condivisi, come scheda o token
+- identificare il giocatore tramite Discord;
+- entrare nella sessione live corretta;
+- mostrare la board pubblicata dal DM;
+- ricevere aggiornamenti realtime;
+- inviare le azioni consentite al giocatore;
+- mostrare eventuali dati condivisi, come scheda o token.
 
 Non deve conoscere:
 
-- filesystem del DM
-- API key
-- struttura interna della campagna
-- editor completo
-- indice IA
-- configurazioni private
-- note non condivise
+- filesystem del DM;
+- API key;
+- struttura interna della campagna;
+- editor completo;
+- indice IA;
+- configurazioni private;
+- note non condivise.
 
 La Activity vede soltanto ciò che il desktop decide di pubblicare nella sessione.
+
+L'integrazione Discord è un adapter, non il fondamento del client.
 
 ---
 
@@ -174,10 +190,10 @@ Il relay è il punto di incontro realtime tra desktop e Activity.
 
 Tecnologia prevista:
 
-- Cloudflare Worker
-- Durable Objects
-- WebSocket
-- R2 per asset condivisi quando necessario
+- Cloudflare Worker;
+- Durable Objects;
+- WebSocket;
+- R2 per asset condivisi quando necessario.
 
 Architettura:
 
@@ -199,13 +215,13 @@ Il relay non è il database della campagna.
 
 Gestisce solo lo stato necessario alla sessione live:
 
-- sessione attiva
-- peer connessi
-- board pubblicata
-- posizione dei token
-- presenza
-- eventi realtime
-- riferimenti agli asset condivisi
+- sessione attiva;
+- peer connessi;
+- board pubblicata;
+- posizione dei token;
+- presenza;
+- eventi realtime;
+- riferimenti agli asset condivisi.
 
 Lo stato persistente della campagna continua a vivere sul desktop.
 
@@ -215,7 +231,7 @@ Lo stato persistente della campagna continua a vivere sul desktop.
 
 Contiene il dominio applicativo.
 
-Non dipende da Electron, React, Discord o Cloudflare.
+Non dipende da Electron, React, Discord, Cloudflare o EcoGDR.
 
 Esempi di moduli:
 
@@ -230,11 +246,11 @@ core/
 
 Qui vivono:
 
-- tipi di dominio
-- regole
-- use case
-- validazioni
-- contratti dei repository
+- tipi di dominio;
+- regole;
+- use case;
+- validazioni;
+- contratti dei repository.
 
 Esempi:
 
@@ -248,6 +264,8 @@ startSession()
 
 Il dominio deve poter essere testato senza avviare Electron o un browser.
 
+Il grafo V0.1 **non richiede un dominio autorevole separato**: nodi e archi sono una proiezione delle note e dei wikilink. Eventuali preferenze di layout del grafo sono stato locale dell'applicazione, non contenuto delle note.
+
 ---
 
 ## 8. `packages/storage`
@@ -256,12 +274,13 @@ Contiene gli adapter di persistenza locale.
 
 Responsabilità:
 
-- lettura e scrittura file
-- struttura della cartella campagna
-- impostazioni locali
-- migrazioni dei formati
-- import/export
-- eventuale compatibilità con formati legacy
+- lettura e scrittura file;
+- struttura della cartella campagna;
+- impostazioni locali;
+- bozze di recovery;
+- migrazioni dei formati;
+- import/export futuro;
+- eventuale compatibilità con formati legacy.
 
 Esempio:
 
@@ -269,6 +288,7 @@ Esempio:
 storage/
   filesystem/
   settings/
+  recovery/
   migrations/
 ```
 
@@ -283,18 +303,22 @@ interface NoteRepository {
 
 Solo `storage` sa come quella nota viene realmente salvata su disco.
 
+Le bozze di recovery devono essere separate dai file autorevoli della campagna. Stato `saved` può essere emesso solo dopo conferma positiva del repository.
+
+Le operazioni di eliminazione richieste dalla V0.1 devono usare un adapter che possa esprimere esplicitamente l'indisponibilità del cestino; non è ammesso un fallback silenzioso a cancellazione permanente.
+
 ---
 
 ## 9. `packages/protocol`
 
-Definisce il protocollo condiviso tra desktop, relay e Activity.
+Definisce il protocollo condiviso tra desktop, relay e Activity nelle versioni realtime.
 
 Contiene esclusivamente:
 
-- tipi dei messaggi
-- schema degli eventi
-- versionamento del protocollo
-- validazione payload
+- tipi dei messaggi;
+- schema degli eventi;
+- versionamento del protocollo;
+- validazione payload.
 
 Esempi di eventi:
 
@@ -313,6 +337,8 @@ Ogni messaggio deve essere esplicito e versionabile.
 
 Il relay non deve interpretare la logica del Campaign Manager oltre ciò che serve per instradare e validare gli eventi.
 
+Questo package non è richiesto dalla V0.1 locale solo per anticipazione.
+
 ---
 
 ## 10. `packages/ai`
@@ -321,12 +347,12 @@ L'IA è un modulo applicativo separato.
 
 Responsabilità:
 
-- ricerca nella campagna
-- costruzione del contesto
-- provider LLM
-- tool disponibili all'agente
-- generazione di proposte di modifica
-- diff leggibili dall'utente
+- ricerca nella campagna;
+- costruzione del contesto;
+- provider LLM;
+- tool disponibili all'agente;
+- generazione di proposte di modifica;
+- diff leggibili dall'utente.
 
 Flusso previsto:
 
@@ -352,9 +378,9 @@ L'IA non riceve accesso arbitrario al filesystem.
 
 La prima versione deve privilegiare strumenti semplici:
 
-- full-text search
-- BM25 o equivalente
-- indicizzazione locale
+- full-text search;
+- BM25 o equivalente;
+- indicizzazione locale.
 
 Vector database ed embedding si aggiungono solo se una necessità concreta lo giustifica.
 
@@ -364,15 +390,15 @@ L'indice è sempre derivato e ricostruibile.
 
 ## 11. `packages/ui`
 
-Contiene solo componenti visivi realmente condivisi tra desktop e Activity.
+Contiene solo componenti visivi realmente condivisi quando la condivisione è utile.
 
 Esempi:
 
-- button
-- dialog
-- token
-- avatar
-- elementi base della board
+- button;
+- dialog;
+- token;
+- avatar;
+- elementi base della board.
 
 Non deve contenere logica di dominio.
 
@@ -386,11 +412,11 @@ Se desktop e Activity iniziano ad avere esigenze visive troppo diverse, è prefe
 
 Esempi:
 
-- note
-- board
-- personaggi
-- asset
-- metadati campagna
+- note;
+- board;
+- personaggi;
+- asset;
+- metadati campagna.
 
 Fonte autorevole: filesystem locale.
 
@@ -400,29 +426,34 @@ Gestiti tramite servizi e repository.
 
 Esempi:
 
-- board attualmente pubblicata
-- token mostrati ai giocatori
-- posizioni live
-- utenti connessi
-- permessi temporanei
+- board attualmente pubblicata;
+- token mostrati ai giocatori;
+- posizioni live;
+- utenti connessi;
+- permessi temporanei.
 
 Fonte autorevole durante la sessione: desktop + relay secondo il tipo di dato.
 
 Non viene confuso con i file della campagna.
 
-### Stato UI
+### Stato UI e preferenze locali
 
 Esempi:
 
-- modal aperta
-- tab selezionata
-- zoom
-- pannello laterale
-- selezione corrente
+- dialog aperto;
+- tab selezionata e cronologia per tab;
+- cursore e posizione di lettura;
+- zoom;
+- pannelli e loro dimensioni;
+- recenti e preferiti;
+- camera, filtro e selezione del grafo;
+- colori assegnati alle cartelle per la visualizzazione del grafo.
 
-Può essere gestito con Zustand o stato React locale.
+Può essere gestito con Zustand o stato React locale **solo per ciò che è realmente UI state**.
 
-Zustand non deve diventare un contenitore universale per filesystem, dominio, rete e UI.
+Zustand non deve diventare un contenitore universale per filesystem, dominio, rete, persistenza e UI.
+
+Le preferenze locali per campagna non devono finire automaticamente nel frontmatter delle note.
 
 ---
 
@@ -433,13 +464,17 @@ Esempio: modifica di una nota.
 ```text
 Editor React
    ↓
-updateNote()
+update buffer
+   ↓
+autosave / save command
    ↓
 CampaignService
    ↓
 NoteRepository
    ↓
 Filesystem
+   ↓
+confirmed success / explicit error
 ```
 
 Dopo il salvataggio possono partire effetti secondari:
@@ -447,16 +482,60 @@ Dopo il salvataggio possono partire effetti secondari:
 ```text
 note saved
    ├─ update search index
-   └─ notify interested UI
+   ├─ update backlink projection
+   └─ update graph projection
 ```
 
 Gli effetti secondari non devono essere mescolati alla logica primaria di salvataggio.
 
+Un timer di debounce non può trasformare uno stato in `saved`: la conferma deve arrivare dalla persistenza.
+
 ---
 
-## 14. Flusso realtime
+## 14. Modifiche esterne e recovery
 
-Esempio: il DM muove un token.
+Il filesystem è autorevole, ma l'editor può avere un buffer locale non ancora persistito.
+
+- file modificato esternamente + buffer pulito → può essere ricaricato;
+- file modificato esternamente + buffer dirty → autosave sospeso, confronto esplicito, nessuna sovrascrittura automatica;
+- errore di scrittura → buffer e bozza recovery conservati;
+- crash → la bozza di recovery può essere proposta alla riapertura senza sovrascrivere automaticamente una versione file più recente.
+
+La UI/UX dettagliata è definita dai requisiti `UX-SAVE-*` in `docs/UI_UX_SPEC_V01.md`.
+
+---
+
+## 15. Graph view come proiezione derivata
+
+Flusso concettuale:
+
+```text
+Markdown files
+   ↓
+parse wikilink
+   ↓
+resolved note graph
+   ↓
+Graph View
+```
+
+Il grafo non modifica i wikilink tramite trascinamento dei nodi.
+
+Persistenza consentita per il grafo:
+
+- camera/pan/zoom;
+- filtri;
+- selezione utile da ripristinare;
+- eventuali posizioni manuali dei nodi;
+- colori cartella e preferenze visuali locali.
+
+Questi dati restano separati dal contenuto Markdown.
+
+---
+
+## 16. Flusso realtime
+
+Esempio futuro: il DM muove un token.
 
 ```text
 Desktop UI
@@ -478,7 +557,7 @@ Non si assume che ogni client abbia ricevuto tutti gli eventi precedenti.
 
 ---
 
-## 15. Asset condivisi
+## 17. Asset condivisi
 
 Gli asset originali possono vivere nella campagna locale.
 
@@ -500,23 +579,23 @@ La pubblicazione di un asset non cambia la fonte autorevole locale.
 
 ---
 
-## 16. Sicurezza
+## 18. Sicurezza
 
 Principi minimi:
 
-- nessuna API key nel renderer della Activity
-- nessun accesso remoto diretto al filesystem del DM
-- nessuna porta pubblica aperta sul PC del DM
-- payload realtime validati
-- sessioni identificabili con token non prevedibili
-- permessi distinti tra DM e giocatore
-- contenuti privati inviati al relay solo quando esplicitamente condivisi
+- nessuna API key nel renderer della Activity;
+- nessun accesso remoto diretto al filesystem del DM;
+- nessuna porta pubblica aperta sul PC del DM;
+- payload realtime validati;
+- sessioni identificabili con token non prevedibili;
+- permessi distinti tra DM e giocatore;
+- contenuti privati inviati al relay solo quando esplicitamente condivisi.
 
 Il relay deve conoscere il meno possibile.
 
 ---
 
-## 17. Strategia di test
+## 19. Strategia di test
 
 ### Core
 
@@ -528,43 +607,50 @@ Test di integrazione su directory temporanee.
 
 Verificare almeno:
 
-- create
-- read
-- update
-- rename
-- delete
-- recovery da errori comuni
+- create;
+- read;
+- update;
+- rename;
+- move;
+- trash/delete behavior;
+- errori di scrittura;
+- conflitti esterni;
+- recovery da errori comuni.
+
+### Search / graph projection
+
+Testare:
+
+- rebuild da filesystem;
+- wikilink risolti e mancanti;
+- rename e aggiornamento riferimenti;
+- note isolate;
+- cartelle e sottocartelle;
+- filtri e colore ereditato come dati di visualizzazione.
 
 ### Protocol
 
-Test di validazione e compatibilità dei messaggi.
+Test di validazione e compatibilità dei messaggi quando il protocollo verrà introdotto.
 
 ### Relay
 
-Test su:
-
-- join/leave
-- broadcast
-- reconnect
-- snapshot
-- autorizzazione
-- isolamento tra sessioni
+Test su join/leave, broadcast, reconnect, snapshot, autorizzazione e isolamento tra sessioni quando verrà introdotto.
 
 ### Desktop e Activity
 
-Pochi test end-to-end, concentrati sui flussi realmente critici.
+Pochi test end-to-end, concentrati sui flussi realmente critici e sugli scenari di accettazione documentati.
 
 ---
 
-## 18. Regole sulle dipendenze
+## 20. Regole sulle dipendenze
 
 Dipendenze consentite, in forma semplificata:
 
 ```text
 desktop  ─────→ core
 desktop  ─────→ storage
-desktop  ─────→ protocol
-desktop  ─────→ ai
+desktop  ─────→ protocol   (quando esiste)
+desktop  ─────→ ai         (quando esiste)
 desktop  ─────→ ui
 
 activity ─────→ protocol
@@ -583,6 +669,7 @@ core     → React
 core     → Electron
 core     → Discord
 core     → Cloudflare
+core     → EcoGDR SDK/API
 
 activity → storage
 activity → ai
@@ -593,7 +680,7 @@ relay    → desktop
 
 ---
 
-## 19. Ordine di costruzione
+## 21. Ordine di costruzione
 
 L'architettura deve permettere di sviluppare il prodotto verticalmente.
 
@@ -601,10 +688,12 @@ L'architettura deve permettere di sviluppare il prodotto verticalmente.
 
 ```text
 apri campagna
-→ leggi note
-→ naviga wikilink
-→ modifica
-→ salva
+→ leggi/modifica note
+→ naviga wikilink e backlink
+→ cerca
+→ esplora il grafo derivato
+→ salva/recovery
+→ chiudi e riapri
 ```
 
 ### V0.2 — Lavagna locale
@@ -647,23 +736,25 @@ Schede, bot, comandi e altre feature vengono valutate solo quando il nucleo è s
 
 ---
 
-## 20. Non-obiettivi iniziali
+## 22. Non-obiettivi iniziali
 
 La prima fase della v2 non deve risolvere:
 
-- sincronizzazione cloud completa della campagna
-- collaborazione multi-DM
-- editing remoto delle note
-- vector database complesso
-- marketplace di plugin
-- supporto a molte piattaforme realtime
-- compatibilità perfetta con ogni dettaglio della vecchia app
+- sincronizzazione cloud completa della campagna;
+- account o autenticazione EcoGDR;
+- collaborazione multi-DM;
+- editing remoto delle note;
+- vector database complesso;
+- marketplace di plugin;
+- supporto a molte piattaforme realtime;
+- compatibilità perfetta con ogni dettaglio della vecchia app;
+- importazione generale di file esterni.
 
 Queste possibilità possono essere valutate in seguito.
 
 ---
 
-## 21. Regola finale
+## 23. Regola finale
 
 Ogni nuova feature deve rispondere prima a due domande:
 
