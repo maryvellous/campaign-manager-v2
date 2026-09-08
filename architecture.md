@@ -4,13 +4,11 @@
 
 Campaign Manager v2 è una ricostruzione completa del progetto originale.
 
-La vecchia repository resta un riferimento funzionale e storico, ma **non è una base da refactorare**. La v2 nasce su una nuova codebase, con confini chiari tra applicazione desktop, client Discord, realtime e IA.
+La vecchia repository resta un riferimento funzionale e storico, ma **non è una base da refactorare**. La v2 nasce su una nuova codebase con confini chiari tra desktop, storage locale, board, live session, player client, Discord e IA.
 
-L'obiettivo architetturale è semplice:
+Principio:
 
-> costruire prima un campaign manager locale solido, poi aggiungere lavagna, realtime, Discord e IA come strati separati.
-
-La V0.1 include anche una **vista grafo locale derivata dai wikilink**: il grafo non introduce una nuova fonte dati e non anticipa infrastruttura cloud.
+> costruire prima un campaign manager locale solido, poi aggiungere board, realtime, Discord e IA come strati separati.
 
 ---
 
@@ -20,15 +18,11 @@ La V0.1 include anche una **vista grafo locale derivata dai wikilink**: il grafo
 
 La cartella della campagna sul computer del DM è la fonte autorevole dei dati persistenti.
 
-Note, lavagne, personaggi e altri contenuti devono poter esistere e funzionare anche senza connessione Internet.
-
-Il cloud non diventa il database principale della campagna.
+Note, board, personaggi e asset devono poter esistere e funzionare anche senza Internet.
 
 ### Confini espliciti
 
-Desktop, Discord Activity, relay realtime e IA sono sistemi distinti.
-
-Nessun componente deve conoscere dettagli interni di un altro componente quando può comunicare tramite un contratto stabile.
+Desktop, player client, Discord adapter, relay e IA sono sistemi distinti.
 
 ### Stato separato per natura
 
@@ -36,33 +30,23 @@ Non si mescolano:
 
 1. **dati persistenti della campagna**;
 2. **stato temporaneo della sessione live**;
-3. **stato dell'interfaccia e preferenze locali**.
-
-Queste categorie hanno cicli di vita e responsabilità differenti.
+3. **stato UI e preferenze locali**.
 
 ### Dati derivati ricostruibili
 
-Indici di ricerca, backlink cache, grafo, embedding e altri dati tecnici devono essere eliminabili e rigenerabili.
+Search index, backlink cache, graph e altri dati tecnici devono essere eliminabili e rigenerabili.
 
-Non devono mai diventare la fonte autorevole della campagna.
+### IA sotto controllo
 
-### IA sotto controllo dell'utente
-
-L'IA può leggere, cercare e proporre modifiche.
-
-Non modifica direttamente i file della campagna.
-
-Ogni modifica persistente passa attraverso i normali servizi applicativi e, quando generata dall'IA, richiede approvazione esplicita.
+L'IA può leggere, cercare e proporre; non scrive direttamente sul filesystem. Le modifiche persistenti passano dai normali servizi applicativi con approvazione.
 
 ### Compatibilità futura senza anticipazione
 
-I vincoli minimi per una futura integrazione EcoGDR e per il compendio sostituibile sono definiti in `docs/FOUNDATION_GUARDRAILS.md`.
-
-Non si introducono account, auth, sync o networking EcoGDR nella V0.1.
+EcoGDR e compendio seguono `docs/FOUNDATION_GUARDRAILS.md`; V0.1 non introduce auth/sync/networking EcoGDR.
 
 ---
 
-## 3. Struttura della repository
+## 3. Struttura repository
 
 ```text
 campaign-manager-v2/
@@ -82,19 +66,17 @@ campaign-manager-v2/
     ui/
 ```
 
-La repository è un monorepo TypeScript.
+Monorepo TypeScript.
 
-L'obiettivo non è massimizzare il numero di package, ma impedire dipendenze sbagliate tra parti del sistema.
-
-Nella V0.1 si creano soltanto i package necessari; `activity`, `protocol`, `ai` e `services/relay` possono essere introdotti quando diventano reali.
+Nella V0.1 si creano solo i package necessari. `activity`, `protocol`, `ai` e `services/relay` entrano quando diventano reali nelle rispettive versioni.
 
 ---
 
 ## 4. `apps/desktop`
 
-È il prodotto principale.
+Prodotto principale.
 
-Stack previsto:
+Stack:
 
 - Electron;
 - React;
@@ -102,32 +84,29 @@ Stack previsto:
 
 Responsabilità:
 
-- apertura e gestione delle campagne;
-- editor e lettura delle note;
-- wikilink, backlink e navigazione;
-- ricerca locale;
-- graph view derivata dai wikilink;
-- lavagne;
-- personaggi e contenuti di campagna;
-- gestione sessione live;
-- configurazione del DM;
-- interfaccia con l'IA;
-- collegamento al relay realtime.
+- campagne locali;
+- note/editor/lettura;
+- wikilink/backlink;
+- ricerca e graph view;
+- board;
+- SessionService/live controls;
+- pubblicazione contenuti e asset;
+- configurazione DM;
+- IA futura;
+- collegamento outbound al relay.
 
 Il renderer React **non accede direttamente al filesystem**.
 
-La UI invoca use case o servizi applicativi; l'accesso al sistema operativo passa attraverso il processo Electron appropriato e API tipizzate.
-
-Esempio:
+Forma desiderata:
 
 ```text
 UI
  ↓
-CampaignService
+servizio/use case applicativo
  ↓
-CampaignRepository / NoteRepository
+repository / adapter
  ↓
-Filesystem adapter
+filesystem / network / OS
 ```
 
 Non:
@@ -144,141 +123,134 @@ reindex
 altro stato globale
 ```
 
-Le regole comportamentali della V0.1 sono definite in `docs/UI_UX_SPEC_V01.md`.
+Per V0.1 valgono `docs/UI_UX_SPEC_V01.md` e le specifiche verticali indicate da `docs/SPEC_INDEX.md`.
 
 ---
 
 ## 5. `apps/activity`
 
-È il client destinato ai giocatori.
+È il player client.
 
-La prima versione live viene costruita come **client web standalone** in V0.3; in V0.4 lo stesso modello di sessione viene adattato a Discord tramite Embedded App SDK.
+### V0.3
+
+Funziona prima come **web client standalone**.
+
+### V0.4
+
+Lo stesso player client viene adattato a Discord tramite Embedded App SDK.
 
 Stack:
 
 - React;
 - TypeScript.
 
-Deve essere deliberatamente piccolo e session-oriented.
+Principio:
 
-Principio approvato:
-
-> l'Activity è il tavolo del giocatore, non un mini Campaign Manager.
+> è il lato del tavolo visto dal giocatore, non un mini Campaign Manager.
 
 Responsabilità:
 
-- entrare nella sessione live corretta;
-- mostrare waiting state quando il DM non ha ancora pubblicato una scena;
-- mostrare la board/scena pubblicata dal DM come superficie principale;
-- ricevere aggiornamenti realtime;
-- mostrare soltanto contenuti esplicitamente condivisi;
-- inviare esclusivamente azioni consentite al giocatore;
-- mostrare token e, in futuro, eventuali dati personaggio condivisi.
+- join/resume sessione;
+- waiting state;
+- board pubblica;
+- snapshot + eventi realtime;
+- pan/zoom;
+- ping;
+- token autorizzati;
+- asset/contenuti pubblici.
 
-Non deve conoscere:
+Non conosce:
 
 - filesystem del DM;
 - API key;
-- struttura interna completa della campagna;
-- editor completo;
-- indice IA;
-- configurazioni private;
-- note non condivise;
-- vault o graph completo della campagna.
+- vault completo;
+- note private;
+- search index/graph privato;
+- configurazione DM;
+- IA;
+- asset non pubblicati.
 
 ### Ingresso standalone
 
-Fuori da Discord, il client web può entrare nella sessione tramite un `session join code` gestito dal dominio/protocollo live.
-
-Questo codice non è il pairing code Discord del master.
+Usa il session join code definito da `LIVE_SESSION_SPEC.md`.
 
 ### Ingresso Discord
 
-Dentro Discord, i giocatori usano il normale flusso per unirsi alla stessa Activity instance. L'`instanceId` identifica il contesto dell'istanza Activity condivisa.
+Discord usa la Activity instance e il pairing master; il canale vocale non è un session ID Campaign Manager.
 
-Il canale vocale non viene usato come session ID proprietario del Campaign Manager.
-
-Il master associa una live session desktop all'istanza Discord una volta tramite un pairing code breve, temporaneo e monouso.
-
-Forma concettuale:
-
-```text
-Discord Activity instanceId
-        ↕
-Campaign Manager liveSessionId
-```
-
-Il binding è runtime state del relay/session layer e non diventa metadata persistente della campagna.
-
-La specifica normativa corrente è `docs/DISCORD_ACTIVITY_SPEC.md`.
-
-L'integrazione Discord è un adapter, non il fondamento del client.
+Specifica: `docs/DISCORD_ACTIVITY_SPEC.md`.
 
 ---
 
 ## 6. `services/relay`
 
-Il relay è il punto di incontro realtime tra desktop e client giocatori.
+Il relay coordina desktop e player client.
 
 Tecnologia prevista:
 
-- Cloudflare Worker;
-- Durable Objects;
-- WebSocket;
-- R2 per asset condivisi quando necessario.
+- Cloudflare Worker come edge/router HTTP/WebSocket;
+- **un Durable Object per live session**;
+- WebSocket Hibernation API;
+- Durable Object storage per lo stato runtime che deve sopravvivere a hibernation/restart;
+- R2 per asset pubblicati temporaneamente.
 
 Architettura:
 
 ```text
 Desktop DM
-    │
-    │ WebSocket in uscita
+    │ outbound HTTPS/WSS
     ▼
-Cloudflare Relay
+Worker / Session Durable Object
     ▲
-    │ WebSocket
+    │ HTTPS/WSS
     │
-Web client / Discord Activity
+Web Player / Discord Activity
 ```
 
-Il computer del DM non espone un server pubblico e non richiede tunnel.
+Il PC del DM non apre porte pubbliche e non richiede tunnel.
 
-Il relay non è il database della campagna.
+### Autorità
 
-Gestisce solo lo stato necessario alla sessione live:
+Il relay/session backend è autorevole soltanto per **stato runtime già accettato**:
 
-- sessione attiva;
-- peer connessi;
-- board pubblicata;
-- posizione dei token;
-- presenza;
-- eventi realtime;
-- riferimenti agli asset condivisi;
-- autorizzazioni live necessarie;
-- binding temporanei di ingresso, incluso il futuro `instanceId ↔ liveSessionId` Discord.
+- lifecycle;
+- current board;
+- live board states;
+- participant identity/presence;
+- token assignments e posizioni live;
+- ordering (`stateSeq`);
+- join/pairing state;
+- Discord binding;
+- riferimenti ad asset pubblicati.
 
-Il relay/session backend deve validare le azioni significative: essere presenti nell'Activity o dichiarare un token nel client non rende il giocatore autorevole.
+Non è autorevole per:
 
-Il pairing code Discord:
+- note;
+- board preparate;
+- campaign metadata;
+- asset originali;
+- search index;
+- filesystem.
 
-- appartiene a una live session specifica;
-- è monouso;
-- scade rapidamente;
-- viene consumato dal master per associare desktop e Activity instance;
-- non è una password permanente della campagna;
-- non è richiesto ai giocatori nel flusso Discord normale.
+### Sicurezza
 
-Lo stato persistente della campagna continua a vivere sul desktop.
+Il relay valida tutte le azioni significative. Un client non diventa autorevole dichiarando `participantId`, token, ruolo, `instanceId` o `liveSessionId`.
+
+### Hibernation
+
+Lo stato necessario alla ricostruzione della sessione non vive esclusivamente in memoria. Per-connection metadata piccolo può usare WebSocket attachment; stato sessione più ampio usa Durable Object storage.
+
+### Asset
+
+R2 contiene soltanto copie/oggetti pubblicati necessari alla live session. Gli asset vengono caricati on-demand e ripuliti dopo la sessione secondo `LIVE_SESSION_SPEC.md` / `PROTOCOL_SPEC.md`.
 
 ---
 
 ## 7. `packages/core`
 
-Contiene il dominio applicativo.
+Contiene dominio e use case che non dipendono da React, Electron, Discord, Cloudflare o EcoGDR.
 
-Non dipende da Electron, React, Discord, Cloudflare o EcoGDR.
-
-Esempi di moduli:
+Esempi:
 
 ```text
 core/
@@ -295,115 +267,90 @@ Qui vivono:
 - regole;
 - use case;
 - validazioni;
-- contratti dei repository.
+- repository/service contracts.
 
 Esempi:
 
 ```ts
 createNote()
 renameNote()
-moveToken()
+createBoard()
 publishBoard()
 startSession()
 ```
 
-Il dominio deve poter essere testato senza avviare Electron o un browser.
+Il dominio deve essere testabile senza Electron/browser.
 
-Il grafo V0.1 **non richiede un dominio autorevole separato**: nodi e archi sono una proiezione delle note e dei wikilink. Eventuali preferenze di layout del grafo sono stato locale dell'applicazione, non contenuto delle note.
-
-Il dominio live futuro non deve dipendere dall'Embedded App SDK. Discord traduce il proprio contesto (`instanceId`, partecipanti, identity) verso i contratti live/protocollo definiti dal progetto.
+Il dominio live non dipende dall'Embedded App SDK: Discord traduce identity/context verso i contratti live generici.
 
 ---
 
 ## 8. `packages/storage`
 
-Contiene gli adapter di persistenza locale.
+Adapter di persistenza locale.
 
 Responsabilità:
 
-- lettura e scrittura file;
-- struttura della cartella campagna;
+- filesystem;
+- note e board files;
 - impostazioni locali;
-- bozze di recovery;
-- migrazioni dei formati;
-- import/export futuro;
-- eventuale compatibilità con formati legacy.
+- recovery;
+- migrazioni;
+- asset import;
+- compatibilità legacy futura.
 
-Esempio:
+Solo storage conosce i dettagli fisici di lettura/scrittura.
 
-```text
-storage/
-  filesystem/
-  settings/
-  recovery/
-  migrations/
-```
+Recovery resta separata dalla fonte autorevole. Stato `saved` solo dopo conferma positiva della persistenza.
 
-Il dominio conosce interfacce come:
-
-```ts
-interface NoteRepository {
-  get(id: NoteId): Promise<Note>
-  save(note: Note): Promise<void>
-}
-```
-
-Solo `storage` sa come quella nota viene realmente salvata su disco.
-
-Le bozze di recovery devono essere separate dai file autorevoli della campagna. Stato `saved` può essere emesso solo dopo conferma positiva del repository.
-
-Le operazioni di eliminazione richieste dalla V0.1 devono usare un adapter che possa esprimere esplicitamente l'indisponibilità del cestino; non è ammesso un fallback silenzioso a cancellazione permanente.
+Il cestino V0.1 deve poter dichiarare indisponibilità senza fallback silenzioso a delete permanente.
 
 ---
 
 ## 9. `packages/protocol`
 
-Definisce il protocollo condiviso tra desktop, relay e client giocatori nelle versioni realtime.
+Contratto condiviso tra desktop, relay e player client.
 
-Contiene esclusivamente:
+Specifica normativa: `docs/PROTOCOL_SPEC.md`.
 
-- tipi dei messaggi;
-- schema degli eventi;
-- versionamento del protocollo;
-- validazione payload.
+Contiene:
 
-Esempi di eventi:
+- schema runtime;
+- tipi messaggi;
+- versionamento;
+- message/error constants;
+- validation helpers;
+- contract fixtures.
+
+Non contiene:
+
+- React;
+- filesystem;
+- Discord SDK;
+- implementazione Cloudflare;
+- logica UI.
+
+Concetti chiave V1:
 
 ```text
-session.join
-session.leave
-board.publish
-board.snapshot
-token.move
-token.update
-presence.update
-error
+HTTPS create/join/ticket/assets
+WSS realtime
+requestId
+stateSeq
+snapshot
+commands stretti
+accepted/rejected
 ```
 
-Ogni messaggio deve essere esplicito e versionabile.
-
-Il protocollo deve funzionare con il client web standalone prima dell'integrazione Discord. Non deve contenere dipendenze dall'Embedded App SDK o usare `instanceId` come identità universale della live session.
-
-Il relay non deve interpretare la logica del Campaign Manager oltre ciò che serve per instradare, autorizzare e validare gli eventi.
-
-Questo package non è richiesto dalla V0.1 locale solo per anticipazione.
+Il protocollo funziona nel browser standalone prima di Discord.
 
 ---
 
 ## 10. `packages/ai`
 
-L'IA è un modulo applicativo separato.
+Modulo IA separato.
 
-Responsabilità:
-
-- ricerca nella campagna;
-- costruzione del contesto;
-- provider LLM;
-- tool disponibili all'agente;
-- generazione di proposte di modifica;
-- diff leggibili dall'utente.
-
-Flusso previsto:
+Flusso:
 
 ```text
 Campaign data
@@ -416,30 +363,20 @@ Change proposal
      ↓
 User approval
      ↓
-CampaignService
+servizio applicativo
      ↓
 Storage
 ```
 
-L'IA non riceve accesso arbitrario al filesystem.
+Nessun accesso filesystem arbitrario.
 
-### Ricerca
-
-La prima versione deve privilegiare strumenti semplici:
-
-- full-text search;
-- BM25 o equivalente;
-- indicizzazione locale.
-
-Vector database ed embedding si aggiungono solo se una necessità concreta lo giustifica.
-
-L'indice è sempre derivato e ricostruibile.
+La prima versione privilegia full-text/BM25 o equivalente; vector DB/embedding solo se giustificati dall'uso reale.
 
 ---
 
 ## 11. `packages/ui`
 
-Contiene solo componenti visivi realmente condivisi quando la condivisione è utile.
+Componenti visivi realmente condivisi quando utile.
 
 Esempi:
 
@@ -447,392 +384,371 @@ Esempi:
 - dialog;
 - token;
 - avatar;
-- elementi base della board.
+- primitive board.
 
-Non deve contenere logica di dominio.
+Nessuna logica dominio.
 
-Se desktop e Activity iniziano ad avere esigenze visive troppo diverse, è preferibile duplicare un piccolo componente piuttosto che creare un'astrazione fragile.
+Se desktop e player client divergono troppo, meglio duplicare un piccolo componente che creare un'astrazione fragile.
 
 ---
 
 ## 12. Modello dello stato
 
-### Dati persistenti della campagna
+### Persistente campagna
 
 Esempi:
 
 - note;
-- board;
+- `*.board.json`;
 - personaggi;
 - asset;
-- metadati campagna.
+- campaign metadata.
 
 Fonte autorevole: filesystem locale.
 
-Gestiti tramite servizi e repository.
-
-### Stato della sessione live
+### Live session
 
 Esempi:
 
 - `liveSessionId`;
-- board attualmente pubblicata;
-- token mostrati ai giocatori;
-- posizioni live;
-- utenti connessi;
-- permessi temporanei;
-- join code standalone;
-- pairing/binding Discord temporaneo.
+- lifecycle;
+- board corrente;
+- live state per board usata;
+- posizioni token;
+- participant presence;
+- token assignments;
+- join/pairing state;
+- Discord binding.
 
-Fonte autorevole durante la sessione: desktop + relay secondo il tipo di dato.
+Fonte autorevole runtime: desktop + relay secondo `LIVE_SESSION_SPEC.md`.
 
-Non viene confuso con i file della campagna.
-
-### Stato UI e preferenze locali
+### UI/preferences
 
 Esempi:
 
-- dialog aperto;
-- tab selezionata e cronologia per tab;
-- cursore e posizione di lettura;
-- zoom;
-- pannelli e loro dimensioni;
-- recenti e preferiti;
-- camera, filtro e selezione del grafo;
-- colori assegnati alle cartelle per la visualizzazione del grafo.
+- tab/cursore;
+- pannelli;
+- recenti/preferiti;
+- camera graph/board locale;
+- dimensioni pannelli.
 
-Può essere gestito con Zustand o stato React locale **solo per ciò che è realmente UI state**.
-
-Zustand non deve diventare un contenitore universale per filesystem, dominio, rete, persistenza e UI.
-
-Le preferenze locali per campagna non devono finire automaticamente nel frontmatter delle note.
+Zustand/React state è ammesso solo per vero UI state, non come contenitore universale.
 
 ---
 
-## 13. Flusso di una modifica locale
+## 13. Flusso modifica locale
 
-Esempio: modifica di una nota.
+Esempio nota:
 
 ```text
 Editor React
-   ↓
-update buffer
-   ↓
-autosave / save command
-   ↓
-CampaignService
-   ↓
-NoteRepository
-   ↓
-Filesystem
-   ↓
-confirmed success / explicit error
+→ buffer
+→ autosave/save
+→ servizio applicativo
+→ NoteRepository
+→ filesystem
+→ confirmed success/error
 ```
 
-Dopo il salvataggio possono partire effetti secondari:
+Effetti secondari successivi:
 
 ```text
 note saved
-   ├─ update search index
-   ├─ update backlink projection
-   └─ update graph projection
+├─ search index
+├─ backlinks
+└─ graph projection
 ```
 
-Gli effetti secondari non devono essere mescolati alla logica primaria di salvataggio.
-
-Un timer di debounce non può trasformare uno stato in `saved`: la conferma deve arrivare dalla persistenza.
+Un debounce non equivale a `saved`.
 
 ---
 
 ## 14. Modifiche esterne e recovery
 
-Il filesystem è autorevole, ma l'editor può avere un buffer locale non ancora persistito.
+- external change + buffer pulito → reload possibile;
+- external change + dirty → conflict, autosave sospeso;
+- write error → buffer/recovery conservati;
+- crash → recovery proposta senza overwrite silenzioso di file più nuovo.
 
-- file modificato esternamente + buffer pulito → può essere ricaricato;
-- file modificato esternamente + buffer dirty → autosave sospeso, confronto esplicito, nessuna sovrascrittura automatica;
-- errore di scrittura → buffer e bozza recovery conservati;
-- crash → la bozza di recovery può essere proposta alla riapertura senza sovrascrivere automaticamente una versione file più recente.
-
-La UI/UX dettagliata è definita dai requisiti `UX-SAVE-*` in `docs/UI_UX_SPEC_V01.md`.
+UI dettagliata in `UI_UX_SPEC_V01.md`; board in `BOARD_SPEC.md`.
 
 ---
 
-## 15. Graph view come proiezione derivata
+## 15. Graph view
 
-Flusso concettuale:
+Proiezione derivata:
 
 ```text
-Markdown files
-   ↓
-parse wikilink
-   ↓
-resolved note graph
-   ↓
-Graph View
+Markdown
+→ wikilink parser/resolver
+→ graph projection
+→ Graph View
 ```
 
-Il grafo non modifica i wikilink tramite trascinamento dei nodi.
+Dragging nodo non modifica wikilink.
 
-Persistenza consentita per il grafo:
-
-- camera/pan/zoom;
-- filtri;
-- selezione utile da ripristinare;
-- eventuali posizioni manuali dei nodi;
-- colori cartella e preferenze visuali locali.
-
-Questi dati restano separati dal contenuto Markdown.
+Camera, filtri e posizioni visuali restano preferenze locali.
 
 ---
 
-## 16. Flusso realtime
+## 16. Board locale e live
 
-Esempio futuro: il DM muove un token.
+Board preparata:
 
 ```text
-Desktop UI
-   ↓
-SessionService
-   ↓
-update local live state
-   ↓
-protocol: token.move
-   ↓
-Relay
-   ↓
-Web / Activity clients
+filesystem locale
+→ *.board.json
 ```
 
-Il protocollo deve consentire anche il recupero di uno snapshot completo in caso di riconnessione.
+Board live:
 
-Non si assume che ogni client abbia ricevuto tutti gli eventi precedenti.
+```text
+board preparata
+→ esplicita proiezione pubblica
+→ session state
+→ snapshot/eventi player
+```
 
-Il percorso di ingresso può cambiare tra standalone e Discord, ma una volta associato il client alla `liveSessionId` la semantica della sessione deve essere la stessa.
+Gli elementi privati non vengono trasferiti al relay/client per essere nascosti lato UI.
+
+Specifica: `docs/BOARD_SPEC.md`.
 
 ---
 
-## 17. Asset condivisi
+## 17. Flusso realtime
 
-Gli asset originali possono vivere nella campagna locale.
+Esempio player token move:
 
-Quando un'immagine deve essere visibile ai giocatori, il desktop può pubblicarne una copia temporanea o condivisa su R2.
+```text
+Player drag
+→ token.move.preview (effimero)
+→ relay valida controller
+→ preview broadcast/coalesced
+→ token.move.commit
+→ relay valida + persiste live position
+→ stateSeq incrementa
+→ token.position broadcast
+```
 
-Il modello deve distinguere chiaramente tra:
+Reconnect:
+
+```text
+resume credential
+→ nuovo WebSocket ticket
+→ connection.ready
+→ snapshot corrente
+→ riprendi eventi
+```
+
+Non si assume che un client abbia ricevuto tutti gli eventi precedenti.
+
+Spec: `LIVE_SESSION_SPEC.md` + `PROTOCOL_SPEC.md`.
+
+---
+
+## 18. Asset condivisi
+
+Distinzione obbligatoria:
 
 ```text
 local asset
+≠
+published live asset
 ```
 
-e:
+Flusso:
 
 ```text
-published asset
+asset interno campagna
+→ richiesta upload autorizzato
+→ copia temporanea R2
+→ publishedAssetId
+→ reveal elemento
 ```
 
-La pubblicazione di un asset non cambia la fonte autorevole locale.
+La pubblicazione non cambia la fonte autorevole locale.
+
+Asset privati/non usati non vengono caricati per comodità.
 
 ---
 
-## 18. Sicurezza
+## 19. Lifecycle live
+
+V0.3:
+
+- una sola live session per desktop;
+- un solo host;
+- una board pubblica alla volta;
+- più live board states preservabili nella stessa sessione;
+- host disconnect → freeze;
+- grace 10 minuti;
+- timeout → end senza scrittura automatica board;
+- chiusura volontaria → scelta posizioni finali token;
+- nessuna session history cloud.
+
+Standalone:
+
+```text
+join code ABCD-EFGH
+```
+
+Discord:
+
+```text
+pairing ABC-DEF
+→ instanceId ↔ liveSessionId
+```
+
+---
+
+## 20. Sicurezza
 
 Principi minimi:
 
-- nessuna API key nel renderer della Activity;
-- nessun accesso remoto diretto al filesystem del DM;
-- nessuna porta pubblica aperta sul PC del DM;
-- payload realtime validati;
-- sessioni identificabili con token non prevedibili;
-- permessi distinti tra DM e giocatore;
-- contenuti privati inviati al relay solo quando esplicitamente condivisi;
-- `instanceId`, `liveSessionId`, token controllato e ruolo dichiarati dal client non sono trusted senza verifica server-side;
-- l'istanza Discord deve poter essere validata server-side usando i meccanismi ufficiali disponibili al momento dell'implementazione.
-
-Il relay deve conoscere il meno possibile.
+- nessuna API key nel player client;
+- nessun accesso remoto diretto al filesystem;
+- nessuna porta pubblica sul PC DM;
+- HTTPS/WSS;
+- ticket WebSocket brevi/monouso;
+- payload runtime validated;
+- token/session credentials non prevedibili;
+- permessi host/player distinti;
+- contenuti privati mai inviati per filtraggio client-side;
+- identity Discord e instance validate server-side;
+- secret/codici/presigned URL non loggati in chiaro.
 
 ---
 
-## 19. Strategia di test
+## 21. Strategia di test
 
 ### Core
 
-Test unitari estesi sui use case e sulle regole di dominio.
+Unit test su use case/regole.
 
 ### Storage
 
-Test di integrazione su directory temporanee.
+Integration test su directory temporanee: create/read/update/rename/move/trash/error/conflict/recovery.
 
-Verificare almeno:
+### Search/graph
 
-- create;
-- read;
-- update;
-- rename;
-- move;
-- trash/delete behavior;
-- errori di scrittura;
-- conflitti esterni;
-- recovery da errori comuni.
+Rebuild, links, rename, isolate, folder/filter/color.
 
-### Search / graph projection
+### Board
 
-Testare:
-
-- rebuild da filesystem;
-- wikilink risolti e mancanti;
-- rename e aggiornamento riferimenti;
-- note isolate;
-- cartelle e sottocartelle;
-- filtri e colore ereditato come dati di visualizzazione.
+`BRD-*` acceptance e storage/recovery.
 
 ### Protocol
 
-Test di validazione e compatibilità dei messaggi quando il protocollo verrà introdotto.
+Contract test `PRO-QA-*`: schema, versioning, permission, idempotenza, `stateSeq`, snapshot/resync, asset/privacy.
 
-### Relay
+### Relay/live
 
-Test su join/leave, broadcast, reconnect, snapshot, autorizzazione, isolamento tra sessioni, pairing code e binding Discord quando verranno introdotti.
+`LIVE-QA-*`: join, board switch, reconnect, host freeze/grace, token permission, session end, isolamento tra sessioni.
 
-### Desktop e Activity
+### Discord
 
-Pochi test end-to-end, concentrati sui flussi realmente critici e sugli scenari di accettazione documentati.
-
-Per V0.4 testare anche:
-
-- stessa Activity instance → stessa live session associata;
-- pairing code monouso/scaduto;
-- istanza non associata senza accesso a dati privati;
-- client standalone ancora funzionante senza Discord.
+`ACT-*`: pairing, instance binding, same session, no code player, Activity close semantics, standalone regression.
 
 ---
 
-## 20. Regole sulle dipendenze
+## 22. Dipendenze
 
-Dipendenze consentite, in forma semplificata:
+Consentite, semplificate:
 
 ```text
-desktop  ─────→ core
-desktop  ─────→ storage
-desktop  ─────→ protocol   (quando esiste)
-desktop  ─────→ ai         (quando esiste)
-desktop  ─────→ ui
+desktop  ─→ core
+desktop  ─→ storage
+desktop  ─→ protocol   (V0.3+)
+desktop  ─→ ai         (V0.5+)
+desktop  ─→ ui
 
-activity ─────→ protocol
-activity ─────→ ui
-activity ─────→ Discord adapter   (solo V0.4 environment layer)
+activity ─→ protocol
+activity ─→ ui
+activity ─→ Discord adapter  (V0.4 environment layer)
 
-relay    ─────→ protocol
+relay    ─→ protocol
 
-ai       ─────→ core
-storage  ─────→ core
+ai       ─→ core
+storage  ─→ core
 ```
 
-Dipendenze da evitare:
+Da evitare:
 
 ```text
-core     → React
-core     → Electron
-core     → Discord
-core     → Cloudflare
-core     → EcoGDR SDK/API
-
-protocol → Discord SDK
-
-activity → storage
-activity → ai
-
-relay    → storage locale
-relay    → desktop
+core     → React/Electron/Discord/Cloudflare/EcoGDR
+protocol → Discord SDK/Cloudflare implementation
+activity → storage/ai
+relay    → local storage/desktop implementation
 ```
 
 ---
 
-## 21. Ordine di costruzione
-
-L'architettura deve permettere di sviluppare il prodotto verticalmente.
+## 23. Ordine di costruzione
 
 ### V0.1 — Campaign Manager locale
 
 ```text
-apri campagna
-→ leggi/modifica note
-→ naviga wikilink e backlink
-→ cerca
-→ esplora il grafo derivato
-→ salva/recovery
-→ chiudi e riapri
+campagna → note → links/search/graph → save/recovery
 ```
 
-### V0.2 — Lavagna locale
+### V0.2 — Board locale
 
 ```text
-crea board
-→ aggiungi elementi
-→ salva
-→ chiudi
-→ riapri
+board → elementi/asset → save/recovery
 ```
 
-### V0.3 — Sessione live web
+Fonte: `BOARD_SPEC.md`.
+
+### V0.3 — Live web
 
 ```text
-desktop
-→ liveSessionId
-→ relay
-→ browser client via join code
+desktop → live session → relay → web player
 ```
 
-Il client standalone, il protocollo e il reconnect devono funzionare **prima di Discord**.
+Fonti: `LIVE_SESSION_SPEC.md`, `PROTOCOL_SPEC.md`, `BOARD_SPEC.md`.
 
 ### V0.4 — Discord Activity
 
 ```text
-Discord Activity instance
-→ pairing master una tantum
-→ instanceId ↔ liveSessionId
-→ stesso client/session model della V0.3
+Discord instance → pairing → stesso live model V0.3
 ```
 
-Discord aggiunge identità/contesto/join UX, non sostituisce il protocollo live.
+Fonte: `DISCORD_ACTIVITY_SPEC.md`.
 
 ### V0.5 — IA
 
 ```text
-search
-→ domanda
-→ proposta
-→ diff
-→ approvazione
+search → domanda → proposta → diff → approvazione
 ```
 
 ### V0.6 — Funzioni giocatore avanzate
 
-Schede, bot, comandi e altre feature vengono valutate solo quando il nucleo è stabile.
+Schede, bot e altre integrazioni soltanto dopo stabilità del nucleo.
 
 ---
 
-## 22. Non-obiettivi iniziali
+## 24. Non-obiettivi iniziali
 
-La prima fase della v2 non deve risolvere:
+Non sono obiettivi del nucleo iniziale:
 
-- sincronizzazione cloud completa della campagna;
-- account o autenticazione EcoGDR;
+- cloud sync completa della campagna;
+- account/auth EcoGDR;
 - collaborazione multi-DM;
-- editing remoto delle note;
-- vector database complesso;
-- marketplace di plugin;
-- supporto a molte piattaforme realtime;
-- compatibilità perfetta con ogni dettaglio della vecchia app;
-- importazione generale di file esterni.
-
-Queste possibilità possono essere valutate in seguito.
+- editing remoto note;
+- VTT rules engine;
+- vector DB complesso;
+- plugin marketplace;
+- compatibilità perfetta con ogni dettaglio v1;
+- replay/event log cloud della sessione;
+- sessione live senza desktop host.
 
 ---
 
-## 23. Regola finale
+## 25. Regola finale
 
-Ogni nuova feature deve rispondere prima a due domande:
+Ogni feature deve rispondere prima a:
 
-1. **A quale dominio appartiene?**
-2. **Qual è il confine attraverso cui comunica con il resto del sistema?**
+1. **a quale dominio appartiene?**
+2. **qual è il confine attraverso cui comunica?**
 
-Se la risposta è “mettiamola nello store globale e poi vediamo”, la feature non è ancora pronta per essere implementata.
+Se la risposta è “mettiamola nello store globale e poi vediamo”, la feature non è pronta.
