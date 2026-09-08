@@ -1,118 +1,72 @@
 # Campaign Manager v2 — V0.1 Operational Specification
 
-## 1. Scopo, autorità e regola di interpretazione
+## 1. Scopo e autorità
 
-Questo documento chiude le ambiguità operative residue della **V0.1 — Campaign Manager locale**.
+Questo documento è il contratto operativo integrato della **V0.1 — Campaign Manager locale**.
 
-È il contratto integrato da usare per implementare e verificare la V0.1. Riunisce e rende deterministiche le decisioni già approvate in:
-
-- `PRODUCT.md`;
-- `architecture.md`;
-- `ROADMAP.md`;
-- `docs/V01_PRODUCT_DECISIONS.md`;
-- `docs/UI_UX_SPEC_V01.md`;
-- `docs/DOMAIN_MODEL.md`;
-- `docs/STORAGE_SPEC.md`;
-- `docs/SEARCH_SPEC.md`;
-- `docs/DESIGN_DIRECTION.md`;
-- `docs/FOUNDATION_GUARDRAILS.md`.
+Serve a chiudere le decisioni di prodotto senza trasformare la V0.1 in un esercizio di architettura. Le specifiche verticali (`UI_UX`, `DOMAIN`, `STORAGE`, `SEARCH`) restano valide; quando una formulazione più vecchia è più complessa o più vaga di questa specifica, prevale questo documento.
 
 Prefisso requisiti: `OPS-*`.
 
-### OPS-AUTH-001 — Precedenza
+### OPS-AUTH-001 — Ordine di precedenza
 
-Per comportamenti V0.1, l'ordine è:
+Per la V0.1:
 
-1. decisioni esplicite dell'utente approvate **dopo** questo documento;
+1. decisioni esplicite dell'utente successive a questo documento;
 2. questo documento;
 3. `docs/V01_PRODUCT_DECISIONS.md`;
-4. specifica verticale più specifica;
-5. PRODUCT / architecture / ROADMAP;
-6. design direction;
-7. mock di riferimento.
+4. specifica verticale applicabile;
+5. `PRODUCT.md`, `architecture.md`, `ROADMAP.md`;
+6. design direction e mock.
 
-Se una specifica più vecchia usa formule come `può`, `se supportato`, `default proposto` o `da verificare`, questo documento fissa il comportamento quando la questione incide sul prodotto. Restano libere solo le scelte elencate esplicitamente in §23.
+### OPS-AUTH-002 — Regola anti-over-engineering
 
-### OPS-AUTH-002 — Scope
+Una scelta interna non deve essere promossa a infrastruttura generale se basta una soluzione locale e verificabile.
 
-La V0.1 comprende:
+In particolare V0.1 **non richiede**:
 
-- campagna locale;
-- note Markdown;
-- cartelle reali;
-- editor e lettura;
-- wikilink/backlink;
-- tab e cronologia;
-- filtro sidebar;
-- ricerca full-text;
-- command palette;
-- graph view;
-- recenti/preferiti;
-- folder colors per graph;
-- persistenza sicura;
-- recovery;
-- gestione conflitti e modifiche esterne;
-- impostazioni minime di manutenzione;
-- accessibilità e keyboard navigation.
-
-Restano fuori: board, realtime, Discord, relay, AI, EcoGDR networking/account, importazione generale di file esterni e collaborazione multiutente.
+- framework generico di transazioni filesystem;
+- event sourcing;
+- database autorevole;
+- layer/package vuoti creati solo per separazione teorica;
+- sistema di metadata/frontmatter applicativo;
+- ottimizzazioni progettate per scale non misurate.
 
 ---
 
-# 2. Ownership architetturale V0.1
+# 2. Confini architetturali
 
-## OPS-ARCH-001 — Application layer esplicito
+## OPS-ARCH-001 — Application layer logico, non package obbligatorio
 
-La V0.1 introduce un vero application layer:
-
-```text
-packages/
-  core/
-  application/
-  storage/
-  search/
-  ui/
-```
-
-- `core`: tipi di dominio, invarianti, parser/resolver canonici, repository contracts;
-- `application`: lifecycle campagna, document sessions/buffer, orchestrazione save/recovery, rename/move/trash, proiezioni, preferenze e coordinamento search;
-- `storage`: filesystem, metadata, preferences, recovery, operation journal, trash adapter;
-- `search`: implementazione dell'indice derivato e `SearchService`;
-- `ui`: primitive visuali condivise, senza logica di dominio.
-
-`apps/desktop` è composition root + Electron shell + React renderer.
-
-## OPS-ARCH-002 — Dipendenze
-
-Forma consentita:
+Deve esistere un confine applicativo chiaro tra UI e infrastruttura:
 
 ```text
-apps/desktop → application → core
-apps/desktop → ui
-storage      → core
-search       → core
-application  → contratti/porte, con adapter iniettati dal desktop
+React UI
+→ servizi/use case applicativi
+→ core + repository/adapter
+→ filesystem / indice / OS
 ```
 
-`application` non dipende da React. `core` non dipende da Electron, React, storage concreto o search engine concreto.
+Questo **non obbliga** a creare `packages/application` o `packages/search`.
 
-## OPS-ARCH-003 — Orchestrazione fuori dalla UI
+Le responsabilità applicative possono vivere in `apps/desktop/application/` o in un package dedicato solo quando il riuso o la dimensione lo giustificano.
 
-React component, hook e store UI non coordinano direttamente:
+Vale la regola della roadmap: creare soltanto i package realmente necessari.
+
+## OPS-ARCH-002 — Cosa non fa React
+
+Componenti, hook e store UI non coordinano direttamente:
 
 - filesystem;
-- rename/move multi-file;
-- operation journal;
-- recovery;
-- search rebuild;
-- backlink/graph refresh;
-- remap di NoteId/FolderId.
+- save/recovery;
+- rename/move/trash multi-file;
+- rebuild della ricerca;
+- aggiornamento backlink/graph;
+- remap di `NoteId`/`FolderId`.
 
-Queste responsabilità appartengono all'application layer.
+## OPS-ARCH-003 — Document session minima
 
-## OPS-ARCH-004 — Document session
-
-Per ogni nota/draft aperto l'application layer mantiene una document session con almeno:
+Per ogni nota o draft aperto deve esistere stato applicativo sufficiente a conservare:
 
 ```ts
 type DocumentSaveState =
@@ -122,36 +76,25 @@ type DocumentSaveState =
   | 'error'
   | 'conflict'
   | 'missing'
-
-interface DocumentSession {
-  sessionId: string
-  target: ExistingNoteTarget | NewDraftTarget
-  markdown: string
-  baseRevision?: NoteRevision
-  saveState: DocumentSaveState
-}
 ```
 
-Cursor, selezione testuale e viewport restano UI state, ma il testo non confermato e il suo stato di persistenza devono sopravvivere alla sostituzione del componente React.
+oltre a target, markdown corrente e revisione base quando esiste.
+
+Non è richiesto un framework documentale generale oltre a ciò che serve ai flussi V0.1.
 
 ---
 
-# 3. Startup e lifecycle della campagna
+# 3. Lifecycle della campagna
 
-## OPS-CAM-001 — Avvio app
+## OPS-CAM-001 — Startup
 
-All'avvio:
+All'avvio l'app prova a riaprire l'ultima campagna aperta con successo. Se non è più disponibile, mostra la schermata iniziale senza bloccare l'app.
 
-1. se esiste una campagna aperta con successo nell'ultima sessione, l'app tenta di riaprirla;
-2. se il path non esiste o l'apertura fallisce, mostra la schermata iniziale;
-3. la schermata iniziale mostra fino a **10 campagne recenti** + `Apri cartella…`;
-4. nessun errore di una campagna impedisce di sceglierne un'altra.
+La schermata iniziale offre `Apri cartella…` e un piccolo elenco di campagne recenti.
 
 ## OPS-CAM-002 — Prima apertura
 
-Una cartella leggibile e scrivibile senza `campaign.json` viene inizializzata automaticamente creando soltanto metadata minimi.
-
-V0.1 crea:
+Una cartella leggibile e scrivibile senza `campaign.json` viene inizializzata automaticamente creando soltanto:
 
 ```json
 {
@@ -160,445 +103,220 @@ V0.1 crea:
 }
 ```
 
-`name` resta opzionale. Se assente, la UI usa il nome corrente della cartella come nome visuale.
+Il nome visuale usa il nome della cartella se `name` non è presente. Nessun Markdown viene convertito o riscritto.
 
-Nessun Markdown viene riscritto.
+## OPS-CAM-003 — Niente modalità read-only V0.1
 
-## OPS-CAM-003 — V0.1 non ha modalità read-only
+Una cartella non scrivibile non viene aperta come normale campagna V0.1.
 
-Una campagna deve essere leggibile **e scrivibile** per essere aperta come V0.1.
+La UI spiega il problema e offre almeno `Riprova` e `Scegli un'altra cartella`.
 
-Se è leggibile ma non scrivibile:
+## OPS-CAM-004 — Metadata problematici
 
-- apertura bloccata con `read_only`/`permission_denied`;
-- messaggio: la V0.1 non supporta una sessione sola-lettura;
-- azioni offerte: `Riprova`, `Scegli un'altra cartella`, `Apri cartella in Esplora file` quando possibile.
+- `campaign.json` invalido → apertura bloccata, nessun overwrite automatico;
+- schema futuro → apertura bloccata, nessun downgrade;
+- schema precedente noto → migrazione esplicita e testata.
 
-La UI non finge di aprire normalmente disabilitando casualmente singoli pulsanti.
+## OPS-CAM-005 — Campagna spostata o copiata
 
-## OPS-CAM-004 — Metadata invalidi o schema futuro
+L'app conserva `campaignId → ultimo path noto`.
 
-- `campaign.json` invalido → apertura bloccata; nessun overwrite automatico;
-- schema futuro/non supportato → apertura bloccata; nessun downgrade;
-- schema precedente noto → migrazione versionata, con backup metadata e test dedicato.
+- vecchio path non esiste più → stessa campagna spostata;
+- vecchio e nuovo path esistono entrambi con lo stesso ID → la nuova cartella è trattata come possibile copia.
 
-## OPS-CAM-005 — Duplicazione di CampaignId
+In caso di copia, l'utente può scegliere `Usa come nuova copia indipendente`, che genera un nuovo `campaignId` modificando soltanto `campaign.json`.
 
-L'app mantiene un registro locale `campaignId → ultimo path noto`.
+## OPS-CAM-006 — Cambio campagna e chiusura
 
-Quando apre una campagna con ID già noto:
+Prima di cambiare campagna o chiudere:
 
-- se il vecchio path non esiste più → trattare come normale spostamento e aggiornare il path;
-- se vecchio e nuovo path esistono entrambi → considerare la nuova cartella una **copia sospetta**.
+- draft vuoti vengono scartati;
+- draft significativi tentano la materializzazione;
+- note dirty tentano il save;
+- save in corso viene atteso.
 
-Nel secondo caso l'app non apre due copie con lo stesso ID come se fossero la stessa campagna. Mostra:
+Se qualcosa resta non salvato ma esiste una recovery valida, l'utente può restare oppure procedere conservando la bozza. Se neppure la recovery può essere scritta, la chiusura/cambio è bloccata finché l'utente non salva, esporta o scarta esplicitamente.
 
-```text
-Questa cartella sembra una copia di una campagna già conosciuta.
-[Usa come nuova copia indipendente] [Annulla]
-```
+## OPS-CAM-007 — Root scomparsa
 
-`Usa come nuova copia indipendente` genera un nuovo `campaignId` modificando soltanto `campaign.json`. Preferenze/recovery della campagna originale non vengono ereditati.
+Se la root viene spostata o rimossa mentre l'app è aperta:
 
-## OPS-CAM-006 — Cambio campagna
-
-Prima di cambiare campagna l'application layer esegue `flushAllDocuments()`:
-
-- draft vuoti → annullati;
-- draft significativi → tenta materializzazione;
-- note dirty → tenta save;
-- note saving → attende esito reale.
-
-Se tutto è confermato, il cambio procede.
-
-Se restano `error`, `conflict` o draft non materializzabili ma la recovery è stata salvata correttamente, mostra:
-
-```text
-Alcune modifiche non sono state salvate nei file.
-[Conserva le bozze e cambia campagna] [Resta qui]
-```
-
-Se la recovery non può essere confermata, il cambio è bloccato finché l'utente non salva/esporta/scarta esplicitamente.
-
-## OPS-CAM-007 — Chiusura app
-
-La chiusura volontaria segue la stessa logica di `OPS-CAM-006`.
-
-La chiusura può procedere con bozze non persistite **solo** dopo conferma che esiste una recovery locale valida e dopo scelta esplicita `Chiudi conservando le bozze`.
-
-Un crash resta coperto dalla recovery, ma non è un percorso UX da simulare volontariamente.
-
-## OPS-CAM-008 — Root scomparsa mentre l'app è aperta
-
-Se la root viene spostata/smontata/cancellata:
-
-- la campagna entra in stato `campaign_unavailable`;
-- nuovi write/rename/move/trash vengono sospesi;
-- i buffer dirty continuano a essere protetti dalla recovery;
-- viene offerto `Individua cartella…`.
-
-La cartella scelta viene riassociata automaticamente solo se contiene lo stesso `campaignId`. Un ID diverso richiede normale apertura/cambio campagna.
+- i write vengono sospesi;
+- i buffer restano disponibili e protetti dalla recovery;
+- viene offerto `Individua cartella…`;
+- il relink automatico avviene solo se il `campaignId` coincide.
 
 ---
 
-# 4. Discovery, path e struttura del vault
+# 4. Vault, path e cartelle
 
-## OPS-PATH-001 — Contenuti mostrati nel vault explorer
+## OPS-PATH-001 — Explorer
 
-V0.1 mostra nel vault explorer:
+Il note explorer mostra cartelle reali e file `.md` sotto la root campagna. Non attraversa symlink e non mostra come note `campaign.json`, temp file, `.git`, `node_modules` o artefatti interni dichiarati.
 
-- cartelle reali;
-- file `.md` validi come note.
+## OPS-PATH-002 — Ordinamento
 
-Altri file restano sul filesystem ma non sono elementi navigabili del note explorer.
+Dentro ogni cartella:
 
-Sono nascosti come contenuti applicativi: `campaign.json`, temp files, `.git`, `node_modules` e artefatti interni dichiarati.
+1. cartelle;
+2. note;
+3. natural sort case-insensitive;
+4. tie-break deterministico sul path.
 
-Symlink non vengono attraversati. Possono produrre una diagnostica non bloccante.
+## OPS-PATH-003 — Identità e sicurezza
 
-## OPS-PATH-002 — Ordinamento explorer
+`NoteId`/`FolderId` sono relativi alla root, usano `/`, non contengono traversal o path assoluti e non possono collidere solo per case.
 
-Per ogni cartella:
+La creazione/rinomina su Windows rifiuta nomi illegali o riservati. Un case-only rename dello stesso elemento è consentito tramite una strategia sicura dell'adapter.
 
-1. cartelle prima;
-2. note dopo;
-3. ordinamento locale/natural, case-insensitive, con numeri trattati naturalmente;
-4. tie-break deterministico sul path normalizzato.
+## OPS-FOLDER-001 — Folder CRUD completo
 
-## OPS-PATH-003 — Normalizzazione identità
+V0.1 supporta:
 
-Confronti logici di NoteId/FolderId:
+- crea;
+- rinomina;
+- sposta;
+- cestina cartella.
 
-- separatore `/`;
-- Unicode normalizzato NFC;
-- confronto case-insensitive per rilevare collisioni;
-- nessun `.`/`..`;
-- nessun path assoluto.
+La root non è modificabile come cartella normale.
 
-La forma visuale originale viene preservata.
+## OPS-FOLDER-002 — Vincoli move
 
-## OPS-PATH-004 — Policy nomi creati/rinominati su Windows
+Una cartella non può essere spostata dentro sé stessa, in un discendente, fuori dalla root o su un target collidente.
 
-V0.1 rifiuta almeno:
-
-- `<>:"/\\|?*` nei segmenti creati dall'app;
-- caratteri di controllo;
-- nome vuoto;
-- `.` / `..`;
-- trailing dot o spazio;
-- nomi riservati Windows (`CON`, `PRN`, `AUX`, `NUL`, `COM1`…`COM9`, `LPT1`…`LPT9`, case-insensitive anche con estensione);
-- collisione esatta o case-only con un altro elemento.
-
-Un **case-only rename dello stesso elemento** è però consentito e viene implementato in modo sicuro, anche tramite temp hop se necessario.
-
-File esistenti leggibili che non rispettano una regola di creazione non vengono rinominati automaticamente.
-
-## OPS-PATH-005 — Collisione case esistente
-
-Se la discovery trova due note/cartelle con identità logiche collidenti solo per case/normalizzazione Unicode, l'apertura writable viene bloccata con diagnostica dei path coinvolti. L'app non sceglie arbitrariamente quale identità usare.
+Prima di rename/move/trash di una cartella, le note aperte coinvolte vengono salvate. Un `error` o `conflict` irrisolto blocca l'operazione.
 
 ---
 
-# 5. Nuove note e draft temporanei
+# 5. Nuove note
 
-## OPS-NOTE-001 — Destinazione della nuova nota
+## OPS-NOTE-001 — Destinazione
 
-`Nuova nota` sceglie il parent in questo ordine:
+`Nuova nota` usa, nell'ordine:
 
-1. cartella selezionata nel vault;
+1. cartella selezionata;
 2. parent della nota selezionata;
-3. root campagna.
+3. root.
 
-L'utente può cambiare cartella con `Sposta…` dopo la creazione.
+## OPS-NOTE-002 — Draft temporaneo
 
-## OPS-NOTE-002 — Draft prima del file
+Premere `Nuova nota` apre un draft senza creare subito un file.
 
-Premere `Nuova nota` crea una `NewDraftTarget`, non un file:
+Se il draft viene abbandonato senza alcun contenuto significativo, viene annullato e non lascia file né recovery.
 
-```ts
-interface NewDraftTarget {
-  kind: 'new-draft'
-  draftId: string
-  parentFolder: FolderId
-  manualTitle?: string
-}
-```
+Whitespace e soli marker Markdown non sono contenuto significativo.
 
-Il focus entra nel corpo dell'editor.
+## OPS-NOTE-003 — Titolo automatico
 
-Se l'utente abbandona/chiude il draft senza contenuto significativo, il draft viene annullato e non lascia file o recovery.
-
-## OPS-NOTE-003 — Contenuto significativo
-
-Per decidere se materializzare una nuova nota:
-
-- whitespace solo → non significativo;
-- soli marker Markdown senza testo (`#`, `---`, `>`, `*`, backtick fence vuoto) → non significativo;
-- almeno un token/grapheme visibile dopo rimozione dei marker strutturali → significativo.
-
-Il frontmatter YAML iniziale, se presente, non viene usato per derivare il titolo automatico.
-
-## OPS-NOTE-004 — Titolo automatico canonico
-
-Il titolo automatico usa le prime **1–3 parole visibili** del contenuto Markdown.
-
-La pipeline:
-
-1. ignora frontmatter iniziale;
-2. ignora marker Markdown puramente strutturali;
-3. considera il testo visibile, incluso testo in heading/lista/citazione;
-4. prende fino a tre token separati da whitespace;
-5. rimuove caratteri non validi per filename Windows sostituendoli con spazi;
-6. collassa whitespace e rimuove trailing dot/spazio.
+Il titolo usa le prime **1–3 parole visibili** del testo, ignorando marker Markdown iniziali.
 
 Esempi:
 
 ```text
-# La città perduta
-→ La città perduta.md
-
-Lady Maya
-→ Lady Maya.md
-
-Capitolo: il ritorno
-→ Capitolo il ritorno.md
+Meradyl               → Meradyl.md
+Lady Maya              → Lady Maya.md
+Il vecchio castello…   → Il vecchio castello.md
+# La città perduta     → La città perduta.md
 ```
 
-Se il risultato è vuoto, riservato o collidente, la materializzazione si ferma e l'utente modifica il titolo inline.
+Caratteri non validi per il filename vengono rimossi/normalizzati senza inventare parole.
 
-## OPS-NOTE-005 — Quando il titolo si fissa
+## OPS-NOTE-004 — Quando si materializza
 
-Per evitare che una pausa a metà della prima parola produca un filename prematuro:
+Il draft viene materializzato quando accade il primo evento utile tra:
 
-Una nuova nota viene materializzata quando si verifica il primo tra:
-
+- l'utente completa la terza parola e scatta il normale autosave;
 - `Ctrl+S`;
-- uscita dal draft verso un'altra nota/vista;
-- chiusura della tab/della campagna/app;
-- completamento della terza parola seguito dal normale debounce;
-- **1500 ms di inattività** con almeno una parola significativa.
+- passa a un'altra nota/vista;
+- chiude tab/campagna/app.
 
-Prima della materializzazione la recovery viene comunque aggiornata.
+**Non esiste un timer speciale separato** per decidere il titolo.
 
-Dopo la prima materializzazione il titolo automatico è fissato e l'autosave normale usa 600 ms.
+Se il draft contiene solo una o due parole al momento della materializzazione, quelle diventano il titolo. Dopo la prima creazione il titolo automatico non cambia più.
 
-## OPS-NOTE-006 — Override manuale prima della materializzazione
+## OPS-NOTE-005 — Collisione
 
-Il titolo candidato può essere modificato manualmente anche prima della prima scrittura autorevole.
+Se il titolo automatico collide con un file esistente:
 
-Appena l'utente modifica esplicitamente il titolo, `manualTitle` prevale e l'auto-title non lo sostituisce.
+- nessun `(2)` o suffisso inventato;
+- il draft resta intatto;
+- l'utente modifica il titolo inline prima della creazione.
 
-## OPS-NOTE-007 — Collisione auto-title
+## OPS-NOTE-006 — Creazione fallita
 
-Nessun suffisso automatico `(2)`, `copia`, numero o timestamp.
-
-Il draft resta intatto, il titolo entra in stato errore `collision`, e il focus può passare al campo titolo. La nota non appare nel filesystem finché il titolo non è valido.
-
-## OPS-NOTE-008 — Materializzazione fallita
-
-Se la prima creazione fallisce:
-
-- il draft resta aperto o recuperabile;
-- stato `error`;
-- recovery obbligatoria;
-- non appare una falsa nota nell'explorer/search/graph;
-- sono disponibili `Riprova`, `Cambia titolo/cartella`, `Esporta bozza`.
+Se il file non può essere creato, il draft resta disponibile e viene protetto dalla recovery. Non appare come nota salvata in explorer/search/graph.
 
 ---
 
-# 6. Note esistenti, titolo e tab
+# 6. Tab e titolo
 
-## OPS-TAB-001 — Apertura normale
+## OPS-TAB-001 — Una tab per nota
 
-Aprire una nota usa la tab corrente per default. Apertura esplicita in nuova tab crea una nuova tab solo se la nota non è già aperta.
+Una `NoteId` non può avere due sessioni concorrenti nella stessa finestra. Se è già aperta, viene attivata.
 
-## OPS-TAB-002 — Tab unica per NoteId
+## OPS-TAB-002 — Apertura
 
-Una stessa `NoteId` non può avere due document sessions concorrenti nella stessa finestra. Se già aperta, viene attivata.
+L'apertura normale usa la tab corrente. Una nuova tab richiede azione esplicita.
 
-## OPS-TAB-003 — Chiusura tab
+Ogni tab conserva la propria cronologia back/forward.
 
-- clean → chiusura immediata;
+## OPS-TAB-003 — Chiusura
+
+- clean → chiude;
 - dirty → tenta save;
-- saving → attende l'esito;
-- error/conflict con recovery valida → offre `Chiudi conservando bozza` oppure `Annulla`;
-- recovery non valida/non scrivibile → tab non si chiude finché l'utente salva/esporta/scarta esplicitamente.
+- saving → attende;
+- error/conflict → offre di restare oppure chiudere conservando una recovery valida.
 
-Dopo la chiusura si attiva la tab immediatamente a destra; se non esiste, quella a sinistra; se non esiste, empty state centrale.
+Dopo la chiusura viene attivata una tab adiacente; se non ce ne sono, appare lo stato vuoto centrale.
 
-## OPS-TAB-004 — Cronologia
+## OPS-TITLE-001 — Rename da titolo
 
-Ogni tab mantiene back/forward indipendente. La cronologia contiene NoteId, non copie di contenuto.
+Il titolo della nota esistente è un controllo di rename reale:
 
-Entry mancanti vengono saltate con feedback non bloccante; non ricreano file.
-
-## OPS-TAB-005 — Reorder
-
-Il riordino tab è persistito localmente. La chiusura/riapertura tenta di ripristinare tab esistenti nell'ordine precedente.
-
-Note mancanti vengono omesse; se esiste recovery associata viene presentata nel recovery center.
-
-## OPS-TITLE-001 — Rinomina dal titolo
-
-Per nota esistente:
-
-- edit titolo è locale finché non confermato;
-- `Invio` o blur con valore valido → commit rename;
+- `Invio` o blur valido → conferma;
 - `Esc` → annulla;
-- blur con valore invalido/collidente → nessun rename, resta errore inline.
+- collisione/errore → file precedente intatto, errore inline.
 
-La rinomina non avviene a ogni keystroke.
-
----
-
-# 7. Cartelle — CRUD definitivo V0.1
-
-## OPS-FOLDER-001 — Folder CRUD è requisito
-
-V0.1 supporta definitivamente:
-
-- create folder;
-- rename folder;
-- move folder;
-- trash folder.
-
-La formula storica `se supportata` è superata.
-
-## OPS-FOLDER-002 — `FolderRepository`
-
-Contratto minimo equivalente:
-
-```ts
-interface FolderRepository {
-  create(parent: FolderId, name: string): Promise<FolderResult>
-  rename(id: FolderId, name: string): Promise<FolderMoveResult>
-  move(id: FolderId, targetParent: FolderId): Promise<FolderMoveResult>
-  trash(id: FolderId): Promise<TrashResult>
-}
-```
-
-La root non può essere rinominata, spostata o cestinata.
-
-## OPS-FOLDER-003 — Creazione folder
-
-`Nuova cartella` apre input inline vuoto nel parent determinato come per `Nuova nota`.
-
-- nome vuoto + blur/Esc → annulla;
-- Invio o blur valido → crea;
-- collisione/invalid name → mantiene input + errore;
-- nessun placeholder `Nuova cartella (2)` viene materializzato automaticamente.
-
-## OPS-FOLDER-004 — Move constraints
-
-È vietato spostare una cartella:
-
-- dentro sé stessa;
-- dentro un proprio discendente;
-- fuori dalla root;
-- su un target collidente.
-
-## OPS-FOLDER-005 — Dirty descendants
-
-Prima di rename/move/trash di una cartella, tutte le document sessions interessate vengono flushate.
-
-Se una nota coinvolta resta in `error/conflict`, l'operazione folder è bloccata. Non si sposta/cestina una cartella mentre contiene modifiche locali non risolte.
+Nessun rename per keystroke.
 
 ---
 
-# 8. Markdown canonico, frontmatter e link
+# 7. Markdown e frontmatter
 
-## OPS-MD-001 — Dialetto Markdown
+## OPS-MD-001 — Dialetto
 
-V0.1 usa **CommonMark + GitHub Flavored Markdown** per il rendering di lettura, includendo almeno:
-
-- heading;
-- emphasis;
-- blockquote;
-- liste;
-- code inline/fenced;
-- link;
-- tabelle GFM;
-- task list;
-- strikethrough.
+Read mode usa CommonMark + GFM per heading, enfasi, liste, citazioni, code, link, tabelle, task list e strikethrough.
 
 ## OPS-MD-002 — Raw HTML
 
-Raw HTML nel Markdown **non viene eseguito/renderizzato come HTML** in V0.1. Viene mostrato come testo/markup non eseguibile.
+Raw HTML non viene eseguito come HTML attivo. Script, event handler, iframe e markup arbitrario non possono eseguire codice nel renderer.
 
-Script, event handler, iframe e HTML arbitrario non devono poter eseguire codice nel renderer.
+## OPS-MD-003 — Frontmatter V0.1 è opaco
 
-## OPS-MD-003 — Frontmatter canonico
+La V0.1 **non introduce campi frontmatter applicativi canonici**.
 
-V0.1 riconosce YAML frontmatter solo se il file inizia con un blocco delimitato da `---`.
+Se un file contiene YAML frontmatter:
 
-Il frontmatter resta testo dell'utente e viene preservato byte/semanticamente quanto possibile.
+- viene preservato come contenuto dell'utente;
+- chiavi sconosciute non vengono eliminate;
+- il Campaign Manager non aggiunge ID, preferenze, alias o metadata propri;
+- YAML invalido non impedisce di modificare il Markdown e non viene "riparato" automaticamente.
 
-Campo canonico V0.1:
+Supporto funzionale a alias/tag/type viene rimandato a quando esisterà un caso d'uso di prodotto reale.
 
-```yaml
-aliases:
-  - Meradyl capitale
-  - Città di Meradyl
-```
+## OPS-MD-004 — Immagini e link
 
-Sono accettati:
+Read mode può mostrare immagini relative dentro la root campagna (PNG/JPEG/WebP/GIF). Path assoluti, traversal e immagini remote non vengono caricati automaticamente.
 
-- `aliases: string`;
-- `aliases: string[]`.
-
-Internamente vengono normalizzati in `string[]` per la ricerca.
-
-Chiavi sconosciute vengono preservate.
-
-## OPS-MD-004 — Frontmatter invalido
-
-YAML invalido non impedisce di aprire/modificare la nota come Markdown grezzo.
-
-- la nota mostra una diagnostica non bloccante;
-- alias non affidabili vengono ignorati;
-- il save non tenta di "riparare" il YAML automaticamente.
-
-## OPS-MD-005 — Alias non sono identità
-
-Gli alias:
-
-- partecipano al search ranking;
-- **non** cambiano NoteId;
-- **non** partecipano alla risoluzione dei wikilink in V0.1;
-- non creano backlink.
-
-## OPS-MD-006 — Immagini locali in read mode
-
-Sono renderizzabili immagini relative **dentro la root campagna** nei formati:
-
-- PNG;
-- JPEG/JPG;
-- WebP;
-- GIF.
-
-Path assoluti, traversal e immagini remote non vengono caricati automaticamente.
-
-SVG non viene renderizzato inline nella V0.1.
-
-## OPS-MD-007 — Link Markdown normali
-
-Azioni supportate:
-
-- `http:` / `https:` → apertura nel browser di sistema tramite API sicura Electron;
-- `mailto:` → client mail di sistema;
-- link relativo a `.md` dentro la campagna → apertura della nota relativa al path della nota sorgente.
-
-Schemi come `javascript:`, `data:`, `file:` e custom scheme non sono eseguiti.
-
-Link ad altri file locali possono essere mostrati come testo/link non attivo in V0.1; non devono lanciare eseguibili o file arbitrari.
+Link `http/https` e `mailto` vengono aperti tramite API sicure del sistema. Schemi pericolosi o file locali arbitrari non vengono eseguiti.
 
 ---
 
-# 9. Wikilink canonici
+# 8. Wikilink e backlink
 
-## OPS-WIKI-001 — Sintassi V0.1
+## OPS-WIKI-001 — Sintassi
 
-Riconosciuti:
+V0.1 riconosce:
 
 ```text
 [[Nota]]
@@ -606,486 +324,290 @@ Riconosciuti:
 [[Cartella/Nota.md]]
 ```
 
-Non sono sintassi V0.1:
+Non richiede alias, heading link o embed.
 
-- `[[Nota|Alias]]`;
-- `[[Nota#Heading]]`;
-- embed `![[...]]`;
-- traversal `../`;
-- path assoluti.
+## OPS-WIKI-002 — Contesti esclusi
 
-Forme non supportate restano testo non navigabile, non vengono reinterpretate parzialmente.
+Non sono wikilink le sequenze dentro fenced code, inline code o escapate esplicitamente.
 
-## OPS-WIKI-002 — Contesti esclusi dal parser
+## OPS-WIKI-003 — Risoluzione
 
-Non si riconoscono wikilink dentro:
+- path-qualified → relativo alla root campagna;
+- basename → confronto globale sul filename stem;
+- un match → resolved;
+- zero → missing;
+- più di uno → ambiguous;
+- mai scegliere arbitrariamente il primo candidato.
 
-- fenced code;
-- inline code;
-- testo escapato con backslash prima della sequenza `[[`.
+## OPS-WIKI-004 — Link ambiguo
 
-Nel normale testo Markdown vengono riconosciuti anche dentro heading, liste e citazioni.
+Il click mostra i candidati con titolo e path. La scelta apre il candidato ma non riscrive il Markdown automaticamente.
 
-## OPS-WIKI-003 — Path-qualified root-relative
+Un'azione separata può rendere il link univoco sostituendolo con il path-qualified scelto.
 
-`[[Cartella/Nota]]` è relativo alla **root della campagna**, non alla cartella della nota sorgente.
+## OPS-WIKI-005 — Link mancante
 
-`[[Nota]]` usa matching per filename stem globale.
-
-I confronti sono case-insensitive/NFC per identità, ma il testo originale viene preservato.
-
-## OPS-WIKI-004 — Ambiguo
-
-Click su link ambiguo apre un popover/picker con:
-
-- titolo candidato;
-- percorso relativo completo.
-
-Selezionare un candidato **apre** la nota ma non riscrive automaticamente il Markdown.
-
-È disponibile un'azione separata `Rendi link univoco`, che sostituisce il target con il path-qualified scelto e passa dal normale save flow.
-
-## OPS-WIKI-005 — Mancante
-
-Click su link mancante offre `Crea nota`.
-
-Destinazione:
+Il click offre `Crea nota`.
 
 - target senza path → stessa cartella della nota sorgente;
-- target path-qualified → cartella specificata dal target.
+- target con path → cartella specificata dal target.
 
-Se il path-qualified contiene cartelle mancanti, l'azione esplicita `Crea Cartella/Nota` può creare anche la catena di cartelle, dopo validazione completa.
+Eventuali cartelle mancanti vengono create solo come parte di un'azione esplicita e validata.
 
-Se il target non può diventare un nome valido, l'utente modifica il titolo/path prima della creazione.
+## OPS-WIKI-006 — Backlink e grafo
 
-## OPS-WIKI-006 — Backlink
-
-Backlink usa solo risoluzioni `resolved` canoniche. Missing/ambiguous vengono mostrati come diagnostica outgoing, non come backlink/graph edge.
+Solo link `resolved` producono backlink e archi del grafo. Missing/ambiguous restano diagnostica, non relazioni inventate.
 
 ---
 
-# 10. Save, autosave e recovery
+# 9. Save, recovery e conflitti
 
-## OPS-SAVE-001 — Autosave fissato
+## OPS-SAVE-001 — Save reale
 
-V0.1 usa **600 ms** di inattività per note già materializzate.
+Autosave per note materializzate: circa **600 ms** di inattività. `Ctrl+S` forza il tentativo immediato.
 
-Il valore non è configurabile nella V0.1.
+`saved` viene mostrato solo dopo conferma reale del repository.
 
-`Ctrl+S` tenta save immediato.
+## OPS-SAVE-002 — Recovery semplice
 
-## OPS-SAVE-002 — Recovery cadence
+La recovery è una **copia di sicurezza del buffer**, separata dal vault.
 
-Quando un document session è dirty:
+Deve essere aggiornata abbastanza spesso da proteggere un crash realistico, ma **la spec non impone una cadenza in millisecondi né un scheduler dedicato**.
 
-- recovery write dopo circa **300 ms** di inattività;
-- durante digitazione continua, non devono passare più di circa **2 secondi** senza aggiornare una recovery persistita.
+Una implementazione adeguata può salvarla:
 
-Il recovery write è separato dal save autorevole e non abilita stato `saved`.
+- dopo una breve pausa di digitazione;
+- periodicamente mentre il buffer resta dirty;
+- prima di operazioni rischiose/uscita quando necessario.
 
-## OPS-SAVE-003 — Recovery per note esistenti e nuovi draft
+Per un draft non ancora materializzato la recovery conserva almeno `draftId`, cartella destinazione e Markdown.
 
-Formato concettuale esteso:
+## OPS-SAVE-003 — Recupero alla riapertura
 
-```ts
-type RecoveryTarget =
-  | { kind: 'existing'; noteId: NoteId; baseRevision?: NoteRevision }
-  | { kind: 'new-draft'; draftId: string; parentFolder: FolderId; manualTitle?: string }
+Se esistono modifiche non confermate, l'app mostra un semplice avviso `Bozze da recuperare`.
 
-interface RecoveryDraft {
-  campaignId: CampaignId
-  target: RecoveryTarget
-  markdown: string
-  capturedAt: string
-}
-```
+Azioni minime:
 
-Questo sostituisce l'assunzione che ogni recovery abbia già un NoteId.
+- `Ripristina`;
+- `Esporta`;
+- `Scarta`.
 
-## OPS-SAVE-004 — Recovery center
+Se la nota originale è cambiata sul disco, il ripristino entra nel normale conflict flow. Se il file non esiste più, il contenuto può essere ricreato o salvato come nuova nota.
 
-All'apertura di una campagna con draft pendenti:
+Non serve un sottosistema separato più complesso di questi casi.
 
-- la campagna apre normalmente se possibile;
-- compare un banner/entry persistente `Bozze da recuperare`;
-- nessun draft viene applicato automaticamente.
+## OPS-SAVE-004 — Eliminazione recovery
 
-Per draft nuovo: `Ripristina`, `Esporta`, `Scarta`.
+Una recovery viene eliminata solo dopo save autorevole equivalente o discard esplicito.
 
-Per nota esistente:
+## OPS-CONFLICT-001 — Modifica esterna
 
-- base ancora corrente → `Ripristina modifiche`;
-- file cambiato → apre conflict flow;
-- file mancante → `Ricrea`, `Salva come nuova`, `Esporta`, `Scarta`.
+Nota clean + modifica esterna → ricarica la versione disco e aggiorna le proiezioni.
 
-## OPS-SAVE-005 — Quando cancellare recovery
+Nota dirty + modifica esterna → `conflict`, autosave sospeso, entrambe le versioni conservate.
 
-Una recovery viene eliminata solo quando:
+Azioni:
 
-- lo stesso contenuto è confermato come autorevole; oppure
-- l'utente sceglie esplicitamente `Scarta`.
+- usa versione locale;
+- usa versione su disco;
+- salva locale come nuova nota;
+- annulla.
 
-Rename/move remappa il target recovery se l'identità cambia in modo coordinato.
+Nessun overwrite automatico.
 
----
+## OPS-CONFLICT-002 — File mancante
 
-# 11. Modifiche esterne e conflict resolution
+Se una nota aperta scompare:
 
-## OPS-EXT-001 — Clean external modify
+- stato `missing`;
+- nessuna ricreazione implicita;
+- se esistono modifiche locali, si può ricreare, salvare come nuova, esportare o conservare la recovery.
 
-Nota clean + nuova revisione su disco:
-
-- ricarica automaticamente il contenuto;
-- preserva cursore/scroll quando ragionevolmente mappabile;
-- se la nota è attiva mostra feedback discreto `Aggiornata da disco`;
-- search/backlink/graph vengono aggiornati dalla nuova versione autorevole.
-
-## OPS-EXT-002 — Dirty external modify
-
-Nota dirty + nuova revisione:
-
-- stato `conflict`;
-- autosave sospeso;
-- local buffer e versione disco conservati;
-- search continua a rappresentare la versione autorevole su disco.
-
-## OPS-CONFLICT-001 — Azioni di risoluzione
-
-Il conflict view rende disponibili entrambe le versioni e offre:
-
-1. **Usa versione locale** — overwrite esplicito della versione disco corrente usando la sua nuova revision come base; richiede conferma chiara;
-2. **Usa versione su disco** — scarta il buffer locale dopo conferma esplicita e rimuove la recovery corrispondente;
-3. **Salva locale come nuova nota…** — crea una nuova nota senza toccare il file esterno;
-4. **Annulla** — resta in conflict.
-
-Nessuna scelta è automatica.
-
-## OPS-EXT-003 — File eliminato esternamente
-
-Tab aperta + file mancante → stato `missing`.
-
-- buffer clean: `Chiudi tab` oppure `Ricrea file`;
-- buffer dirty: `Ricrea con modifiche locali`, `Salva come nuova`, `Esporta`, `Chiudi conservando recovery`.
-
-Nessuna ricreazione automatica.
-
-## OPS-EXT-004 — Rename esterno
-
-Delete+create esterno non viene correlato come rename salvo prova certa.
-
-Il vecchio tab diventa `missing`; il nuovo file appare come nuova nota. L'utente decide.
-
-## OPS-EXT-005 — Nuovo file esterno
-
-Un nuovo `.md` valido appare nell'explorer e viene indicizzato/proiettato senza richiedere restart.
-
-## OPS-EXT-006 — Encoding error esterno
-
-Se una nota diventa non decodificabile come UTF-8:
-
-- tree entry resta visibile con warning;
-- apertura/reload produce `encoding_error`;
-- ultimo buffer valido non viene sovrascritto automaticamente;
-- la nota problematica viene esclusa dalle nuove proiezioni search/graph finché non torna leggibile.
+Rename esterni non vengono dedotti da delete+create se non c'è prova affidabile.
 
 ---
 
-# 12. Rename/move — transazione operativa
+# 10. Rename e move
 
-## OPS-MOVE-001 — Application-owned transaction
+## OPS-MOVE-001 — Coordinamento applicativo
 
-Rename/move di nota/cartella è coordinato da `packages/application`, non dalla UI e non dal filesystem adapter.
+Rename/move di note e cartelle è coordinato fuori dalla UI.
 
-## OPS-MOVE-002 — Preflight completo
+La V0.1 **non richiede un transaction engine generico**.
 
-Prima di scrivere il journal:
+## OPS-MOVE-002 — Flusso minimo sicuro
 
-1. valida target;
-2. individua tutte le note interessate;
-3. flush di document sessions interessate;
-4. blocca l'operazione se resta `error/conflict`;
-5. calcola le risoluzioni wikilink canoniche;
-6. costruisce il piano di rewrite necessario;
-7. legge e registra le revision attese di ogni source da modificare;
-8. verifica collisioni e preferenze da remappare.
+Prima dell'operazione:
 
-## OPS-MOVE-003 — Ordine di commit
+1. valida il target e le collisioni;
+2. salva i documenti aperti coinvolti;
+3. calcola i wikilink risolti che devono cambiare;
+4. registra un **repair record minimale** con tipo operazione, old path, new path e informazioni sufficienti a capire se il rename/move principale è avvenuto.
 
-Dopo journal persistito:
+Poi:
 
-1. esegue il rename/move fisico della risorsa principale;
-2. aggiorna identità runtime e mapping old→new;
-3. riscrive una source wikilink alla volta usando expected revision;
-4. aggiorna preference keys/recovery keys;
-5. aggiorna search/backlink/graph;
-6. chiude il journal con report.
+1. esegue il rename/move fisico;
+2. aggiorna le identità runtime;
+3. riscrive i link necessari una source alla volta, verificando che la source non sia cambiata da quando è stata letta;
+4. aggiorna preferenze e proiezioni derivate;
+5. elimina il repair record quando lo stato è coerente.
 
-La risorsa principale viene spostata **prima** dei rewrite: il sistema non deve scrivere link verso un target che non esiste ancora.
+## OPS-MOVE-003 — Partial
 
-## OPS-MOVE-004 — Source cambiata dopo preflight
-
-Se una source da riscrivere ha revision diversa:
+Se una source è cambiata o non può essere riscritta:
 
 - non viene sovrascritta;
-- viene registrata come failed source;
-- operazione finale `partial` se il target fisico è già stato spostato.
+- il rename/move fisico resta valido;
+- il risultato è `partial` con elenco delle source fallite.
 
-## OPS-MOVE-005 — Recovery journal forward-only
+## OPS-MOVE-004 — Crash durante rename/move
 
-V0.1 non tenta rollback automatici multi-file.
+Al riavvio, la presenza del repair record fa verificare lo stato reale dei path.
 
-Alla riapertura con journal incompleto:
+L'app offre/riprova la **riparazione specifica di quell'operazione**. Non è richiesto replay generico di step, rollback automatico, locking transazionale o event log.
 
-- verifica stato reale;
-- se il move principale è avvenuto, riprende **in avanti** gli step ancora sicuri;
-- se non è avvenuto, chiude/abbandona il piano senza modificare source;
-- se lo stato è ambiguo, abilita lettura ma blocca write sugli elementi coinvolti e mostra `Operazione incompleta — Ripara`.
+## OPS-MOVE-005 — Regole rewrite
 
-Nessun successo viene dedotto senza verifica.
-
-## OPS-MOVE-006 — Rewrite wikilink
-
-- rename del filename stem → tutti i link `resolved` che altrimenti smetterebbero di risolvere vengono aggiornati;
-- move senza cambio stem → link basename che restano validi non vengono riscritti;
+- rename dello stem → aggiorna i link resolved che altrimenti si romperebbero;
+- move senza cambio stem → i basename ancora validi non vengono riscritti;
 - path-qualified → aggiornati quando il path cambia;
-- missing/ambiguous → mai riscritti per supposizione;
-- codice/escaped wikilink → mai riscritti perché non sono link canonici.
+- missing/ambiguous/code/escaped → non riscritti per supposizione.
 
-## OPS-MOVE-007 — Folder move
-
-Folder rename/move applica una mappatura old→new a tutte le note discendenti e remappa:
-
-- tab/document sessions;
-- history;
-- favorites/recenti;
-- recovery target;
-- graph manual positions;
-- folder colors;
-- path-qualified wikilink necessari;
-- search documents.
+Folder move remappa tab/history/favorites/recenti/folder colors e documenti search interessati. La recovery di una nota coinvolta viene normalmente eliminata dal save eseguito prima del move; non serve un sistema generico di remap delle bozze dirty.
 
 ---
 
-# 13. Trash
+# 11. Trash
 
-## OPS-TRASH-001 — Nessun permanent delete V0.1
+## OPS-TRASH-001 — Solo cestino
 
-La V0.1 **non offre cancellazione permanente** come fallback.
+Nessun fallback a cancellazione permanente.
 
-Se il cestino è indisponibile, l'operazione termina e l'elemento resta intatto.
+Se il cestino non è disponibile, l'elemento resta intatto e l'errore è esplicito.
 
-## OPS-TRASH-002 — Nota aperta
+## OPS-TRASH-002 — Contenuto aperto
 
-Prima del trash:
+Prima del trash, eventuali buffer dirty vengono salvati. `error/conflict` irrisolti bloccano l'operazione.
 
-- clean → può procedere dopo conferma dove richiesta;
-- dirty → tenta save;
-- error/conflict → trash bloccato finché il contenuto non è risolto.
+Dopo trash riuscito vengono ripuliti tab/history/favorite/recent e aggiornate le proiezioni.
 
-Dopo trash riuscito:
-
-- chiude tab relative;
-- rimuove history entry non più valida;
-- rimuove favorite/recent entry;
-- aggiorna search/backlink/graph.
-
-## OPS-TRASH-003 — Cartella non vuota
-
-Richiede conferma esplicita che indichi almeno il numero di note/cartelle contenute.
-
-Dirty/conflict discendenti bloccano l'operazione come `OPS-FOLDER-005`.
+Una cartella non vuota richiede conferma esplicita.
 
 ---
 
-# 14. Recenti, preferiti e sidebar filter
+# 12. Recenti, preferiti e filtro sidebar
 
-## OPS-RECENT-001 — Recenti note
+## OPS-RECENT-001 — Recenti
 
-`Recenti` contiene massimo **50 note**.
+Recenti è una lista locale ordinata dall'uso più recente della nota. Rename/move conserva l'entry; not-found confermato la rimuove.
 
-Ordinamento: `lastTouchedAt` decrescente, dove `lastTouchedAt` è l'ultimo tra:
-
-- apertura/attivazione della nota;
-- save autorevole riuscito.
-
-Entry mancanti vengono eliminate dopo conferma `not_found`.
-
-Rename/move remappa l'identità senza perdere il timestamp.
+La dimensione massima è un dettaglio implementativo ragionevole, non un contratto di prodotto.
 
 ## OPS-FAV-001 — Preferiti
 
-Preferito è locale alla campagna.
-
-- toggle immediato nelle preferenze locali;
-- ordine alfabetico per titolo/path;
-- rename/move remappa;
-- trash/not_found confermato rimuove l'entry.
+Preferiti è locale alla campagna, ordinato in modo deterministico e remappato su rename/move.
 
 ## OPS-FILTER-001 — Filtro sidebar
 
-Il filtro sidebar è case-insensitive e cerca in nome + percorso visibile.
+Il filtro è case-insensitive su nome/percorso.
 
-Comportamento:
-
-- match nota → mostra la nota e tutta la catena di antenati;
-- match cartella → mostra la cartella e il suo subtree;
-- durante filtro l'espansione temporanea non sovrascrive lo stato espanso/collassato precedente;
-- cancellare filtro ripristina lo stato di espansione precedente.
+- match nota → mostra nota + antenati;
+- match cartella → mostra cartella + subtree;
+- l'espansione temporanea del filtro non distrugge lo stato normale dell'albero.
 
 ---
 
-# 15. Ricerca full-text
+# 13. Ricerca full-text e command palette
 
 ## OPS-SEARCH-001 — Vista centrale
 
-Rail `Ricerca` apre la vista centrale Search e mette focus nel campo query.
+`Ricerca` nel rail apre una vista centrale full-text distinta dal filtro sidebar e da `Ctrl+K`.
 
-Query vuota mostra uno stato neutro `Digita per cercare nelle note`, non una dashboard aggiuntiva.
+Query vuota mostra uno stato semplice `Digita per cercare nelle note`.
 
-## OPS-SEARCH-002 — Accenti
+## OPS-SEARCH-002 — Contenuto indicizzato
 
-V0.1 richiede matching interattivo **diacritic-insensitive** per alfabeti latini comuni.
+V0.1 indicizza:
 
-Esempio: `citta` trova `città`.
+- titolo filename;
+- path;
+- testo Markdown normalizzato.
 
-Il testo originale non viene modificato. A parità di altri fattori, un match ortograficamente esatto può essere preferito a quello ottenuto solo per folding dei diacritici.
+**Non interpreta campi frontmatter come alias, tag o categorie.**
 
-## OPS-SEARCH-003 — Alias
+Il frontmatter può essere escluso o trattato come testo non prioritario secondo il parser scelto, purché non introduca semantica applicativa nascosta.
 
-Gli `aliases` canonici del frontmatter sono sempre indicizzati nella V0.1.
+## OPS-SEARCH-003 — Ranking
 
-## OPS-SEARCH-004 — Stato indice
+Titolo esatto/prefisso deve prevalere sui match profondi nel corpo. Il ranking resta lessicale e deterministico.
 
-- `ready` → risultati normali;
-- `building` con vecchio indice valido → query consentita ma banner `Risultati in aggiornamento`;
-- `building` senza indice → campo disponibile, stato `Preparazione ricerca…`, nessuna falsa completezza;
-- `stale` → risultati marcati `in aggiornamento` e rebuild pianificato;
-- `error`/`missing` → vault resta utilizzabile; azione `Ricostruisci indice`.
+La tolleranza semplice ai diacritici è desiderabile ma **non è un gate V0.1** se il motore scelto la rende costosa o inaffidabile.
 
-## OPS-SEARCH-005 — Apertura risultato
+## OPS-SEARCH-004 — Stati indice
 
-- click/Invio → apre nella tab corrente secondo navigation model;
-- `Ctrl+Invio` / azione equivalente → nuova tab esplicita;
-- Esc con query non vuota → pulisce la query;
-- Esc con query vuota → torna alla vista Note precedente.
+Indice `missing/stale/error` non blocca la campagna.
 
-## OPS-SEARCH-006 — Documento non indicizzabile
+- se esiste un indice precedente, i risultati possono essere marcati `in aggiornamento`;
+- senza indice valido, Search mostra `Preparazione ricerca…`;
+- è sempre disponibile `Ricostruisci indice`.
 
-Una singola nota problematica non abbatte l'intero indice. Search mostra un warning aggregato tipo `1 nota non indicizzata`; dettagli tecnici restano in diagnostica.
+## OPS-SEARCH-005 — Command palette
 
-## OPS-SEARCH-007 — Codice Markdown
-
-Testo visibile dentro inline/fenced code è ricercabile come testo. I marker sintattici non sono termini significativi. Wikilink in code non diventano relazioni.
+La palette distingue note e azioni. Deve includere almeno le azioni principali realmente presenti nella V0.1: nuova nota/cartella, viste Note/Ricerca/Grafo/Recenti/Preferiti/Impostazioni, apri/chiudi campagna, rename/move/trash della nota, modalità lettura/modifica e rebuild ricerca.
 
 ---
 
-# 16. Command palette
+# 14. Graph view
 
-## OPS-CMD-001 — Azioni minime garantite
+## OPS-GRAPH-001 — Modello
 
-Il registro V0.1 contiene almeno, quando applicabili:
+Nodi = note. Archi = wikilink `resolved`, diretti `source → target`. Note isolate restano visibili.
 
-- `Nuova nota`;
-- `Nuova cartella`;
-- `Cerca`;
-- `Note`;
-- `Grafo`;
-- `Recenti`;
-- `Preferiti`;
-- `Impostazioni`;
-- `Apri campagna…`;
-- `Chiudi campagna`;
-- `Rinomina nota`;
-- `Sposta nota…`;
-- `Sposta nel cestino`;
-- `Modalità lettura/modifica`;
-- `Ricostruisci indice di ricerca`.
+## OPS-GRAPH-002 — Filtri
 
-Azioni non valide nel contesto sono disabled o assenti, mai eseguibili.
+I filtri cartella sono multi-select:
 
-## OPS-CMD-002 — Note vs azioni
+- cartella selezionata include i discendenti;
+- più cartelle = OR;
+- non matching attenuati, non rimossi;
+- reset filtri non cancella la selezione e viceversa.
 
-Le note e le azioni sono sezioni/tipi distinti. Il profilo note privilegia title exact/prefix/path; il full body search resta nella vista Ricerca.
+## OPS-GRAPH-003 — Layout e drag
 
----
+Il layout deve essere sufficientemente stabile da non sembrare casuale a ogni apertura/rebuild.
 
-# 17. Graph view
+Trascinare un nodo modifica solo la disposizione visuale corrente.
 
-## OPS-GRAPH-001 — Direzione degli archi
+**La persistenza delle singole posizioni manuali non è requisito V0.1.** Se la libreria scelta la rende quasi gratuita può essere aggiunta come preferenza locale, ma non deve introdurre remap/migrazioni aggiuntive.
 
-Gli archi sono diretti `source → target` perché derivano da wikilink. La visualizzazione deve rendere percepibile la direzione senza sacrificare leggibilità; arrowhead sottile o equivalente è richiesto.
+Camera e filtri utili possono essere ripristinati localmente.
 
-Self-link è consentito e produce self-edge.
+## OPS-GRAPH-004 — Errori derivati
 
-## OPS-GRAPH-002 — Filtri folder
-
-I filtri sono **multi-select**.
-
-- nessun filtro → tutti i nodi normali;
-- selezionare una cartella include quella cartella **e tutti i discendenti**;
-- più cartelle usano logica OR;
-- root può essere selezionata come gruppo delle note direttamente in root;
-- nodi non matching vengono attenuati, non rimossi.
-
-## OPS-GRAPH-003 — Selezione e filtro
-
-La selezione può restare attiva anche se il nodo è attenuato. `Cancella selezione` non modifica i filtri; `Ripristina filtri` non modifica la selezione.
-
-## OPS-GRAPH-004 — Apertura
-
-- click nodo → seleziona;
-- doppio click oppure `Invio` con nodo selezionato → apre la nota;
-- dettaglio flottante contiene `Apri nota`.
-
-## OPS-GRAPH-005 — Layout stabile
-
-Per grafo invariato, l'initial layout deve essere deterministico abbastanza da non produrre una disposizione completamente diversa a ogni rebuild.
-
-Posizioni trascinate manualmente prevalgono e vengono persistite localmente per NoteId.
-
-Rename/move remappa le posizioni; trash le rimuove.
-
-## OPS-GRAPH-006 — Aggiornamento
-
-Save/rename/move/trash accettati aggiornano la proiezione senza richiedere restart. Un errore della proiezione non rende fallito un save autorevole: il grafo viene marcato stale e ricostruito.
+Un errore di graph projection non trasforma un save Markdown riuscito in fallimento. Il grafo viene marcato stale e può essere ricostruito.
 
 ---
 
-# 18. Impostazioni V0.1
+# 15. Impostazioni V0.1
 
-## OPS-SET-001 — Settings è una vista reale ma minima
+## OPS-SET-001 — Vista minima
 
-La voce `Impostazioni` apre una vista centrale semplice. V0.1 non inventa preferenze prive di uso reale.
+Poiché il rail già contiene `Impostazioni`, V0.1 può aprire una vista minima di manutenzione con:
 
-Contiene almeno:
-
-### Campagna
-
-- path corrente in sola lettura;
-- `Apri cartella in Esplora file`.
-
-### Ricerca
-
-- stato indice;
-- `Ricostruisci indice`.
-
-### Interfaccia
-
-- `Ripristina disposizione pannelli` — ripristina dimensioni/collasso sidebar+inspector, senza cancellare favorites, recenti, folder colors o dati campagna.
-
-### Applicazione
-
+- path campagna + `Apri in Esplora file`;
+- stato/rebuild ricerca;
+- reset disposizione pannelli;
 - versione app.
 
-Autosave, tema e altre preferenze non sono configurabili in V0.1 salvo decisione successiva esplicita.
+Non vengono inventate preferenze configurabili solo per riempire la pagina.
 
 ---
 
-# 19. Errori operativi e azioni utente
+# 16. Errori e feedback
 
-## OPS-ERR-001 — Error codes minimi
+## OPS-ERR-001 — Categorie minime
 
-L'application layer deve distinguere almeno:
+L'app deve distinguere almeno:
 
 ```text
 campaign_unavailable
@@ -1093,10 +615,7 @@ read_only
 permission_denied
 metadata_invalid
 unsupported_schema
-duplicate_campaign_id
 invalid_path
-invalid_name
-outside_campaign_root
 collision
 case_collision
 not_found
@@ -1105,245 +624,124 @@ trash_unavailable
 disk_full
 encoding_error
 io_error
-index_missing
-index_stale
 index_error
 operation_partial
-operation_recovery_required
 preferences_corrupt
 ```
 
-## OPS-ERR-002 — Mapping UX minimo
+La UI non deve parsare stringhe di eccezione native per capire cosa è successo.
 
-| Errore | Comportamento |
-|---|---|
-| `read_only` / `permission_denied` open | blocca apertura; scegli altra cartella/riprova |
-| `disk_full` save | buffer + recovery, stato error, riprova/esporta |
-| `conflict` | conflict view, autosave sospeso |
-| `not_found` note aperta | stato missing, nessuna ricreazione implicita |
-| `trash_unavailable` | elemento intatto, nessun permanent delete |
-| `index_*` | campagna utilizzabile, rebuild disponibile |
-| `operation_partial` | report con path aggiornati/falliti |
-| `preferences_corrupt` | reset sole preferenze + notifica non bloccante |
-| `metadata_invalid` / `unsupported_schema` | apertura bloccata, nessun rewrite |
+## OPS-ERR-002 — Modalità di presentazione
 
-La UI non dipende dal testo di eccezioni native.
-
-## OPS-ERR-003 — Errori non modali quando possibile
-
-Errori locali non distruttivi (search stale, preference reset, external reload) usano banner/toast/status inline. Modali sono riservati a decisioni che possono perdere/sovrascrivere dati o cambiare campagna.
+Errori non distruttivi usano stato inline/banner/toast. Dialoghi modali si usano solo quando l'utente deve decidere se perdere, sovrascrivere, cestinare o cambiare contesto con dati non confermati.
 
 ---
 
-# 20. Persistenza preferenze e remap
+# 17. Preferenze locali
 
-## OPS-PREF-001 — Contenuti `ui.json`
+`ui.json` può contenere:
 
-Può contenere almeno:
-
-- rail/view attiva;
+- vista attiva;
 - tab/order/history;
-- panel sizes/collapse;
-- recenti;
-- preferiti;
+- pannelli;
+- recenti/preferiti;
 - folder colors;
-- graph filters/camera/manual positions.
+- camera/filtri grafo.
 
-Non contiene il buffer Markdown autorevole.
+Non contiene il Markdown autorevole.
 
-## OPS-PREF-002 — Corruzione
-
-Se `ui.json` è corrotto:
-
-- viene spostato/archiviato come diagnostica se possibile;
-- si caricano default;
-- la campagna apre;
-- nessun contenuto campagna/recovery viene cancellato.
-
-## OPS-PREF-003 — Scrittura preference failure
-
-Errore di salvataggio preferenze non trasforma un save Markdown riuscito in fallimento. Viene segnalato separatamente.
+Se `ui.json` è corrotto, la campagna apre con default. Un errore di preferenze non rende fallito un save Markdown riuscito.
 
 ---
 
-# 21. Keyboard e focus
+# 18. Keyboard e accessibilità
 
-## OPS-KEY-001 — Shortcut V0.1 Windows
+Minimo Windows:
 
-Vincolanti:
+- `Ctrl+K` command palette;
+- `Ctrl+S` save;
+- `Esc` annulla/chiude il livello corrente;
+- `Invio` conferma/apre secondo contesto;
+- frecce per liste/palette/grafo quando il focus non è nell'editor.
 
-- `Ctrl+K` → command palette;
-- `Ctrl+S` → save immediato;
-- `Ctrl+A` → comportamento nativo dell'editor quando focus nel testo; selezione contestuale solo fuori editor;
-- `Esc` → annulla/chiude il livello interattivo corrente;
-- `Invio` → conferma rename/input o apre elemento selezionato secondo contesto;
-- frecce → navigazione di liste/palette/graph quando il focus non è nell'editor.
+Drag & drop non è l'unico percorso per move/rename/trash o altre azioni primarie.
 
-Eventuali shortcut aggiuntive non devono intercettare combinazioni standard dell'editor senza necessità.
-
-## OPS-KEY-002 — Drag non obbligatorio
-
-Create/move/rename/trash, reorder significativo e graph navigation devono avere percorso da menu/palette/tastiera.
+La V0.1 mantiene l'obiettivo WCAG 2.2 AA per i criteri applicabili, senza dichiarare conformità prima della verifica reale.
 
 ---
 
-# 22. Scala e quality gate V0.1
+# 19. Scala e performance
 
-## OPS-PERF-001 — 200 non è il massimo
+## OPS-PERF-001 — Dataset di validazione
 
-`200 note / 15 cartelle` resta il **dataset minimo di test UX automatico**, non un limite prodotto.
+`200 note / 15 cartelle` resta il dataset minimo per i test UX previsti.
 
-Target di robustezza V0.1:
+Una fixture più grande (per esempio **2.000 note / 100 cartelle**) è utile come **stress test informativo**, non come gate di release.
 
-- almeno **2.000 note**;
-- almeno **100 cartelle**;
-- note lunghe realistiche;
-- backlink numerosi.
+Non si introduce caching, virtualizzazione complessa o ottimizzazione architetturale prima di avere misure che ne dimostrino la necessità.
 
-A questa scala l'app deve restare funzionalmente corretta e non bloccare in modo persistente la shell. I budget in ms vengono misurati durante implementazione e documentati al gate.
+## OPS-PERF-002 — Gate Windows
 
-## OPS-PERF-002 — Windows gate
-
-Release V0.1 supportata ufficialmente solo su Windows.
-
-Devono essere verificati realmente su Windows:
-
-- packaging/install;
-- path policy;
-- case-only rename;
-- watcher;
-- atomic save strategy;
-- system trash;
-- recovery dopo crash;
-- comportamento con cartella spostata/non disponibile.
+La V0.1 è supportata ufficialmente su Windows. Packaging, path, watcher, safe save, system trash e crash recovery devono essere verificati realmente su Windows.
 
 ---
 
-# 23. Scelte intenzionalmente lasciate all'implementazione
+# 20. Scelte lasciate all'implementazione
 
-Non sono ambiguità di prodotto e possono essere scelte senza nuova decisione, purché rispettino i contract test:
+Sono intenzionalmente liberi, se rispettano il comportamento sopra:
 
-- libreria editor Markdown;
-- libreria parser GFM, purché rispetti `OPS-MD-*` e `OPS-WIKI-*`;
-- search engine concreto BM25/equivalente;
-- formato fisico dell'indice;
-- batch size search;
-- algoritmi interni di graph layout, purché il risultato sia stabile e le posizioni manuali rispettate;
-- state management React/Zustand interno alla UI, entro i confini architetturali;
-- component library/icon set coerenti col design;
-- esatti timing motion e dimensioni pannelli, entro i default già documentati e dopo verifica;
-- logging/telemetry locale di diagnostica, purché non introduca cloud/networking V0.1.
+- struttura fisica dei moduli applicativi;
+- libreria editor e parser Markdown;
+- motore/format dell'indice locale;
+- batch size e dettagli ranking non osservabili;
+- algoritmo del graph layout;
+- persistenza opzionale delle posizioni manuali del grafo;
+- state management UI;
+- component/icon library;
+- timing motion e dimensioni pannelli da validare;
+- esatta strategia/cadenza di recovery, purché protegga realisticamente il buffer;
+- formato del repair record rename/move.
 
-Qualunque scelta che modifichi un comportamento osservabile definito in questo documento richiede aggiornamento della spec, non una decisione nascosta nel codice.
-
----
-
-# 24. Scenari end-to-end obbligatori
-
-## OPS-ACC-001 — Prima apertura
-
-Cartella Markdown writable senza metadata → crea solo `campaign.json`, apre note esistenti, nessuna conversione.
-
-## OPS-ACC-002 — Nuova nota breve
-
-`Nuova nota` → scrivo `Lady Maya` → esco dalla nota → viene creato `Lady Maya.md` con contenuto intatto.
-
-## OPS-ACC-003 — Nuova nota lunga
-
-Scrivo `Il vecchio castello sulla collina` → alla prima materializzazione titolo `Il vecchio castello.md`, poi il titolo non cambia automaticamente.
-
-## OPS-ACC-004 — Nuova nota vuota
-
-`Nuova nota` → nessun contenuto significativo → cambio vista/chiudo tab → nessun file, nessuna recovery.
-
-## OPS-ACC-005 — Collisione nuova nota
-
-Esiste `Lady Maya.md` → draft con prime parole `Lady Maya` → nessun `Lady Maya (2).md`; draft intatto e richiesta nuovo titolo.
-
-## OPS-ACC-006 — Folder CRUD
-
-Creare, rinominare, spostare e cestinare una cartella reale aggiorna explorer e identità senza perdere note.
-
-## OPS-ACC-007 — Link ambiguo
-
-`NPC/Alden.md` + `Cities/Alden.md` → `[[Alden]]` apre picker, nessun target arbitrario.
-
-## OPS-ACC-008 — Link mancante
-
-Da `NPC/Maya.md`, `[[Taron]]` mancante → `Crea nota` propone/crea `NPC/Taron.md`; `[[Places/Taron]]` crea nel path esplicito.
-
-## OPS-ACC-009 — Wikilink in code
-
-`` `[[Segreto]]` `` e fenced code non producono backlink/graph edge.
-
-## OPS-ACC-010 — Rename sicuro
-
-Rename target + più inbound links → preflight/journal/move/rewrite. Source cambiata esternamente dopo preflight → partial, nessun overwrite stale.
-
-## OPS-ACC-011 — Crash rename
-
-Crash dopo move fisico ma prima di tutti i rewrite → riapertura rileva journal e riprende in avanti senza dichiarare successo prematuro.
-
-## OPS-ACC-012 — Save conflict
-
-Dirty local + external edit → autosave sospeso; locale e disco entrambi recuperabili; nessun overwrite automatico.
-
-## OPS-ACC-013 — Disk full
-
-Save fallisce per disco pieno → file precedente intatto, buffer + recovery presenti, stato error.
-
-## OPS-ACC-014 — File deleted externally
-
-Nota aperta eliminata da altro programma → stato missing, nessuna ricreazione automatica.
-
-## OPS-ACC-015 — Search building
-
-Indice assente → campagna e editor funzionano; Search mostra building e diventa pronta dopo rebuild senza modificare Markdown.
-
-## OPS-ACC-016 — Alias search
-
-Frontmatter `aliases: [Regina Maya]` → query `Regina Maya` trova la nota; `[[Regina Maya]]` non risolve via alias.
-
-## OPS-ACC-017 — Graph filters
-
-Filtro cartella `NPC` attenua tutto tranne `NPC` + discendenti; aggiungere `Places` usa OR; reset filtro non cancella selezione.
-
-## OPS-ACC-018 — Trash unavailable
-
-Trash adapter fallisce → nessun permanent delete, file/cartella intatti.
-
-## OPS-ACC-019 — Switch campaign con errore save
-
-Una nota non salvabile → switch mostra scelta di restare o cambiare conservando recovery confermata; nessuna perdita silenziosa.
-
-## OPS-ACC-020 — Campagna spostata
-
-Root spostata mentre chiusa → riapertura dal nuovo path con stesso CampaignId conserva preferenze. Entrambi i path esistenti con stesso ID → prompt copia indipendente.
-
-## OPS-ACC-021 — Preference corruption
-
-`ui.json` corrotto → campagna apre con default, note intatte, recovery intatta.
-
-## OPS-ACC-022 — 2.000 note
-
-Fixture grande → discovery/search/index/graph restano corretti; eventuale lentezza viene misurata e ottimizzata senza cambiare semantica.
+Una scelta tecnica diventa decisione di prodotto solo se cambia il comportamento osservabile.
 
 ---
 
-# 25. Gate finale operativo
+# 21. Scenari end-to-end obbligatori
 
-La V0.1 può essere dichiarata pronta soltanto quando:
-
-1. tutti gli `OPS-ACC-*` applicabili hanno test automatici o E2E documentati;
-2. nessun percorso normale può perdere un buffer senza save, recovery o discard esplicito;
-3. nessun rename/move/trash può sovrascrivere modifiche concorrenti silenziosamente;
-4. search/backlink/graph possono essere eliminati e ricostruiti;
-5. un agente di implementazione non deve decidere autonomamente lifecycle, parser semantics, folder support, conflict UX, search surface, graph filter semantics o campaign lifecycle;
-6. le scelte ancora libere sono soltanto quelle elencate in §23;
-7. ROADMAP, architecture e SPEC_INDEX puntano a questo documento come contratto operativo V0.1.
+1. **Prima apertura** — cartella writable senza metadata → crea solo `campaign.json`, nessuna conversione.
+2. **Draft breve** — `Lady Maya` + uscita/save → `Lady Maya.md`.
+3. **Draft lungo** — prime tre parole fissano il titolo; niente rename continuo.
+4. **Draft vuoto** — nessun file e nessuna recovery residua.
+5. **Collisione titolo** — nessun suffisso automatico, draft intatto.
+6. **Folder CRUD** — create/rename/move/trash reali e sicuri.
+7. **Wikilink ambiguo** — picker, nessuna scelta arbitraria.
+8. **Wikilink mancante** — creazione target esplicita.
+9. **Wikilink in code** — nessun backlink/edge.
+10. **Rename con backlink** — target spostato + rewrite necessario; source concorrente → `partial`, nessun overwrite stale.
+11. **Crash durante rename** — repair record rilevato; stato reale verificato e riparabile senza transaction engine generico.
+12. **External conflict** — locale e disco entrambi recuperabili.
+13. **Disk full** — file precedente intatto, buffer/recovery presenti.
+14. **File eliminato esternamente** — `missing`, nessuna ricreazione automatica.
+15. **Indice assente/corrotto** — campagna funziona e Search può rebuildare.
+16. **Graph filter** — cartella + discendenti, OR multi-select, reset indipendente dalla selezione.
+17. **Trash unavailable** — nessun permanent delete.
+18. **Switch/close con save fallito** — nessuna perdita silenziosa.
+19. **Campagna spostata/copiata** — stesso ID spostato conserva identità; doppio path chiede separazione copia.
+20. **Preferenze corrotte** — contenuti e recovery restano intatti.
 
 ---
+
+# 22. Gate finale V0.1
+
+La V0.1 è pronta quando:
+
+1. i flussi sopra sono coperti da test automatici/E2E appropriati;
+2. nessun percorso normale perde un buffer senza save, recovery o discard esplicito;
+3. rename/move/trash non sovrascrivono modifiche concorrenti silenziosamente;
+4. search/backlink/graph restano derivati e ricostruibili;
+5. le scelte tecniche libere non sono state trasformate in infrastruttura prematura;
+6. il prodotto funziona come campaign manager locale completo su Windows.
 
 ## Regola finale
 
-La V0.1 è sufficientemente progettata quando chi implementa deve scegliere **come** realizzare il comportamento, non **quale comportamento inventare**.
+La V0.1 deve essere **robusta nei punti in cui può perdere dati e semplice negli altri**.
