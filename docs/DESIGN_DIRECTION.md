@@ -10,6 +10,8 @@ La v2 non deve replicare l'aspetto della vecchia applicazione. L'obiettivo è un
 
 Riferimento palette: `docs/palette.svg`.
 
+La specifica comportamentale della V0.1 è `docs/UI_UX_SPEC_V01.md`.
+
 ---
 
 ## 2. Palette principale UI
@@ -77,9 +79,9 @@ non introducendo nuovi colori di testo arbitrari.
 
 ---
 
-## 3. Colori riservati alla vista grafo
+## 3. Colori del grafo e delle cartelle
 
-I seguenti colori sono riservati alla visualizzazione del grafo:
+I seguenti colori sono riservati alla codifica semantica usata dalla vista grafo:
 
 - `#9A85C0`
 - `#A8C6DE`
@@ -95,11 +97,28 @@ Non vanno usati liberamente per:
 - card;
 - badge generici;
 - alert;
-- decorazioni dell'interfaccia principale.
+- decorazioni dell'interfaccia principale;
+- testo delle righe del vault;
+- background di selezione delle righe;
+- focus states generici.
 
-La loro funzione è differenziare nodi, categorie o relazioni nella vista grafo.
+La loro funzione è rappresentare la codifica cromatica delle cartelle nel grafo. I nodi ereditano il colore della cartella effettiva della nota secondo le regole definite in `docs/UI_UX_SPEC_V01.md`.
 
-La vista grafo non deve affidarsi esclusivamente al colore per comunicare informazioni: quando serve, categorie e stati devono poter essere distinti anche tramite etichette, forma, icone o altri segnali.
+### Eccezione approvata — indicatore cartella nella sidebar
+
+È approvata una sola estensione fuori dalla graph view: accanto a una cartella nella sidebar può essere mostrato un **piccolo pallino** con lo stesso colore usato dal grafo.
+
+Questo indicatore:
+
+- comunica la stessa informazione semantica del grafo;
+- non trasforma il colore in un accento decorativo generale;
+- non cambia il colore del testo della cartella;
+- non sostituisce hover, focus o selezione della riga;
+- deve restare distinguibile anche tramite nome/percorso e non essere l'unico segnale informativo.
+
+Cartelle senza colore esplicito possono ereditare il colore dall'antenato più vicino; note nella root o senza colore ereditabile usano una rappresentazione neutra nel grafo.
+
+La vista grafo non deve affidarsi esclusivamente al colore per comunicare informazioni: categorie e stati devono poter essere distinti anche tramite etichette, percorso, forma, icone o altri segnali quando necessario.
 
 ---
 
@@ -119,7 +138,7 @@ La UI deve mantenere una gerarchia semplice:
 #FFFFFF   contenuto testuale
 ```
 
-I colori del grafo vivono fuori da questa gerarchia e compaiono solo dove hanno un significato specifico nella graph view.
+I cinque colori del grafo vivono fuori da questa gerarchia funzionale. Compaiono nella graph view e, come unica eccezione approvata, nel piccolo indicatore cromatico delle cartelle nella sidebar.
 
 ---
 
@@ -179,6 +198,8 @@ Evitare:
 - transizioni che impediscono click o digitazione;
 - motion ripetitivo che distrae durante sessioni lunghe.
 
+**Default progettuale da verificare:** motion ordinario nell'intervallo circa 120–240 ms, con easing vicino a `cubic-bezier(.2,.8,.2,1)`. Il comportamento è vincolante; il numero preciso può essere corretto dopo verifica sull'app reale.
+
 ---
 
 ## 7. Microinterazioni
@@ -201,7 +222,7 @@ Le microinterazioni non devono introdurre ritardo percepibile nelle azioni frequ
 
 ## 8. Forme e componenti
 
-La direzione "liquida / bubbly" suggerisce componenti non eccessivamente rigidi, ma raggi, curvature e proporzioni definitive restano da validare durante la progettazione dei wireframe e dei componenti reali.
+La direzione "liquida / bubbly" suggerisce componenti non eccessivamente rigidi, ma raggi, curvature e proporzioni definitive restano da validare durante l'implementazione reale.
 
 Per ora valgono questi principi:
 
@@ -210,6 +231,8 @@ Per ora valgono questi principi:
 - differenziare chiaramente pannelli, controlli e superfici;
 - non sacrificare densità ed efficienza per ottenere grandi card decorative;
 - mantenere le aree di lavoro compatte dove serve.
+
+**Default progettuale da verificare:** raggi circa 10/16/22 px, ripresi dal mock approvato.
 
 ---
 
@@ -236,9 +259,11 @@ Le animazioni devono rispettare `prefers-reduced-motion`.
 
 Gli stati importanti non devono essere comunicati solo tramite movimento.
 
-Il bianco mantiene un contrasto elevato sui quattro colori principali della UI; eventuali opacità del testo secondario andranno validate sui componenti reali.
+Il bianco mantiene un contrasto elevato sui quattro colori principali della UI; eventuali opacità del testo secondario e trasparenze vanno validate sui componenti reali.
 
-Focus, selezione e stato attivo devono restare distinguibili anche senza affidarsi unicamente a microanimazioni.
+Focus, selezione e stato attivo devono restare distinguibili anche senza affidarsi unicamente a microanimazioni o ai colori del grafo.
+
+Il riferimento di verifica della V0.1 è WCAG 2.2 AA per i criteri applicabili, come definito nella UI/UX spec; questo non costituisce una dichiarazione preventiva di conformità.
 
 ---
 
@@ -251,25 +276,25 @@ Sono considerate approvate:
 - highlight/surface accent `#3D1F48`;
 - small UI / buttons `#833D6F`;
 - testo bianco;
-- colori graph-only `#9A85C0`, `#A8C6DE`, `#9CA98B`, `#EFDEBD`, `#8F5A5A`;
+- colori grafo/cartelle `#9A85C0`, `#A8C6DE`, `#9CA98B`, `#EFDEBD`, `#8F5A5A`;
+- pallino colore cartella nella sidebar come unica eccezione fuori dalla graph view;
 - motion leggero, liquido e liscio;
 - dettagli occasionalmente bubbly e giocosi;
 - priorità dell'efficienza UX rispetto al puro effetto estetico.
 
 ---
 
-## 12. Decisioni ancora aperte
+## 12. Default ancora da validare
 
-Restano da definire durante il lavoro UI/UX:
+Non sono decisioni di prodotto rigide, ma default iniziali documentati:
 
-- tipografia;
-- scala tipografica;
-- raggi definitivi;
-- spacing scale;
-- iconografia;
-- densità precisa dei pannelli;
-- comportamento specifico di sidebar, tab e pannelli;
-- durata/easing standard delle animazioni;
-- pattern definitivi per menu, modali, tooltip e command palette.
+- font UI di sistema;
+- monospace per Markdown;
+- testo UI ordinario circa 13 px;
+- testo secondario non inferiore a circa 12 px;
+- editor circa 15 px;
+- raggi circa 10/16/22 px;
+- motion circa 120–240 ms;
+- easing vicino a `cubic-bezier(.2,.8,.2,1)`.
 
-Queste decisioni devono emergere dai flussi reali della V0.1, non essere fissate in astratto.
+Tipografia finale, spacing preciso, iconografia e valori dimensionali possono essere corretti dopo verifica sull'app reale senza cambiare la direzione approvata.
