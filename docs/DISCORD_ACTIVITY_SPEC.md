@@ -2,13 +2,13 @@
 
 ## 1. Scopo e stato
 
-Questo documento registra le decisioni di prodotto e architettura **approvate** per la futura Discord Activity del Campaign Manager.
+Questo documento definisce le decisioni di prodotto e architettura della **V0.4 — Discord Activity**.
 
-La Discord Activity appartiene alla **V0.4**. Non deve essere implementata durante la V0.1 soltanto perché questa specifica esiste.
+La Activity non introduce un secondo dominio live: riusa `docs/LIVE_SESSION_SPEC.md` e `docs/PROTOCOL_SPEC.md` già funzionanti nella V0.3 standalone e aggiunge Discord come adapter di identity, join e hosting.
 
-La specifica verrà approfondita prima dell'implementazione V0.4, ma le decisioni marcate come requisiti `ACT-*` sono già vincolanti e non devono essere reinventate dagli implementatori.
+I requisiti `ACT-*` sono vincolanti.
 
-Riferimenti tecnici Discord verificati durante la progettazione:
+Riferimenti tecnici Discord da riverificare al momento dell'implementazione:
 
 - https://docs.discord.com/developers/activities/development-guides/multiplayer-experience
 - https://docs.discord.com/developers/developer-tools/embedded-app-sdk
@@ -21,10 +21,6 @@ Riferimenti tecnici Discord verificati durante la progettazione:
 
 La Discord Activity non è un Campaign Manager ridotto e non è un vault alternativo.
 
-Il suo ruolo è mostrare al giocatore **la parte della sessione live che il DM ha deciso di condividere**.
-
-Principio:
-
 ```text
 Campaign Manager Desktop
 = preparazione, controllo e lato DM
@@ -36,145 +32,98 @@ EcoGDR / BeFolder futuro
 = campagna e personaggio fuori dalla sessione live
 ```
 
-L'Activity deve quindi restare piccola, focalizzata e session-oriented.
-
 ## ACT-PROD-002 — Nessun vault giocatore
 
 L'Activity non offre automaticamente:
 
 - explorer della campagna;
-- accesso alle note private del DM;
-- editor delle note;
+- note private;
+- editor note;
 - ricerca nel vault;
-- grafo completo della campagna;
+- grafo completo;
 - configurazione IA;
 - filesystem;
-- funzioni amministrative del Campaign Manager.
+- amministrazione Campaign Manager.
 
-Eventuali informazioni persistenti condivise con i giocatori appartengono a feature future dedicate, non vengono esposte implicitamente perché esistono nel vault del DM.
+## ACT-PROD-003 — Stesso client model della V0.3
+
+La Activity riusa il player client/session model già validato nel browser standalone.
+
+Discord non deve essere usato per mascherare una dipendenza del protocollo da API Discord.
 
 ---
 
 # 3. Esperienza del giocatore
 
-## ACT-UX-001 — Stato di attesa
+## ACT-UX-001 — Waiting state
 
-Se il giocatore entra nell'Activity mentre il DM non ha ancora pubblicato una board o una scena condivisa, deve vedere uno stato di attesa semplice e gradevole.
-
-Esempio concettuale:
+Se nessuna board è pubblicata:
 
 ```text
 Aephoredya — sessione in corso
-Mary sta preparando la scena…
+Il master sta preparando la scena…
 ```
 
-Non deve essere mostrata una dashboard vuota o un elenco di strumenti che non servono ancora.
+Nessuna dashboard vuota o lista di strumenti inutili.
 
 ## ACT-UX-002 — Board come superficie principale
 
-Quando il DM pubblica una board, questa diventa la superficie principale dell'Activity.
+Quando viene pubblicata una board, questa occupa la superficie principale.
 
-Il giocatore può almeno:
+Il giocatore può:
 
-- vedere la board pubblicata;
-- usare pan e zoom;
-- vedere gli elementi che il DM ha reso visibili;
-- vedere i token condivisi;
-- ricevere aggiornamenti realtime della sessione.
+- pan/zoom;
+- vedere solo elementi pubblici;
+- vedere token condivisi;
+- creare ping;
+- muovere token autorizzati;
+- ricevere `Porta tutti qui`;
+- aprire/ingrandire contenuti pubblici quando previsto.
 
-## ACT-UX-003 — Controllo limitato del token
+## ACT-UX-003 — Nessun authoring libero
 
-Un giocatore può muovere soltanto i token che il DM gli ha esplicitamente autorizzato a controllare.
+Il giocatore non crea o modifica liberamente testi, immagini, card, collegamenti o board.
 
-Il client giocatore non è trusted: il permesso deve essere validato dal lato autorevole della sessione e non soltanto nascosto nella UI.
+## ACT-UX-004 — Handout senza sottosistema separato
 
-## ACT-UX-004 — Contenuti condivisi esplicitamente
+La prima Activity non introduce una libreria handout autonoma.
 
-L'Activity può mostrare handout, informazioni della scena o altri contenuti soltanto quando il DM li ha esplicitamente pubblicati/condivisi.
+Un handout può essere condiviso come immagine/card/estratto sulla board e, se utile, aperto in overlay dal client.
 
-La presenza del contenuto nella campagna locale non implica visibilità per i giocatori.
+## ACT-UX-005 — Layout piccolo/mobile
 
-## ACT-UX-005 — Scheda/personaggio successivi
+La Activity deve restare utilizzabile su viewport piccoli:
 
-Un accesso alla scheda o al personaggio del giocatore è compatibile con la direzione del prodotto, ma non è necessario per la prima versione minima della sessione live.
+- board sempre prioritaria;
+- toolbar player ridotta ai soli controlli realmente disponibili;
+- pannelli secondari diventano overlay/collassabili;
+- nessuna funzione di authoring desktop viene aggiunta per riempire spazio.
 
-La futura integrazione deve rispettare i contratti EcoGDR/personaggio quando saranno stabili e non deve trasformare l'Activity in un character manager completo.
+La progettazione precisa responsive viene validata sull'Activity reale, ma non può richiedere una larghezza desktop per compiere pan, zoom, ping e token move.
+
+## ACT-UX-006 — Personaggio futuro
+
+Scheda/personaggio restano feature successive e non bloccano V0.4.
 
 ---
 
 # 4. Ingresso tramite Discord
 
-## ACT-JOIN-001 — Discord gestisce l'ingresso principale
+## ACT-JOIN-001 — Join nativo Discord
 
-Dentro Discord, l'esperienza normale non richiede al giocatore di digitare un codice sessione.
+Nel flusso normale il giocatore non inserisce il session join code standalone.
 
-Il giocatore entra usando il normale flusso Discord per **unirsi alla stessa istanza dell'Activity** avviata dal gruppo.
+Si unisce alla stessa istanza dell'Activity usando il normale flusso Discord.
 
-Discord assegna un `instanceId` all'istanza dell'Activity; utenti che partecipano alla stessa istanza ricevono lo stesso identificatore di istanza.
+## ACT-JOIN-002 — `instanceId`, non canale vocale
 
-L'Activity usa quindi l'identità dell'istanza Discord come chiave del contesto multiplayer Discord, non il canale vocale come identificatore proprietario della sessione Campaign Manager.
+Il contesto Discord è identificato dalla specifica Activity instance.
 
-## ACT-JOIN-002 — Non usare il canale vocale come session ID
+Il canale/chiamata Discord non viene usato come session ID Campaign Manager.
 
-La presenza nello stesso canale/chiamata Discord non è sufficiente da sola a identificare la sessione Campaign Manager.
+## ACT-JOIN-003 — Binding con live session
 
-Il canale può essere riutilizzato e può ospitare Activity differenti. Il binding applicativo deve riferirsi alla specifica istanza dell'Activity.
-
-## ACT-JOIN-003 — Partecipanti dell'istanza
-
-L'Activity può usare le API dell'Embedded App SDK per conoscere i partecipanti connessi alla stessa istanza e aggiornare la presenza lato UI/sessione.
-
-La lista Discord dei partecipanti non sostituisce i permessi applicativi: essere presenti nell'istanza non concede automaticamente controllo di token o accesso a contenuti non pubblicati.
-
----
-
-# 5. Pairing tra desktop e Discord Activity
-
-## ACT-PAIR-001 — Pairing esplicito una volta per sessione
-
-Il Campaign Manager Desktop e la Discord Activity sono applicazioni separate. La sessione live del desktop deve quindi essere associata all'`instanceId` Discord in modo esplicito e verificabile.
-
-La prima soluzione approvata usa un **pairing code breve, temporaneo e monouso riservato al master**.
-
-Flusso concettuale:
-
-```text
-Campaign Manager Desktop
-→ Avvia sessione
-→ genera pairing code temporaneo
-
-Master apre/avvia Discord Activity
-→ Collega al Campaign Manager
-→ inserisce pairing code
-
-Relay/backend
-→ associa Activity instanceId ↔ liveSessionId
-→ consuma il codice
-```
-
-## ACT-PAIR-002 — Il codice non è per i giocatori
-
-Il pairing code non fa parte del normale ingresso dei giocatori dentro Discord.
-
-Dopo il pairing, gli altri partecipanti entrano usando il normale meccanismo Discord per unirsi alla stessa Activity.
-
-## ACT-PAIR-003 — Proprietà del pairing code
-
-Il pairing code deve essere:
-
-- generato per una sessione live specifica;
-- breve abbastanza da poter essere digitato facilmente dal master;
-- non prevedibile in modo utile;
-- monouso;
-- con scadenza breve;
-- invalidato dopo pairing riuscito o chiusura della sessione;
-- privo di significato come password permanente della campagna.
-
-La lunghezza, l'alfabeto e la durata precise saranno fissati in `LIVE_SESSION_SPEC.md` / `PROTOCOL_SPEC.md` prima della V0.3/V0.4.
-
-## ACT-PAIR-004 — Binding runtime
-
-Il relay mantiene concettualmente un binding temporaneo:
+Dopo il pairing esiste:
 
 ```text
 Discord Activity instanceId
@@ -182,181 +131,254 @@ Discord Activity instanceId
 Campaign Manager liveSessionId
 ```
 
-Questo binding appartiene allo stato live e non viene scritto come relazione permanente nei file autorevoli della campagna.
+Il binding è runtime nel relay/session backend.
+
+## ACT-JOIN-004 — Istanza non associata
+
+Un'istanza Discord non ancora associata mostra soltanto uno stato neutro di collegamento e non riceve dati della campagna.
+
+## ACT-JOIN-005 — Nuovi ingressi bloccati
+
+Se il DM ha disattivato `Accetta nuovi giocatori`, un nuovo utente Discord che apre la Activity non viene ammesso alla live session, pur essendo tecnicamente presente nell'istanza Discord.
 
 ---
 
-# 6. Client web standalone
+# 5. Pairing master
 
-## ACT-WEB-001 — Web client prima di Discord
+## ACT-PAIR-001 — Pairing una volta per istanza
 
-Come già stabilito dalla roadmap, la sessione live viene prima costruita e validata come **client web standalone** in V0.3.
+Il master avvia la live session dal desktop e ottiene il pairing code definito in `LIVE_SESSION_SPEC.md`.
 
-La Discord Activity V0.4 riusa il client/session model già funzionante e aggiunge Discord come ambiente di hosting, identità e join experience.
-
-Discord non deve diventare il fondamento del protocollo realtime.
-
-## ACT-WEB-002 — Codice sessione come fallback standalone
-
-Fuori da Discord, il client web standalone può usare un **codice sessione** per entrare nella sessione corretta.
-
-Flusso concettuale:
+Flusso:
 
 ```text
-browser normale
-→ apri client web
-→ inserisci codice sessione
-→ entra nella live session
+Desktop → Avvia sessione → pairing ABC-DEF
+Master apre Activity → Collega al Campaign Manager → ABC-DEF
+Backend verifica → instanceId ↔ liveSessionId
+Code consumato
 ```
 
-Questo codice è distinto dal pairing code del master.
+## ACT-PAIR-002 — Proprietà del codice
 
-- **pairing code**: collega desktop ↔ istanza Discord;
-- **session join code**: permette a un client web standalone autorizzato di trovare/entrare nella sessione.
+Pairing code V0.4:
 
-I due concetti non devono essere fusi soltanto per semplificare l'implementazione.
+- 6 caratteri utili;
+- formato visuale `ABC-DEF`;
+- monouso;
+- scadenza 10 minuti;
+- rigenerabile;
+- non è una password campagna;
+- non è usato dai giocatori.
+
+## ACT-PAIR-003 — Activity del master non è host
+
+Dopo il pairing, il Campaign Manager Desktop resta l'unico host autorevole.
+
+Chiudere la Activity del master non termina e non mette in pausa la sessione se il desktop resta online.
 
 ---
 
-# 7. Sicurezza e trust
+# 6. Identità Discord e participant mapping
 
-## ACT-SEC-001 — Il client non è trusted
+## ACT-ID-001 — Identity verificata server-side
 
-Né un browser standalone né una Discord Activity possono essere considerati autorevoli soltanto perché dichiarano un `instanceId`, `liveSessionId`, token controllato o ruolo.
+Il client non può dichiarare liberamente il proprio Discord user ID.
 
-Il backend/relay deve validare sessione, identità e permessi prima di accettare azioni significative.
+L'adapter/backend usa il flusso ufficiale Discord disponibile al momento dell'implementazione per verificare user identity e Activity instance.
 
-## ACT-SEC-002 — Validazione dell'istanza Discord
+## ACT-ID-002 — Discord user → participantId
 
-Quando la Discord Activity verrà implementata, il backend deve poter verificare server-side che l'`instanceId` presentato corrisponda realmente a un'istanza attiva dell'app Discord, usando i meccanismi ufficiali disponibili al momento dell'implementazione.
+Dentro una live session, un utente Discord verificato viene mappato a un `participantId` runtime.
 
-Al momento della stesura Discord documenta una Activity Instance API server-side per questa verifica.
+Lo stesso utente che lascia e rientra nella stessa sessione recupera la stessa identity runtime quando possibile, incluse assegnazioni token non revocate.
 
-Il dettaglio API concreto deve essere riverificato prima della V0.4 e non viene codificato nel core del Campaign Manager.
+## ACT-ID-003 — Nome visualizzato
 
-## ACT-SEC-003 — Minimo privilegio
+Il client può mostrare display name/avatar Discord come presentazione dell'utente, ma permessi e identity non dipendono dal testo del display name.
 
-Essere dentro l'Activity concede soltanto accesso allo stato della sessione che il DM ha pubblicato e alle azioni esplicitamente autorizzate.
+---
 
-Nessun partecipante riceve automaticamente:
+# 7. Permessi
 
+## ACT-SEC-001 — Client non trusted
+
+Essere dentro la Activity non concede autorità.
+
+Il backend valida sempre sessione, identity e capacità richiesta.
+
+## ACT-SEC-002 — Token
+
+Un giocatore muove soltanto token assegnati nella live session.
+
+Cambiare JavaScript/client non permette di controllare token diversi perché il server rifiuta il comando.
+
+## ACT-SEC-003 — Contenuti
+
+La Activity riceve soltanto lo snapshot pubblico e gli eventi pubblici definiti dal protocollo.
+
+Non riceve l'intera board con flag `hidden`, né il vault per filtrarlo localmente.
+
+## ACT-SEC-004 — Dati vietati
+
+Non raggiungono la Activity:
+
+- API key;
+- host credentials;
+- path locali;
 - note private;
-- credenziali/API key;
-- accesso al filesystem;
-- controllo di token altrui;
-- configurazione del DM;
-- dati EcoGDR non necessari alla sessione.
+- asset non pubblicati;
+- configurazione DM;
+- search index;
+- dati EcoGDR non necessari.
 
 ---
 
-# 8. Confini architetturali
+# 8. Lifecycle Discord
 
-## ACT-ARCH-001 — Discord come adapter
+## ACT-LIFE-001 — Master Activity chiusa
 
-Il dominio della live session non dipende dall'Embedded App SDK.
+Se il master chiude soltanto la Activity:
 
-Forma desiderata:
+- desktop resta host;
+- altri giocatori restano connessi;
+- sessione continua normalmente.
+
+## ACT-LIFE-002 — Tutti lasciano l'istanza
+
+Se l'istanza Discord termina/non è più valida:
+
+- il binding `instanceId ↔ liveSessionId` viene invalidato quando il backend può determinarlo;
+- la live session resta aperta sul desktop;
+- browser standalone già autenticati continuano;
+- una nuova Activity instance richiede nuovo pairing.
+
+## ACT-LIFE-003 — Host desktop disconnesso
+
+La Activity segue esattamente `LIVE-HOST-*`:
+
+- mostra ultimo stato pubblico;
+- segnala reconnect master;
+- mutazioni condivise congelate;
+- 10 minuti di grazia;
+- timeout → session ended.
+
+## ACT-LIFE-004 — Sessione terminata
+
+Dopo `session.ended` la Activity mostra uno stato finale semplice e non tenta di creare autonomamente una nuova sessione.
+
+---
+
+# 9. Board switching
+
+## ACT-BOARD-001 — Una board alla volta
+
+La Activity mostra soltanto la board correntemente pubblicata dalla live session.
+
+## ACT-BOARD-002 — Cambio scena
+
+Durante switch:
 
 ```text
-Live session / protocol
+board A
+→ breve stato Cambio scena…
+→ snapshot board B
+```
+
+La Activity non conserva accesso navigabile alle board precedenti.
+
+## ACT-BOARD-003 — Stato al ritorno
+
+Se il master torna a una board già usata, la Activity riceve lo stato live preservato della sessione, non ricostruisce autonomamente la board preparata.
+
+---
+
+# 10. Protocollo e networking
+
+## ACT-NET-001 — Stesso protocollo V0.3
+
+Dopo authentication/join la Activity parla lo stesso `packages/protocol` del browser standalone.
+
+Non esistono eventi `discordToken.move` o formati board Discord-specifici.
+
+## ACT-NET-002 — Snapshot + eventi
+
+Reconnect, resync, token move, ping, board switch e session end seguono `PROTOCOL_SPEC.md`.
+
+## ACT-NET-003 — Discord è adapter
+
+Forma:
+
+```text
+Live Session / Protocol
         ↑
-client web condiviso
+Player Web Client
         ↑
-Discord adapter
+Discord Adapter
         ↑
 Embedded App SDK
 ```
 
-Il client deve poter essere eseguito fuori da Discord durante sviluppo e test.
+---
 
-## ACT-ARCH-002 — Nessun accesso al vault
+# 11. Browser standalone resta supportato
 
-L'Activity comunica con il relay/session API, non con il filesystem locale del DM.
+## ACT-WEB-001 — Nessuna regressione standalone
 
-## ACT-ARCH-003 — Stato pubblicato soltanto
+L'aggiunta di Discord non può rendere il browser standalone dipendente dall'Embedded App SDK.
 
-Il desktop costruisce uno snapshot/stato live esplicitamente pubblicabile. Il relay e l'Activity non devono ricevere l'intero dominio privato della campagna per poi nasconderne parti lato client.
+## ACT-WEB-002 — Join code separato
+
+Standalone usa il codice V0.3 `ABCD-EFGH`.
+
+Discord usa join nativo dell'Activity dopo pairing.
+
+I due sistemi convergono nello stesso `participantId`/protocol model ma non vengono fusi nella UX.
 
 ---
 
-# 9. Flusso approvato end-to-end
+# 12. Non-obiettivi V0.4
 
-```text
-DM apre Campaign Manager
-        ↓
-avvia live session
-        ↓
-desktop genera pairing code
-        ↓
-DM avvia Discord Activity
-        ↓
-Discord crea/fornisce instanceId
-        ↓
-DM inserisce pairing code nell'Activity
-        ↓
-relay associa instanceId ↔ liveSessionId
-        ↓
-altri giocatori usano "Unisciti all'attività"
-        ↓
-ricevono la stessa istanza Discord
-        ↓
-relay li collega alla live session associata
-        ↓
-waiting state finché il DM non pubblica
-        ↓
-board/scena condivisa
-```
+Non sono richiesti:
 
-Per il browser standalone:
-
-```text
-client web
-→ session join code
-→ liveSessionId autorizzata
-→ stessa esperienza di sessione senza dipendenza da Discord
-```
+- co-DM;
+- handoff host;
+- bot Discord obbligatorio;
+- comandi slash per usare la board;
+- chat duplicata;
+- voice/video custom;
+- vault Discord;
+- character manager completo;
+- account EcoGDR;
+- due protocolli distinti web/Discord.
 
 ---
 
-# 10. Decisioni ancora aperte intenzionalmente
+# 13. Criteri di accettazione
 
-Prima dell'implementazione V0.3/V0.4 andranno specificati almeno:
+La V0.4 è corretta se almeno:
 
-- formato e lifecycle esatto di `liveSessionId`;
-- durata/lunghezza dei codici;
-- autenticazione del client web standalone;
-- mapping Discord user ↔ player/session participant;
-- modello preciso dei permessi token;
-- reconnect e resume;
-- comportamento quando il master chiude l'Activity ma il desktop resta online;
-- comportamento quando tutti lasciano l'istanza Discord;
-- ownership e handoff della sessione;
-- mobile layout dell'Activity;
-- gestione di più board/scena durante la stessa sessione;
-- handout e contenuti condivisi;
-- eventuale collegamento futuro al personaggio EcoGDR.
-
-Questi punti non devono essere inventati durante la V0.1. Verranno definiti insieme a `LIVE_SESSION_SPEC.md`, `PROTOCOL_SPEC.md` e alla revisione finale di questa specifica prima della V0.3/V0.4.
-
----
-
-# 11. Criteri di accettazione futuri
-
-La prima Discord Activity è corretta se almeno:
-
-1. due giocatori che si uniscono alla stessa istanza Discord raggiungono la stessa live session associata;
-2. nessun giocatore deve digitare un codice nel flusso Discord normale;
-3. il master esegue il pairing una sola volta per quella sessione/istanza;
-4. un pairing code scaduto o consumato non può essere riutilizzato;
-5. un'istanza Discord non associata non riceve stato privato di alcuna campagna;
-6. un token non autorizzato non può essere mosso modificando soltanto il client;
-7. il client web standalone continua a funzionare senza Embedded App SDK;
-8. chiudere Discord o perdere il client non corrompe né modifica i file autorevoli della campagna.
+1. il master abbina una Activity instance con un pairing code una sola volta;
+2. un code consumato/scaduto non è riutilizzabile;
+3. due giocatori nella stessa istanza associata raggiungono la stessa live session;
+4. nessun giocatore inserisce un codice nel flusso Discord normale;
+5. un'istanza non associata riceve zero stato campagna;
+6. stesso Discord user che rientra recupera lo stesso participant runtime quando valido;
+7. token non assegnato resta non controllabile anche con client modificato;
+8. board switch mostra snapshot coerente e non espone la board precedente;
+9. chiudere la Activity del master non termina la sessione;
+10. host desktop disconnect applica i 10 minuti di grace/freeze;
+11. nuova istanza Discord dopo fine della precedente richiede nuovo pairing;
+12. il browser standalone continua a superare tutti i gate V0.3.
 
 ---
 
 ## Regola finale
 
-La Discord Activity deve rendere l'ingresso dei giocatori **più semplice**, non aggiungere un secondo sistema di lobby sopra quello che Discord fornisce già.
+Discord deve togliere passaggi al giocatore, non aggiungerli:
 
-Se un giocatore dentro Discord deve conoscere ID tecnici, scegliere manualmente la campagna o copiare codici per una sessione normalmente avviata dal gruppo, il flusso è diventato più complicato del necessario.
+```text
+Unisciti all'attività
+→ sei al tavolo
+```
+
+Tutta la complessità di pairing, identity e autorizzazione resta sotto questa esperienza.
