@@ -21,11 +21,13 @@ In caso di conflitto:
 7. `docs/FOUNDATION_GUARDRAILS.md`;
 8. design direction e mock.
 
+`docs/IMPLEMENTATION_GOALS.md` organizza il lavoro ma **non prevale** sulle specifiche di prodotto: se un goal e una spec divergono, vale la spec.
+
 Per V0.1, `docs/V01_OPERATIONAL_SPEC.md` prevale sulle formulazioni storiche più complesse o vaghe.
 
 ---
 
-# 2. Costituzione
+# 2. Costituzione e piano di costruzione
 
 ## `PRODUCT.md`
 
@@ -41,7 +43,19 @@ Le tecnologie cloud elencate sono implementazioni previste, non dogmi del domini
 
 Sequenza operativa completa V0.1→V0.6 più milestone cloud/EcoGDR futuri, con flussi, stati, errori e gate.
 
-Le sotto-attività sono checklist dentro goal verticali, non obbligo di micro-progetti.
+## `docs/IMPLEMENTATION_GOALS.md`
+
+Traduce la roadmap in pochi goal verticali grandi da usare come unità di coding:
+
+- 5 goal V0.1;
+- 3 goal V0.2;
+- 4 goal V0.3;
+- 2 goal V0.4;
+- 3 goal V0.5;
+- 2 goal V0.6;
+- goal cloud/EcoGDR solo quando i servizi reali esistono.
+
+Le sotto-attività sono checklist dentro questi goal, non obbligo di micro-progetti.
 
 ---
 
@@ -76,7 +90,7 @@ Contiene la regola anti-over-engineering V0.1.
 
 ### `docs/COMPENDIUM_SPEC.md`
 
-La vista Compendio può esistere già come pagina WIP neutra, senza backend/dataset.
+`Compendio` è una destinazione stabile del rail, dopo `Grafo` e prima di `Recenti`, e apre una pagina WIP neutra senza backend/dataset.
 
 ### `docs/AUTHENTICATION_SPEC.md`
 
@@ -287,6 +301,7 @@ Raccoglie i vincoli trasversali che impediscono alle future feature cloud di con
 | auth reale futuro | Authentication Spec + contratto provider futuro |
 | Compendio reale futuro | Compendium Spec + contratto API/dataset futuro |
 | EcoGDR | EcoGDR Integration + Foundation Guardrails |
+| unità di coding | Implementation Goals + relative spec normative |
 
 ---
 
@@ -302,7 +317,8 @@ Raccoglie i vincoli trasversali che impediscono alle future feature cloud di con
 - V0.6;
 - placeholder Account;
 - placeholder Compendio;
-- comportamento futuro di auth/Compendio/EcoGDR.
+- comportamento futuro di auth/Compendio/EcoGDR;
+- suddivisione in goal verticali di implementazione.
 
 ## Intenzionalmente NON progettato finché non esiste la realtà a cui agganciarsi
 
@@ -329,6 +345,8 @@ Un goal deve citare solo:
 - risultato utente;
 - acceptance/gate;
 - non-obiettivi che prevengono scope creep.
+
+Usare `docs/IMPLEMENTATION_GOALS.md` come indice operativo dei goal.
 
 Se una spec futura sembra necessaria per completare la versione corrente, verificare prima se si sta introducendo infrastruttura prematura.
 
