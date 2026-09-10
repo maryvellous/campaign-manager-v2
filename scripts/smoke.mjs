@@ -10,7 +10,7 @@ let desktop;
 try {
   desktop = await electron.launch({ args: ['.', `--user-data-dir=${path.join(temporary, 'profile')}`], cwd: process.cwd(), env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE')) });
   const page = await desktop.firstWindow();
-  await page.getByRole('heading', { name: 'Un posto per le tue storie.' }).waitFor();
+  await page.getByRole('heading', { name: /Un posto per\s+le tue storie\./u }).waitFor();
   assert.equal(await page.evaluate(() => typeof window.require), 'undefined');
   assert.equal(await page.evaluate(() => typeof window.process), 'undefined');
   await desktop.evaluate(({ dialog }, root) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [root] }); }, vault);

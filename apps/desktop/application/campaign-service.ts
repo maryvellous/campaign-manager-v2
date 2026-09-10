@@ -550,7 +550,7 @@ export class CampaignService {
     }
     return { nodes, edges: [...edges.values()].sort((left, right) => left.source.localeCompare(right.source) || left.target.localeCompare(right.target)) };
   }
-  async dispose(): Promise<void> { this.disposed = true; if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer); if (this.boardSaveTimer) clearTimeout(this.boardSaveTimer); this.watcher?.close(); if (this.timer) clearInterval(this.timer); await this.queue.catch(() => undefined); }
+  async dispose(waitForQueue = true): Promise<void> { this.disposed = true; if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer); if (this.boardSaveTimer) clearTimeout(this.boardSaveTimer); this.watcher?.close(); if (this.timer) clearInterval(this.timer); if (waitForQueue) await this.queue.catch(() => undefined); }
 }
 
 

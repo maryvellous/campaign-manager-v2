@@ -31,7 +31,7 @@ test('board lifecycle persists, recovers dirty state and preserves external conf
   await service.run(() => service.createBoard('Scene'));
   const board = service.state.activeBoard!;
   assert.equal(board.relativePath, 'Scene.board.json');
-  await service.run(() => service.updateBoard({ ...board, elements: [{ elementId: randomUUID(), kind: 'text', x: 5, y: 5, width: 100, height: 40, z: 1, locked: false, text: 'Mappa' }] }));
+  await service.run(() => service.updateBoard({ ...board, elements: [{ elementId: randomUUID(), kind: 'text', x: 5, y: 5, width: 100, height: 40, z: 1, locked: false, visibleByDefault: false, text: 'Mappa' }] }));
   await service.run(() => service.saveBoard());
   const boardFile = path.join(root, 'Boards', 'Scene.board.json');
   assert.match(await fs.readFile(boardFile, 'utf8'), /Mappa/u);

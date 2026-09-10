@@ -166,7 +166,7 @@ else {
         window.webContents.send('campaign:before-close');
       }
     });
-    window.on('closed', () => service.dispose());
+    window.on('closed', () => { void service.dispose(false); });
     await service.initialize(); selectedPath = service.state.preferences.lastPath; await window.loadFile(path.join(__dirname, 'index.html')); window.show();
   });
 }

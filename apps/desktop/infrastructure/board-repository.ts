@@ -19,6 +19,11 @@ export interface BoardElement {
   excerpt?: string;
   assetPath?: string;
   title?: string;
+  avatarPath?: string;
+  visibleByDefault: boolean;
+  groupId?: string;
+  fromElementId?: string;
+  toElementId?: string;
 }
 export interface BoardDocument {
   schemaVersion: 1;
@@ -42,7 +47,9 @@ const validateElement = (value: unknown): BoardElement => {
   if (typeof element.elementId !== 'string' || !/^[0-9a-f-]{36}$/iu.test(element.elementId) || !['text', 'image', 'note-card', 'token', 'link'].includes(element.kind)) throw new CampaignError('metadata_invalid', 'Elemento board non valido.');
   for (const key of ['x', 'y', 'width', 'height', 'z'] as const) if (typeof element[key] !== 'number' || !Number.isFinite(element[key])) throw new CampaignError('metadata_invalid', 'Geometria board non valida.');
   if (element.width <= 0 || element.height <= 0 || typeof element.locked !== 'boolean') throw new CampaignError('metadata_invalid', 'Geometria board non valida.');
-  for (const key of ['text', 'sourceNoteId', 'excerpt', 'assetPath', 'title'] as const) if (element[key] !== undefined && typeof element[key] !== 'string') throw new CampaignError('metadata_invalid', 'Proprietà board non valida.');
+  if (element.visibleByDefault === undefined) element.visibleByDefault = true;
+  if (typeof element.visibleByDefault !== 'boolean') throw new CampaignError('metadata_invalid', 'Visibilità board non valida.');
+  for (const key of ['text', 'sourceNoteId', 'excerpt', 'assetPath', 'title', 'avatarPath', 'groupId', 'fromElementId', 'toElementId'] as const) if (element[key] !== undefined && typeof element[key] !== 'string') throw new CampaignError('metadata_invalid', 'Proprietà board non valida.');
   if (element.assetPath) { validateRelativePath(element.assetPath); if (path.isAbsolute(element.assetPath)) throw new CampaignError('outside_campaign_root', 'La board non può contenere path assoluti.'); }
   return element;
 };
