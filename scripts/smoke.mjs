@@ -18,6 +18,11 @@ try {
   await page.locator('.root-folder').filter({ hasText: 'Campagna di prova' }).waitFor();
   await page.getByRole('navigation', { name: 'Note della campagna' }).getByRole('button', { name: 'Meradyl', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Contenuto Markdown' });
+  await page.getByRole('button', { name: 'Ricerca', exact: true }).click();
+  const searchInput = page.getByRole('textbox', { name: 'Cerca note e contenuti' });
+  await searchInput.fill('Meradyl');
+  await page.getByRole('button', { name: 'Meradyl', exact: true }).first().waitFor();
+  await page.getByRole('button', { name: 'Note', exact: true }).click();
   await editor.fill('# Meradyl\nUna città sul mare.\nUna modifica reale.');
   await page.getByRole('status').filter({ hasText: /^Modifiche da salvare$/ }).waitFor();
   await editor.press('Control+s');

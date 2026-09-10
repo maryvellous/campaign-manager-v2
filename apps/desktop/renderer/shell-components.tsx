@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-export type IconName = 'note' | 'search' | 'graph' | 'book' | 'clock' | 'star' | 'settings' | 'folder' | 'plus' | 'back' | 'forward' | 'close' | 'chevron' | 'panel' | 'more' | 'trash' | 'move' | 'rename';
+export type IconName = 'note' | 'search' | 'graph' | 'book' | 'clock' | 'star' | 'settings' | 'folder' | 'plus' | 'back' | 'forward' | 'close' | 'chevron' | 'panel' | 'more' | 'trash' | 'move' | 'rename' | 'refresh';
 const paths: Record<IconName, string> = {
   note: 'M5 3h10l4 4v14H5z M14 3v5h5 M8 12h8 M8 16h6',
   search: 'M16 16l5 5 M18 10a8 8 0 1 1-16 0a8 8 0 1 1 16 0',
@@ -8,7 +8,7 @@ const paths: Record<IconName, string> = {
   clock: 'M12 7v6l4 2 M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0',
   star: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z',
   settings: 'M9 3h6l1 4 4 1 1 5-3 3-1 4-5 1-3-3-4-1-1-5 3-3z M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0',
-  folder: 'M2 6h8l2 2h10v12H2z M2 6V4h7l2 2', plus: 'M12 4v16 M4 12h16', back: 'm14 5-7 7 7 7', forward: 'm10 5 7 7-7 7', close: 'm6 6 12 12 M6 18 18 6', chevron: 'm9 5 7 7-7 7', panel: 'M3 3h18v18H3z M15 3v18', more: 'M4 12h1 M11 12h1 M18 12h1', trash: 'M3 6h18 M9 3h6 M6 6l1 15h10l1-15 M10 9v8 M14 9v8', move: 'M4 12h16 m-5-5 5 5-5 5', rename: 'm4 15 11-11 5 5L9 20H4z M13 6l5 5'
+  folder: 'M2 6h8l2 2h10v12H2z M2 6V4h7l2 2', plus: 'M12 4v16 M4 12h16', back: 'm14 5-7 7 7 7', forward: 'm10 5 7 7-7 7', close: 'm6 6 12 12 M6 18 18 6', chevron: 'm9 5 7 7-7 7', panel: 'M3 3h18v18H3z M15 3v18', more: 'M4 12h1 M11 12h1 M18 12h1', trash: 'M3 6h18 M9 3h6 M6 6l1 15h10l1-15 M10 9v8 M14 9v8', move: 'M4 12h16 m-5-5 5 5-5 5', rename: 'm4 15 11-11 5 5L9 20H4z M13 6l5 5', refresh: 'M20 11a8 8 0 1 0 2 4.5 M20 4v7h-7'
 };
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>; }
 export interface PaletteItem { id: string; label: string; detail?: string; kind: 'note' | 'azione'; run: () => void }
