@@ -1,4 +1,4 @@
-export type View = 'notes' | 'search' | 'graph' | 'compendium' | 'recent' | 'favorites' | 'settings';
+export type View = 'notes' | 'search' | 'graph' | 'board' | 'compendium' | 'recent' | 'favorites' | 'settings';
 export interface UiState { view: View; selectedFolder: string; favorites: string[]; recentNotes: string[]; expandedFolders: string[]; sidebarWidth: number; inspectorWidth: number; sidebarCollapsed: boolean; inspectorCollapsed: boolean; folderColors: Record<string, string> }
 export const defaultUi = (): UiState => ({ view: 'notes', selectedFolder: '', favorites: [], recentNotes: [], expandedFolders: [], sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false, folderColors: {} });
 export interface SavedTabs { tabs: { id: string; noteId: string; history: string[]; historyIndex: number }[]; activeTabId?: string }

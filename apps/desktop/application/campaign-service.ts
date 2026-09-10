@@ -8,6 +8,7 @@ import type { FSWatcher } from 'node:fs';
 import { CampaignError, type RecoveryDraft, type RecoveryTarget, type NoteSnapshot, type VaultEntry } from '../../../packages/core/src/index';
 import { CampaignRepository, ioError } from '../infrastructure/campaign-repository';
 import { LocalStore, type Preferences } from '../infrastructure/local-store';
+import { BoardRepository, type BoardDocument, type BoardSnapshot } from '../infrastructure/board-repository';
 export interface DocumentSession { sessionId?: string; draft?: { id: string; parentFolder: string; manualTitle?: string }; noteId: string; markdown: string; baseRevision: string; state: 'clean' | 'dirty' | 'saving' | 'error' | 'conflict' | 'missing'; recoveryKey?: string; recoveryTarget?: RecoveryTarget; protected: boolean; error?: string; disk?: NoteSnapshot }
 export interface WorkspaceTab { id: string; document?: DocumentSession; history: string[]; historyIndex: number }
 export interface AppState {
@@ -16,6 +17,7 @@ export interface AppState {
   entries: VaultEntry[]; preferences: Preferences; document?: DocumentSession;
   recoveries: Array<{ key: string; draft: RecoveryDraft }>;
   rootMissing: boolean; warning?: string;
+  boards: BoardSnapshot[]; activeBoard?: BoardSnapshot; boardState?: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict'; boardError?: string;
 }
 export type SearchMatchKind = 'title-exact' | 'title-prefix' | 'title-contains' | 'path' | 'body';
 export interface SearchResult {
@@ -61,7 +63,9 @@ export class CampaignService {
   private watcher?: FSWatcher;
   private timer?: ReturnType<typeof setTimeout>;
   private queue: Promise<unknown> = Promise.resolve();
-  state: AppState = { tabs: [], ui: defaultUi(), repairs: [], entries: [], preferences: { recent: [] }, recoveries: [], rootMissing: false };
+  state: AppState = { tabs: [], ui: defaultUi(), repairs: [], entries: [], preferences: { recent: [] }, recoveries: [], rootMissing: false, boards: [], boardState: 'clean' };
+  private boardRepo?: BoardRepository;
+  private boardSaveTimer?: ReturnType<typeof setTimeout>;
   onChange: () => void = () => undefined;
   private autoSaveTimer?: ReturnType<typeof setTimeout>;
   constructor(readonly store: LocalStore) {
@@ -115,8 +119,9 @@ export class CampaignService {
     const previousDocument = relink ? this.state.document : undefined;
     this.watcher?.close(); if (this.timer) clearInterval(this.timer);
     this.repo = repo;
+    this.boardRepo = await BoardRepository.open(repo.root);
     this.state.campaign = { campaignId: repo.metadata.campaignId, name: repo.metadata.name || path.basename(repo.root), root: repo.root };
-    this.state.entries = entries; this.state.rootMissing = false;
+    this.state.entries = entries; this.state.boards = await this.boardRepo.list(); this.state.activeBoard = undefined; this.state.boardState = 'clean'; this.state.boardError = undefined; this.state.rootMissing = false;
     if (!relink) {
       this.state.tabs = []; this.state.activeTabId = undefined;
       const saved = await this.store.readUi(repo.metadata.campaignId); this.state.ui = saved.ui;
@@ -317,10 +322,44 @@ export class CampaignService {
     doc.draft.manualTitle = name; doc.error = undefined; if (doc.state !== 'clean') doc.state = 'dirty'; await this.protect();
   }
   async setView(view: View): Promise<void> {
-    if (!['notes', 'search', 'graph', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
+    if (!['notes', 'search', 'graph', 'board', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
     if (!(await this.leaveCurrent())) throw new CampaignError('conflict', 'Risolvi le modifiche prima di cambiare vista.');
     this.state.ui.view = view; await this.persistUi();
   }
+  async createBoard(title: string): Promise<void> {
+    const repo = this.boardRepo ?? await BoardRepository.open(this.requiredRepo().root); this.boardRepo = repo;
+    const board = await repo.create(title); this.state.boards = await repo.list(); this.state.activeBoard = board; this.state.boardState = 'saved'; this.state.boardError = undefined;
+  }
+  async openBoard(relativePath: string): Promise<void> {
+    const board = await (this.boardRepo ?? (this.boardRepo = await BoardRepository.open(this.requiredRepo().root))).read(relativePath);
+    this.state.activeBoard = board; this.state.boardState = 'saved'; this.state.boardError = undefined;
+    const recovery = await this.store.readBoardRecovery(this.requiredRepo().metadata.campaignId);
+    if (recovery?.relativePath === relativePath) { this.state.activeBoard = { ...recovery.board, relativePath, revision: board.revision }; this.state.boardState = 'dirty'; }
+  }
+  async renameBoard(title: string): Promise<void> {
+    const active = this.state.activeBoard; if (!active) throw new CampaignError('not_found', 'Nessuna board aperta.');
+    const board = await this.requiredBoardRepo().rename(active.relativePath, title); this.state.activeBoard = board; this.state.boards = await this.requiredBoardRepo().list(); this.state.boardState = 'saved';
+  }
+  async updateBoard(board: BoardDocument): Promise<void> {
+    const active = this.state.activeBoard; if (!active || board.boardId !== active.boardId) throw new CampaignError('not_found', 'Nessuna board aperta.');
+    this.state.activeBoard = { ...board, relativePath: active.relativePath, revision: active.revision }; this.state.boardState = 'dirty'; this.state.boardError = undefined;
+    await this.store.putBoardRecovery(this.requiredRepo().metadata.campaignId, active.relativePath, board);
+    if (this.boardSaveTimer) clearTimeout(this.boardSaveTimer);
+    this.boardSaveTimer = setTimeout(() => { void this.run(() => this.saveBoard()).catch(() => undefined); }, 600); this.boardSaveTimer.unref();
+  }
+  async saveBoard(): Promise<void> {
+    const active = this.state.activeBoard; if (!active || this.state.boardState === 'clean' || this.state.boardState === 'saved') return;
+    this.state.boardState = 'saving'; this.onChange();
+    try {
+      const saved = await this.requiredBoardRepo().write(active.relativePath, active, active.revision);
+      this.state.activeBoard = saved; this.state.boards = await this.requiredBoardRepo().list(); this.state.boardState = 'saved'; this.state.boardError = undefined; await this.store.removeBoardRecovery(this.requiredRepo().metadata.campaignId);
+    } catch (error) {
+      const failure = ioError(error); this.state.boardState = failure.code === 'conflict' ? 'conflict' : 'error'; this.state.boardError = failure.message;
+    }
+  }
+  async importBoardAsset(source: string): Promise<string> { return this.requiredBoardRepo().importAsset(source); }
+    async readBoardAsset(relativePath: string): Promise<string> { return this.requiredBoardRepo().readAsset(relativePath); }
+  private requiredBoardRepo(): BoardRepository { if (!this.boardRepo) throw new CampaignError('not_found', 'Apri una campagna.'); return this.boardRepo; }
   async setUi(patch: Partial<UiState>): Promise<void> {
     const ui = this.state.ui;
     if (patch.selectedFolder !== undefined) { validateRelativePath(patch.selectedFolder, true); if (patch.selectedFolder && !this.state.entries.some(e => e.kind === 'folder' && e.id === patch.selectedFolder)) throw new CampaignError('not_found', 'Cartella non trovata.'); ui.selectedFolder = patch.selectedFolder; }
@@ -404,7 +443,7 @@ export class CampaignService {
   async closeCampaign(preserve = false): Promise<void> {
     if (!(await this.prepareLeave(preserve))) throw new CampaignError('conflict', 'La campagna contiene modifiche non salvate. Puoi conservarne la bozza prima di chiuderla.');
     this.watcher?.close(); if (this.timer) clearInterval(this.timer); if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer);
-    this.repo = undefined; this.state.campaign = undefined; this.state.tabs = []; this.state.activeTabId = undefined; this.state.entries = []; this.state.ui = defaultUi(); this.state.recoveries = []; this.state.repairs = []; this.state.rootMissing = false;
+    if (this.boardSaveTimer) clearTimeout(this.boardSaveTimer); this.repo = undefined; this.boardRepo = undefined; this.state.campaign = undefined; this.state.tabs = []; this.state.activeTabId = undefined; this.state.entries = []; this.state.boards = []; this.state.activeBoard = undefined; this.state.boardState = 'clean'; this.state.boardError = undefined; this.state.ui = defaultUi(); this.state.recoveries = []; this.state.repairs = []; this.state.rootMissing = false;
     this.state.preferences.lastPath = undefined; await this.store.writePreferences(this.state.preferences);
   }
   async linkDetails(): Promise<{ backlinks: string[]; warning?: string }> {
@@ -511,7 +550,7 @@ export class CampaignService {
     }
     return { nodes, edges: [...edges.values()].sort((left, right) => left.source.localeCompare(right.source) || left.target.localeCompare(right.target)) };
   }
-  async dispose(): Promise<void> { this.disposed = true; if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer); this.watcher?.close(); if (this.timer) clearInterval(this.timer); await this.queue.catch(() => undefined); }
+  async dispose(): Promise<void> { this.disposed = true; if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer); if (this.boardSaveTimer) clearTimeout(this.boardSaveTimer); this.watcher?.close(); if (this.timer) clearInterval(this.timer); await this.queue.catch(() => undefined); }
 }
 
 

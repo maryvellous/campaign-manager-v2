@@ -3,6 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import path from 'node:path';
 import os from 'node:os';
+import { randomUUID } from 'node:crypto';
 import { CampaignService } from '../apps/desktop/application/campaign-service';
 import { LocalStore } from '../apps/desktop/infrastructure/local-store';
 async function fixture(t: { after: (fn: () => Promise<void>) => void }) {
@@ -24,6 +25,26 @@ test('edits are recovered outside vault and successful save clears equivalent re
   assert.equal(service.state.document?.state, 'clean');
   assert.equal(await fs.readFile(path.join(root, 'Note.md'), 'utf8'), 'local change');
   assert.equal((await service.store.listRecovery(service.state.campaign!.campaignId)).length, 0);
+});
+test('board lifecycle persists, recovers dirty state and preserves external conflict', async t => {
+  const { root, service } = await fixture(t);
+  await service.run(() => service.createBoard('Scene'));
+  const board = service.state.activeBoard!;
+  assert.equal(board.relativePath, 'Scene.board.json');
+  await service.run(() => service.updateBoard({ ...board, elements: [{ elementId: randomUUID(), kind: 'text', x: 5, y: 5, width: 100, height: 40, z: 1, locked: false, text: 'Mappa' }] }));
+  await service.run(() => service.saveBoard());
+  const boardFile = path.join(root, 'Boards', 'Scene.board.json');
+  assert.match(await fs.readFile(boardFile, 'utf8'), /Mappa/u);
+  await fs.writeFile(boardFile, JSON.stringify({ ...service.state.activeBoard, title: 'Esterno' }));
+  await service.run(() => service.updateBoard({ ...service.state.activeBoard!, title: 'Locale' }));
+  await service.run(() => service.saveBoard());
+  assert.equal(service.state.boardState, 'conflict');
+  const restored = new CampaignService(service.store);
+  t.after(async () => restored.dispose());
+  await restored.run(() => restored.initialize());
+  await restored.run(() => restored.open(root));
+  await restored.run(() => restored.openBoard('Scene.board.json'));
+  assert.equal(restored.state.activeBoard?.title, 'Locale');
 });
 test('external clean updates reload, dirty changes conflict and explicit revision is required', async t => {
   const { root, service } = await fixture(t);

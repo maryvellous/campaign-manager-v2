@@ -11,7 +11,7 @@ export function ioError(error: unknown): CampaignError {
   return new CampaignError(codes[code as keyof typeof codes] ?? 'io_error', error instanceof Error ? error.message : 'Operazione filesystem fallita.');
 }
 const revision = (bytes: Uint8Array) => createHash('sha256').update(bytes).digest('hex');
-const ignored = (name: string) => ['.git', 'node_modules'].includes(name.toLowerCase()) || name.startsWith('.cmv2-');
+const ignored = (name: string) => ['.git', 'node_modules', 'boards', 'assets'].includes(name.toLowerCase()) || name.startsWith('.cmv2-');
 const locks = new Map<string, Promise<unknown>>();
 async function serialized<T>(key: string, operation: () => Promise<T>): Promise<T> {
   const previous = locks.get(key) ?? Promise.resolve();

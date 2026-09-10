@@ -18,6 +18,16 @@ try {
   await page.locator('.root-folder').filter({ hasText: 'Campagna di prova' }).waitFor();
   await page.getByRole('navigation', { name: 'Note della campagna' }).getByRole('button', { name: 'Meradyl', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Contenuto Markdown' });
+  await page.getByRole('button', { name: 'Board', exact: true }).click();
+  await page.getByRole('textbox', { name: 'Nome nuova board' }).fill('Scena smoke');
+  await page.getByRole('button', { name: 'Nuova board', exact: true }).click();
+  await page.getByRole('heading', { name: 'Scena smoke', exact: true }).waitFor();
+  await page.getByRole('button', { name: 'Nota e testo' }).click();
+  await page.getByRole('button', { name: 'Salva board' }).click();
+  const boardFile = JSON.parse(await readFile(path.join(vault, 'Boards', 'Scena smoke.board.json'), 'utf8'));
+  assert.equal(boardFile.schemaVersion, 1);
+  assert.equal(boardFile.elements.length, 1);
+  await page.getByRole('button', { name: 'Note', exact: true }).click();
   await page.getByRole('button', { name: 'Ricerca', exact: true }).click();
   const searchInput = page.getByRole('textbox', { name: 'Cerca note e contenuti' });
   await searchInput.fill('Meradyl');

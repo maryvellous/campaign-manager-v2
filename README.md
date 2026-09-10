@@ -13,11 +13,13 @@ npm start
 
 L'installazione scarica il runtime Electron. L'uso della campagna non richiede rete o account.
 
-## Stato: V0.1 — Goal 5 completato
+## Stato: V0.2 — Goal V02-1 completato
 
 La shell comprende topbar, rail, albero delle note, area centrale con tab e inspector. I pannelli si possono ridimensionare e chiudere. Note, Recenti, Preferiti, Ricerca e Grafo sono tutti attivi in modo locale e coerente con la roadmap V0.1.
 
 La campagna locale è operativa in pieno: apertura e chiusura, filesystem guardrail, save/recovery, conflitti, rinnovo di tab e preferenze, draft, move/rename/trash, wikilink risolti e backup. La UI tiene conto dei placeholder onesti per Compendio e Account, senza introdurre rete o account artificiali.
+
+V02-1 aggiunge board locali preparate in `Boards/*.board.json`: creazione, apertura, rename, canvas freeform con pan/zoom, testo, immagini e import portabile in `Assets/Board/`. Gli elementi supportano selezione, movimento, resize, lock, z-order e undo/redo minimo. Il salvataggio usa revisioni e scrittura sicura; le modifiche board hanno recovery locale separata e il conflitto esterno non sovrascrive il file autorevole. Token e collegamenti visuali restano parte del successivo Goal V02-2.
 
 Una nuova nota resta una bozza senza file finché non contiene testo significativo. Il titolo deriva dalle prime tre parole visibili: con tre parole il normale autosalvataggio la materializza dopo una breve pausa; con una o due parole bastano Salva, navigazione o chiusura. Una collisione richiede la correzione esplicita del titolo. Le bozze vuote o composte soltanto da marcatori non producono file o recovery.
 

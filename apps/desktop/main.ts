@@ -7,6 +7,7 @@ import { CampaignService } from './application/campaign-service';
 import { LocalStore } from './infrastructure/local-store';
 import { CampaignError } from '../../packages/core/src/index';
 import { ioError } from './infrastructure/campaign-repository';
+import type { BoardDocument } from './infrastructure/board-repository';
 
 let window: BrowserWindow;
 let service: CampaignService;
@@ -47,6 +48,17 @@ else {
             case 'search': return { ok: true, data: await service.searchNotes(text(command.query, 2000)) };
             case 'rebuildSearch': await service.rebuildSearch(); break;
             case 'graph': return { ok: true, data: await service.graphProjection() };
+            case 'boardCreate': await service.createBoard(text(command.title, 200)); break;
+            case 'boardOpen': await service.openBoard(text(command.relativePath, 300)); break;
+            case 'boardRename': await service.renameBoard(text(command.title, 200)); break;
+            case 'boardUpdate': if (!command.board || typeof command.board !== 'object' || Array.isArray(command.board)) throw new CampaignError('invalid_path', 'Board non valida.'); await service.updateBoard(command.board as BoardDocument); break;
+            case 'boardSave': await service.saveBoard(); break;
+            case 'boardImportAsset': {
+              const selection = await dialog.showOpenDialog(window, { title: 'Importa immagine nella board', properties: ['openFile'], filters: [{ name: 'Immagini', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
+              if (!selection.canceled && selection.filePaths[0]) return { ok: true, data: await service.importBoardAsset(selection.filePaths[0]), state: service.state };
+              return { ok: false, state: service.state };
+            }
+            case 'boardAsset': return { ok: true, data: await service.readBoardAsset(text(command.relativePath, 500)) };
             case 'image': return { ok: true, data: await service.readImage(text(command.noteId, 2000), text(command.source, 2000)) };
             case 'external': await shell.openExternal(externalUrl(text(command.url, 8000))); break;
             case 'createLinkedNote': await service.createLinkedNote(text(command.target, 2000)); break;
@@ -76,7 +88,7 @@ else {
             case 'draftTitle': await service.setDraftTitle(text(command.title, 250)); break;
             case 'view': {
               const view = text(command.view, 30);
-              if (!['notes', 'search', 'graph', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
+              if (!['notes', 'search', 'graph', 'board', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
               await service.setView(view as Parameters<CampaignService['setView']>[0]); break;
             }
             case 'ui': {

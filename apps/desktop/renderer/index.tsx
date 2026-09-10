@@ -1,11 +1,12 @@
 import { MarkdownView } from './markdown-view';
+import { BoardView } from './board-view';
 import { parseWikiLinks, resolveWikiLink } from '../../../packages/core/src/markdown';
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AppState, DocumentSession } from '../application/campaign-service';
 import { Icon, Palette, PanelHandle, type IconName, type PaletteItem } from './shell-components';
 import './style.css';
-type View = 'notes' | 'search' | 'graph' | 'compendium' | 'recent' | 'favorites' | 'settings';
+type View = 'notes' | 'search' | 'graph' | 'board' | 'compendium' | 'recent' | 'favorites' | 'settings';
 type ShellDocument = DocumentSession;
 interface UiState { view: View; selectedFolder: string; favorites: string[]; recentNotes: string[]; expandedFolders: string[]; sidebarWidth: number; inspectorWidth: number; sidebarCollapsed: boolean; inspectorCollapsed: boolean; folderColors: Record<string, string> }
 type ShellState = AppState;
@@ -13,7 +14,7 @@ type Reply = { data?: unknown; ok: boolean; state?: ShellState; error?: { code: 
 declare global { interface Window { campaign: { beforeClose: (listener: () => void) => () => void; command: (input: Record<string, unknown>) => Promise<Reply>; subscribe: (listener: (state: ShellState) => void) => () => void } } }
 const defaults: UiState = { view: 'notes', selectedFolder: '', favorites: [], recentNotes: [], expandedFolders: [], sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false, folderColors: {} };
 const labels = { clean: 'Salvato', dirty: 'Modifiche da salvare', saving: 'Salvataggio…', error: 'Salvataggio non riuscito', conflict: 'Conflitto con il disco', missing: 'File non disponibile' };
-const navigation: { id: View; label: string; icon: IconName }[] = [{ id: 'notes', label: 'Note', icon: 'note' }, { id: 'search', label: 'Ricerca', icon: 'search' }, { id: 'graph', label: 'Grafo', icon: 'graph' }, { id: 'compendium', label: 'Compendio', icon: 'book' }, { id: 'recent', label: 'Recenti', icon: 'clock' }, { id: 'favorites', label: 'Preferiti', icon: 'star' }, { id: 'settings', label: 'Impostazioni', icon: 'settings' }];
+const navigation: { id: View; label: string; icon: IconName }[] = [{ id: 'notes', label: 'Note', icon: 'note' }, { id: 'search', label: 'Ricerca', icon: 'search' }, { id: 'graph', label: 'Grafo', icon: 'graph' }, { id: 'board', label: 'Board', icon: 'graph' }, { id: 'compendium', label: 'Compendio', icon: 'book' }, { id: 'recent', label: 'Recenti', icon: 'clock' }, { id: 'favorites', label: 'Preferiti', icon: 'star' }, { id: 'settings', label: 'Impostazioni', icon: 'settings' }];
 const stem = (id: string) => id.split('/').at(-1)?.replace(/\.md$/iu, '') ?? '';
 const parent = (id: string) => id.split('/').slice(0, -1).join('/');
 const title = (doc?: ShellDocument) => !doc ? 'Nuova tab' : doc.draft ? doc.draft.manualTitle || 'Nuova nota' : stem(doc.noteId);
@@ -68,6 +69,7 @@ function App() {
     } catch { setError({ code: 'io_error', message: 'Comunicazione interrotta. Mantieni aperta l’app: il testo resta qui.' }); return false; }
     finally { actionBusy.current = false; setBusy(false); }
   }
+  async function rawCommand(input: Record<string, unknown>) { return window.campaign.command(input); }
   useEffect(() => {
     void window.campaign.command({ action: 'state' }).then(reply => { if (reply.state) apply(reply.state); });
     const unsubscribe = window.campaign.subscribe(apply); const close = window.campaign.beforeClose(() => { void command({ action: 'close' }); });
@@ -173,7 +175,7 @@ function App() {
   const visibleGraphEdges = graphFilter === 'all'
     ? graphData.edges
     : graphData.edges.filter(edge => visibleGraphNodes.some(node => node.noteId === edge.source) || visibleGraphNodes.some(node => node.noteId === edge.target));
-  const commands: PaletteItem[] = [{ id: 'open', label: 'Apri cartella campagna…', kind: 'azione', run: () => void command({ action: 'choose' }) }];
+  const commands: PaletteItem[] = [{ id: 'open', label: 'Apri cartella campagna…', kind: 'azione', run: () => void command({ action: 'choose' }) }, { id: 'board', label: 'Apri board', kind: 'azione', run: () => void command({ action: 'view', view: 'board' }) }];
   if (state?.campaign) commands.push(
     { id: 'new', label: 'Nuova nota', kind: 'azione', run: () => void command({ action: 'newNote' }) },
     { id: 'folder', label: 'Nuova cartella', kind: 'azione', run: () => begin('folder', ui.selectedFolder || parent(doc?.noteId || '')) },
@@ -212,7 +214,7 @@ function App() {
         <div className="center-scroll">
         {!!state.repairs?.length && <section className="notice"><h2>Operazioni da completare</h2>{state.repairs.map(r => <div key={r.operationId}><p>{r.oldPath} → {r.newPath}</p><button onClick={() => void command({ action: 'repair', id: r.operationId })}>Verifica e ripara</button></div>)}</section>}
         {!!state.recoveries.length && <section className="notice recovery"><h2>Bozze da recuperare</h2>{state.recoveries.map(item => <div key={item.key}><p>{item.draft.target.kind === 'existing' ? item.draft.target.noteId : 'Nuova bozza'}</p><div className="actions"><button onClick={() => void command({ action: 'recovery', key: item.key, choice: 'restore' })}>Ripristina</button><button onClick={() => void command({ action: 'export', key: item.key })}>Esporta</button><button onClick={() => void command({ action: 'recovery', key: item.key, choice: 'discard' })}>Scarta</button></div></div>)}</section>}
-        {['notes', 'recent', 'favorites'].includes(view) ? doc ? <>
+        {view === 'board' ? <BoardView board={state.activeBoard} boards={state.boards} status={state.boardState} error={state.boardError} onCommand={command} onRawCommand={rawCommand} /> : ['notes', 'recent', 'favorites'].includes(view) ? doc ? <>
           <div className="document-header"><div className="document-context"><Icon name="note" size={14} /><span>{doc.draft ? 'Bozza · nessun file ancora creato' : doc.noteId}</span></div><div className="document-title">{titleEditing ? <input aria-label="Titolo della nota" autoFocus value={titleText} onChange={e => setTitleText(e.target.value)} onBlur={() => void commitTitle()} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void commitTitle(); } if (e.key === 'Escape') { e.preventDefault(); titleCommit.current = true; setTitleEditing(false); queueMicrotask(() => { titleCommit.current = false; }); } }} /> : <button className="title-button" title="Rinomina nota" onClick={() => { setTitleText(doc.draft ? doc.draft.manualTitle || '' : stem(doc.noteId)); setTitleEditing(true); }}><h1>{title(doc)}</h1><Icon name="rename" size={17} /></button>}<div className="actions"><button className="icon-button" aria-label={ui.favorites.includes(doc.noteId) ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'} disabled={!!doc.draft} onClick={() => void command({ action: 'favorite', noteId: doc.noteId })}><Icon name="star" /></button><button disabled={busy || state.rootMissing || (!doc.draft && ['clean', 'conflict', 'missing'].includes(doc.state))} onClick={() => void command({ action: 'save' })}>Salva <kbd>Ctrl S</kbd></button></div></div></div>
           {doc.error && <section className="notice" role="alert">{doc.error}{doc.draft && <button onClick={() => { setTitleText(doc.draft?.manualTitle || ''); setTitleEditing(true); }}>Modifica titolo</button>}</section>}
           {doc.state === 'conflict' && <section className="notice"><strong>La nota è cambiata anche sul disco.</strong>{conflictExpanded ? <><p>Confronta le versioni prima di scegliere quale salvare.</p><details><summary>Versione su disco</summary><pre>{doc.disk?.markdown ?? 'Versione non disponibile; aggiorna i file.'}</pre></details><div className="actions"><button onClick={() => void command({ action: 'resolve', choice: 'local', revision: doc.disk?.revision })}>Usa versione locale</button><button onClick={() => void command({ action: 'resolve', choice: 'disk' })}>Usa versione su disco</button><button onClick={() => begin('saveAs', '')}>Salva locale come nuova nota</button><button onClick={() => setConflictExpanded(false)}>Annulla</button></div></> : <button onClick={() => setConflictExpanded(true)}>Risolvi conflitto</button>}</section>}
