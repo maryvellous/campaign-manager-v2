@@ -11,7 +11,10 @@
     "lint": "eslint .",
     "test:electron": "npm run build && node scripts/smoke.mjs",
     "test:goal2": "npm run build && node scripts/goal2-smoke.mjs",
-    "test:goal3": "npm run build && node scripts/goal3-smoke.mjs"
+    "test:goal3": "npm run build && node scripts/goal3-smoke.mjs && node scripts/goal3-lifecycle.mjs",
+    "test:goal4": "npm run build && node scripts/goal4-smoke.mjs",
+    "package:windows": "npm run build && node scripts/package-windows.mjs",
+    "test:goal5": "npm run package:windows && node scripts/goal5-smoke.mjs"
   },
   "engines": {
     "node": ">=24.15.0"

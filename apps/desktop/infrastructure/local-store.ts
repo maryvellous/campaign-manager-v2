@@ -1,3 +1,4 @@
+import { readGraph, readFolderColors } from '../application/graph-preferences';
 import { defaultUi, type UiState, type SavedTabs } from '../application/workspace-types';
 import type { MoveRepairRecord } from '../application/move-coordinator';
 import * as fs from 'node:fs/promises';
@@ -48,6 +49,7 @@ export class LocalStore {
       if (typeof value.ui.selectedFolder === 'string') result.ui.selectedFolder = value.ui.selectedFolder;
       for (const key of ['sidebarCollapsed', 'inspectorCollapsed'] as const) if (typeof value.ui[key] === 'boolean') result.ui[key] = value.ui[key];
       for (const key of ['sidebarWidth', 'inspectorWidth'] as const) if (typeof value.ui[key] === 'number' && Number.isFinite(value.ui[key])) result.ui[key] = Math.max(key === 'sidebarWidth' ? 200 : 240, Math.min(360, value.ui[key]));
+      result.ui.graph = readGraph(value.ui.graph); result.ui.folderColors = readFolderColors(value.ui.folderColors);
       result.workspace.tabs = value.workspace.tabs.filter((tab: SavedTabs['tabs'][number]) => tab && typeof tab.id === 'string' && typeof tab.noteId === 'string' && Array.isArray(tab.history) && tab.history.every(id => typeof id === 'string') && Number.isInteger(tab.historyIndex));
       if (typeof value.workspace.activeTabId === 'string') result.workspace.activeTabId = value.workspace.activeTabId;
     } catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.warning = 'Preferenze della campagna non leggibili: disposizione iniziale ripristinata.'; }
@@ -98,8 +100,8 @@ export class LocalStore {
     await fs.unlink(path.join(this.recoveryDirectory(campaignId), `${key}.json`)).catch(error => { if (error.code !== 'ENOENT') throw ioError(error); });
   }
   private boardRecoveryFile(campaignId: string): string { if (!/^[0-9a-f-]{36}$/iu.test(campaignId)) throw new CampaignError('invalid_path', 'Identità recovery non valida.'); return path.join(this.root, 'campaigns', campaignId, 'board-recovery.json'); }
-  async putBoardRecovery(campaignId: string, relativePath: string, board: BoardDocument): Promise<void> { await this.write(this.boardRecoveryFile(campaignId), { relativePath, board, capturedAt: new Date().toISOString() }); }
-  async readBoardRecovery(campaignId: string): Promise<{ relativePath: string; board: BoardDocument } | undefined> { try { const value = JSON.parse(await fs.readFile(this.boardRecoveryFile(campaignId), 'utf8')); if (!value || typeof value.relativePath !== 'string' || !value.board) throw new Error('Invalid board recovery'); return value; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; this.warning = 'La recovery della board non è leggibile; il file autorevole è rimasto intatto.'; return undefined; } }
+  async putBoardRecovery(campaignId: string, relativePath: string, board: BoardDocument, baseRevision?: string): Promise<void> { await this.write(this.boardRecoveryFile(campaignId), { relativePath, board, baseRevision, capturedAt: new Date().toISOString() }); }
+  async readBoardRecovery(campaignId: string): Promise<{ relativePath: string; board: BoardDocument; baseRevision?: string } | undefined> { try { const value = JSON.parse(await fs.readFile(this.boardRecoveryFile(campaignId), 'utf8')); if (!value || typeof value.relativePath !== 'string' || !value.board) throw new Error('Invalid board recovery'); return value; } catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return undefined; this.warning = 'La recovery della board non è leggibile; il file autorevole è rimasto intatto.'; return undefined; } }
   async removeBoardRecovery(campaignId: string): Promise<void> { await fs.unlink(this.boardRecoveryFile(campaignId)).catch(error => { if (error.code !== 'ENOENT') throw ioError(error); }); }
 }
 

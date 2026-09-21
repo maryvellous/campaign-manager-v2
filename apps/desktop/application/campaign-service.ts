@@ -1,4 +1,5 @@
-import { parseWikiLinks, resolveWikiLink } from '../../../packages/core/src/markdown';
+import { readGraph, readFolderColors } from './graph-preferences';
+import { parseMarkdown, parseWikiLinks, resolveWikiLink } from '../../../packages/core/src/markdown';
 import { randomUUID } from 'node:crypto';
 import { defaultUi, draftTitle, draftWords, type UiState, type View } from './workspace-types';
 import { MoveCoordinator, remapPath, type MoveRepairRecord } from './move-coordinator';
@@ -12,12 +13,12 @@ import { BoardRepository, type BoardDocument, type BoardSnapshot } from '../infr
 export interface DocumentSession { sessionId?: string; draft?: { id: string; parentFolder: string; manualTitle?: string }; noteId: string; markdown: string; baseRevision: string; state: 'clean' | 'dirty' | 'saving' | 'error' | 'conflict' | 'missing'; recoveryKey?: string; recoveryTarget?: RecoveryTarget; protected: boolean; error?: string; disk?: NoteSnapshot }
 export interface WorkspaceTab { id: string; document?: DocumentSession; history: string[]; historyIndex: number }
 export interface AppState {
-  projectionVersion?: number; tabs: WorkspaceTab[]; activeTabId?: string; ui: UiState; repairs: MoveRepairRecord[];
+  searchStatus?: 'missing' | 'building' | 'ready' | 'error'; searchError?: string; projectionVersion?: number; tabs: WorkspaceTab[]; activeTabId?: string; ui: UiState; repairs: MoveRepairRecord[];
   campaign?: { campaignId: string; name: string; root: string };
   entries: VaultEntry[]; preferences: Preferences; document?: DocumentSession;
   recoveries: Array<{ key: string; draft: RecoveryDraft }>;
   rootMissing: boolean; warning?: string;
-  boards: BoardSnapshot[]; activeBoard?: BoardSnapshot; boardState?: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict'; boardError?: string;
+  boards: BoardSnapshot[]; activeBoard?: BoardSnapshot; boardState?: 'clean' | 'dirty' | 'saving' | 'saved' | 'error' | 'conflict'; boardError?: string; boardDisk?: BoardSnapshot;
 }
 export type SearchMatchKind = 'title-exact' | 'title-prefix' | 'title-contains' | 'path' | 'body';
 export interface SearchResult {
@@ -46,19 +47,20 @@ export interface GraphEdge {
   occurrences: number;
 }
 
-const normalizeSearchText = (value: string): string => value.normalize('NFKD').replace(/[\p{Diacritic}]/gu, '').toLowerCase();
-const normalizeMarkdownText = (markdown: string): string => markdown
-  .replace(/```[\s\S]*?```/gu, ' ')
-  .replace(/`[^`]*`/gu, ' ')
-  .replace(/!\[[^\]]*\]\([^)]*\)/gu, ' ')
-  .replace(/\[[^\]]+\]\([^)]*\)/gu, ' ')
-  .replace(/\[[^\]]+\]/gu, ' ')
-  .replace(/[\r\n]+/gu, ' ')
-  .replace(/\s+/gu, ' ')
-  .trim();
+const normalizeSearchText = (value: string): string => value.normalize('NFKD').replace(/[\p{Diacritic}]/gu, '').toLowerCase().replace(/\s+/gu, ' ').trim();
+const normalizeMarkdownText = (markdown: string): string => {
+  const parts: string[] = [];
+  const visit = (node: import('mdast').Nodes): void => {
+    if ('value' in node && ['text', 'inlineCode', 'code'].includes(node.type)) parts.push(String(node.value));
+    if ('children' in node) for (const child of node.children) visit(child);
+  };
+  visit(parseMarkdown(markdown)); return parts.join(' ').replace(/\[\[([^\]]+)\]\]/gu, '$1').replace(/\s+/gu, ' ').trim();
+};
 
 export class CampaignService {
   private repo?: CampaignRepository;
+  private searchDocuments = new Map<string, SearchDocument>();
+  private searchCampaign?: string;
   private disposed = false;
   private watcher?: FSWatcher;
   private timer?: ReturnType<typeof setTimeout>;
@@ -87,9 +89,9 @@ export class CampaignService {
     catch { this.state.warning = 'Non è stato possibile aggiornare le preferenze locali. I file della campagna sono indipendenti.'; }
   }
   private touchNote(id: string): void { this.state.ui.recentNotes = [id, ...this.state.ui.recentNotes.filter(n => n !== id)].slice(0, 50); }
-  run<T>(operation: () => Promise<T>): Promise<T> {
+  run<T>(operation: () => Promise<T>, notify = true): Promise<T> {
     const task = this.queue.catch(() => undefined).then(operation); this.queue = task;
-    return task.finally(() => this.onChange());
+    return task.finally(() => { if (notify) this.onChange(); });
   }
   async initialize(): Promise<void> {
     this.state.preferences = await this.store.readPreferences();
@@ -119,6 +121,7 @@ export class CampaignService {
     const previousDocument = relink ? this.state.document : undefined;
     this.watcher?.close(); if (this.timer) clearInterval(this.timer);
     this.repo = repo;
+    if (this.searchCampaign !== repo.metadata.campaignId) { this.searchDocuments.clear(); this.searchCampaign = undefined; this.state.searchStatus = 'missing'; this.state.searchError = undefined; }
     this.boardRepo = await BoardRepository.open(repo.root);
     this.state.campaign = { campaignId: repo.metadata.campaignId, name: repo.metadata.name || path.basename(repo.root), root: repo.root };
     this.state.entries = entries; this.state.boards = await this.boardRepo.list(); this.state.activeBoard = undefined; this.state.boardState = 'clean'; this.state.boardError = undefined; this.state.rootMissing = false;
@@ -185,7 +188,7 @@ export class CampaignService {
       const id = doc.draft ? [doc.draft.parentFolder, `${doc.draft.manualTitle || draftTitle(savedContent)}.md`].filter(Boolean).join('/') : doc.noteId;
       const note = await this.requiredRepo().saveNote(id, savedContent, doc.draft ? null : doc.baseRevision);
       if (doc.draft) { doc.noteId = note.noteId; doc.draft = undefined; const tab = this.activeTab()!; tab.history = [...tab.history.slice(0, tab.historyIndex + 1), note.noteId]; tab.historyIndex = tab.history.length - 1; this.state.entries = await this.requiredRepo().discover(); }
-      this.touchNote(note.noteId);
+      this.touchNote(note.noteId); this.indexNote(note);
       doc.baseRevision = note.revision; doc.state = 'clean'; doc.protected = true; doc.error = undefined; doc.disk = undefined; doc.recoveryTarget = undefined;
       if (doc.recoveryKey) {
         try { await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey); doc.recoveryKey = undefined; }
@@ -220,6 +223,7 @@ export class CampaignService {
         } catch (error) { doc.state = ioError(error).code === 'not_found' ? 'missing' : 'error'; doc.error = ioError(error).message; await this.protect(); }
       }
     } finally { this.state.activeTabId = active; }
+    if (this.searchCampaign) await this.rebuildSearch();
     const known = new Set(this.state.entries.filter(e => e.kind === 'note').map(e => e.id));
     this.state.ui.recentNotes = this.state.ui.recentNotes.filter(id => known.has(id));
   }
@@ -279,6 +283,7 @@ export class CampaignService {
     const active = this.state.activeTabId; let allowed = true;
     try { for (const tab of [...this.state.tabs]) { this.state.activeTabId = tab.id; if (!(await this.leaveCurrent(preserve))) allowed = false; } }
     finally { this.state.activeTabId = active; }
+    if (!(await this.guardBoard(preserve))) allowed = false;
     await this.persistUi(); return allowed;
   }
   async discard(): Promise<void> {
@@ -327,41 +332,58 @@ export class CampaignService {
     this.state.ui.view = view; await this.persistUi();
   }
   async createBoard(title: string): Promise<void> {
+    if (!(await this.guardBoard())) throw new CampaignError('conflict', 'Risolvi prima le modifiche della board aperta.');
     const repo = this.boardRepo ?? await BoardRepository.open(this.requiredRepo().root); this.boardRepo = repo;
     const board = await repo.create(title); this.state.boards = await repo.list(); this.state.activeBoard = board; this.state.boardState = 'saved'; this.state.boardError = undefined;
   }
   async openBoard(relativePath: string): Promise<void> {
+    if (!(await this.guardBoard())) throw new CampaignError('conflict', 'Risolvi prima le modifiche della board aperta.');
     const board = await (this.boardRepo ?? (this.boardRepo = await BoardRepository.open(this.requiredRepo().root))).read(relativePath);
     this.state.activeBoard = board; this.state.boardState = 'saved'; this.state.boardError = undefined;
     const recovery = await this.store.readBoardRecovery(this.requiredRepo().metadata.campaignId);
-    if (recovery?.relativePath === relativePath) { this.state.activeBoard = { ...recovery.board, relativePath, revision: board.revision }; this.state.boardState = 'dirty'; }
+    if (recovery?.relativePath === relativePath) { this.state.activeBoard = { ...recovery.board, relativePath, revision: recovery.baseRevision ?? '' }; this.state.boardState = recovery.baseRevision === board.revision ? 'dirty' : 'conflict'; this.state.boardDisk = board; }
   }
   async renameBoard(title: string): Promise<void> {
+    if (!(await this.guardBoard())) throw new CampaignError('conflict', 'Risolvi prima le modifiche della board aperta.');
     const active = this.state.activeBoard; if (!active) throw new CampaignError('not_found', 'Nessuna board aperta.');
     const board = await this.requiredBoardRepo().rename(active.relativePath, title); this.state.activeBoard = board; this.state.boards = await this.requiredBoardRepo().list(); this.state.boardState = 'saved';
   }
   async updateBoard(board: BoardDocument): Promise<void> {
     const active = this.state.activeBoard; if (!active || board.boardId !== active.boardId) throw new CampaignError('not_found', 'Nessuna board aperta.');
-    this.state.activeBoard = { ...board, relativePath: active.relativePath, revision: active.revision }; this.state.boardState = 'dirty'; this.state.boardError = undefined;
-    await this.store.putBoardRecovery(this.requiredRepo().metadata.campaignId, active.relativePath, board);
+    this.state.activeBoard = { ...board, relativePath: active.relativePath, revision: active.revision }; if (this.state.boardState !== 'conflict') this.state.boardState = 'dirty'; this.state.boardError = undefined;
+    await this.store.putBoardRecovery(this.requiredRepo().metadata.campaignId, active.relativePath, board, active.revision);
     if (this.boardSaveTimer) clearTimeout(this.boardSaveTimer);
     this.boardSaveTimer = setTimeout(() => { void this.run(() => this.saveBoard()).catch(() => undefined); }, 600); this.boardSaveTimer.unref();
   }
   async saveBoard(): Promise<void> {
-    const active = this.state.activeBoard; if (!active || this.state.boardState === 'clean' || this.state.boardState === 'saved') return;
+    const active = this.state.activeBoard; if (!active || this.state.boardState === 'clean' || this.state.boardState === 'saved' || this.state.boardState === 'conflict') return;
     this.state.boardState = 'saving'; this.onChange();
     try {
       const saved = await this.requiredBoardRepo().write(active.relativePath, active, active.revision);
       this.state.activeBoard = saved; this.state.boards = await this.requiredBoardRepo().list(); this.state.boardState = 'saved'; this.state.boardError = undefined; await this.store.removeBoardRecovery(this.requiredRepo().metadata.campaignId);
     } catch (error) {
       const failure = ioError(error); this.state.boardState = failure.code === 'conflict' ? 'conflict' : 'error'; this.state.boardError = failure.message;
+      if (this.state.boardState === 'conflict') this.state.boardDisk = await this.requiredBoardRepo().read(active.relativePath).catch(() => undefined);
     }
+  }
+  private async guardBoard(preserve = false): Promise<boolean> {
+    if (!this.state.activeBoard) return true;
+    await this.saveBoard(); if (this.state.boardState === 'saved' || this.state.boardState === 'clean') return true;
+    const board = this.state.activeBoard;
+    try { await this.store.putBoardRecovery(this.requiredRepo().metadata.campaignId, board.relativePath, board, board.revision); return preserve; } catch { return false; }
+  }
+  async resolveBoard(choice: 'disk' | 'local', revision?: string): Promise<void> {
+    const active = this.state.activeBoard; if (!active) return; const disk = await this.requiredBoardRepo().read(active.relativePath);
+    if (choice === 'disk') { this.state.activeBoard = disk; this.state.boardState = 'saved'; this.state.boardError = undefined; await this.store.removeBoardRecovery(this.requiredRepo().metadata.campaignId); }
+    else { if (disk.revision !== revision) { this.state.boardDisk = disk; throw new CampaignError('conflict', 'La board sul disco è cambiata di nuovo. Confrontala prima di confermare.'); } active.revision = disk.revision; this.state.boardState = 'dirty'; await this.store.putBoardRecovery(this.requiredRepo().metadata.campaignId, active.relativePath, active, active.revision); await this.saveBoard(); }
   }
   async importBoardAsset(source: string): Promise<string> { return this.requiredBoardRepo().importAsset(source); }
     async readBoardAsset(relativePath: string): Promise<string> { return this.requiredBoardRepo().readAsset(relativePath); }
   private requiredBoardRepo(): BoardRepository { if (!this.boardRepo) throw new CampaignError('not_found', 'Apri una campagna.'); return this.boardRepo; }
   async setUi(patch: Partial<UiState>): Promise<void> {
     const ui = this.state.ui;
+    if (patch.graph !== undefined) ui.graph = readGraph(patch.graph);
+    if (patch.folderColors !== undefined) ui.folderColors = readFolderColors(patch.folderColors);
     if (patch.selectedFolder !== undefined) { validateRelativePath(patch.selectedFolder, true); if (patch.selectedFolder && !this.state.entries.some(e => e.kind === 'folder' && e.id === patch.selectedFolder)) throw new CampaignError('not_found', 'Cartella non trovata.'); ui.selectedFolder = patch.selectedFolder; }
     if (patch.expandedFolders !== undefined) { if (!Array.isArray(patch.expandedFolders) || patch.expandedFolders.some(id => typeof id !== 'string')) throw new CampaignError('invalid_path', 'Cartelle non valide.'); ui.expandedFolders = patch.expandedFolders.filter(id => this.state.entries.some(e => e.kind === 'folder' && e.id === id)); }
     for (const key of ['sidebarWidth', 'inspectorWidth'] as const) if (patch[key] !== undefined) { if (typeof patch[key] !== 'number' || !Number.isFinite(patch[key])) throw new CampaignError('invalid_path', 'Larghezza non valida.'); ui[key] = Math.max(key === 'sidebarWidth' ? 200 : 240, Math.min(360, patch[key])); }
@@ -417,6 +439,9 @@ export class CampaignService {
     for (const tab of this.state.tabs) { if (tab.document && !tab.document.draft) tab.document.noteId = map(tab.document.noteId); if (tab.document?.draft) tab.document.draft.parentFolder = map(tab.document.draft.parentFolder); tab.history = tab.history.map(map); }
     for (const key of ['favorites', 'recentNotes', 'expandedFolders'] as const) this.state.ui[key] = this.state.ui[key].map(map);
     this.state.ui.selectedFolder = map(this.state.ui.selectedFolder);
+    this.state.ui.graph.filters = this.state.ui.graph.filters.map(map);
+    if (this.state.ui.graph.selected) this.state.ui.graph.selected = map(this.state.ui.graph.selected);
+    this.state.ui.graph.positions = Object.fromEntries(Object.entries(this.state.ui.graph.positions).map(([key, value]) => [map(key), value]));
     this.state.ui.folderColors = Object.fromEntries(Object.entries(this.state.ui.folderColors).map(([key, value]) => [map(key), value]));
     await this.persistUi();
   }
@@ -476,30 +501,26 @@ export class CampaignService {
     await repo.saveNote(id, '', null); await this.refresh(); await this.openNote(id);
   }
   async readImage(noteId: string, source: string): Promise<string> { return this.requiredRepo().readImage(noteId, source); }
+  private indexNote(note: NoteSnapshot): void {
+    const previous = this.searchDocuments.get(note.noteId); if (previous?.revision === note.revision) return;
+    const title = note.noteId.split('/').at(-1)!.replace(/\.md$/iu, '');
+    this.searchDocuments.set(note.noteId, { noteId: note.noteId, title, relativePath: note.noteId, folderPath: note.noteId.split('/').slice(0, -1).join('/'), bodyText: normalizeMarkdownText(note.markdown), revision: note.revision });
+  }
   async rebuildSearch(): Promise<SearchDocument[]> {
-    const repo = this.requiredRepo();
-    const documents: SearchDocument[] = [];
-    for (const entry of this.state.entries.filter(item => item.kind === 'note')) {
-      try {
-        const note = await repo.readNote(entry.id);
-        const title = entry.id.split('/').at(-1)?.replace(/\.md$/iu, '') ?? entry.id;
-        documents.push({
-          noteId: entry.id,
-          title,
-          relativePath: entry.id,
-          folderPath: entry.id.includes('/') ? entry.id.slice(0, entry.id.lastIndexOf('/')) : '',
-          bodyText: normalizeMarkdownText(note.markdown),
-          revision: note.revision,
-        });
-      } catch { /* Missing or unreadable notes stay out of the current index. */ }
-    }
-    this.state.ui.recentNotes = this.state.ui.recentNotes.filter(id => documents.some(doc => doc.noteId === id));
-    return documents;
+    const repo = this.requiredRepo(); this.state.searchStatus = 'building'; this.state.searchError = undefined;
+    const failed: string[] = []; const ids = this.state.entries.filter(item => item.kind === 'note').map(e => e.id);
+    for (const id of ids) { try { this.indexNote(await repo.readNote(id)); } catch { failed.push(id); } }
+    for (const id of this.searchDocuments.keys()) if (!ids.includes(id)) this.searchDocuments.delete(id);
+    this.searchCampaign = repo.metadata.campaignId;
+    this.state.searchStatus = failed.length ? 'error' : 'ready';
+    if (failed.length) this.state.searchError = 'Indice incompleto: impossibile leggere ' + failed.join(', ') + '. Riprova a ricostruirlo.';
+    return [...this.searchDocuments.values()];
   }
   async searchNotes(query: string): Promise<SearchResult[]> {
     const trimmed = query.trim();
     if (!trimmed) return [];
-    const documents = this.state.entries.some(entry => entry.kind === 'note') ? (await this.rebuildSearch()) : [];
+    if (this.searchCampaign !== this.requiredRepo().metadata.campaignId) await this.rebuildSearch();
+    const documents = [...this.searchDocuments.values()];
     const target = normalizeSearchText(trimmed);
     const results: SearchResult[] = [];
     for (const document of documents) {
@@ -507,8 +528,8 @@ export class CampaignService {
       const titleNorm = normalizeSearchText(title);
       const pathNorm = normalizeSearchText(document.relativePath);
       const bodyNorm = normalizeSearchText(document.bodyText);
-      let score = -1;
-      let matchKind: SearchMatchKind = 'body';
+      let score: number;
+      let matchKind: SearchMatchKind;
       let snippet: string | undefined;
       if (titleNorm === target) { score = 1000; matchKind = 'title-exact'; }
       else if (titleNorm.startsWith(target)) { score = 900; matchKind = 'title-prefix'; }
@@ -517,7 +538,7 @@ export class CampaignService {
       else {
         const index = bodyNorm.indexOf(target);
         if (index < 0) continue;
-        score = 200 + (bodyNorm.length - index);
+        score = 200 + 1 / (index + 1);
         matchKind = 'body';
         const start = Math.max(0, index - 35);
         const end = Math.min(document.bodyText.length, index + 70);
@@ -532,7 +553,7 @@ export class CampaignService {
     const repo = this.requiredRepo();
     const ids = this.state.entries.filter(entry => entry.kind === 'note').map(entry => entry.id);
     const nodes: GraphNode[] = ids.map(noteId => ({ noteId }));
-    const edges = new Map<string, GraphEdge>();
+    const edges = new Map<string, GraphEdge>(); const failed: string[] = [];
     for (const noteId of ids) {
       try {
         const markdown = this.state.document && this.state.document.noteId === noteId ? this.state.document.markdown : (await repo.readNote(noteId)).markdown;
@@ -546,8 +567,9 @@ export class CampaignService {
           current.occurrences += 1;
           edges.set(key, current);
         }
-      } catch { /* missing files do not break graph projection. */ }
+      } catch { failed.push(noteId); }
     }
+    if (failed.length) this.state.warning = 'Grafo incompleto: alcune note non sono leggibili (' + failed.join(', ') + '). Aggiorna i file per riprovare.';
     return { nodes, edges: [...edges.values()].sort((left, right) => left.source.localeCompare(right.source) || left.target.localeCompare(right.target)) };
   }
   async dispose(waitForQueue = true): Promise<void> { this.disposed = true; if (this.autoSaveTimer) clearTimeout(this.autoSaveTimer); if (this.boardSaveTimer) clearTimeout(this.boardSaveTimer); this.watcher?.close(); if (this.timer) clearInterval(this.timer); if (waitForQueue) await this.queue.catch(() => undefined); }

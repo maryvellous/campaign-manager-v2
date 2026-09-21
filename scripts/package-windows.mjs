@@ -1,0 +1,12 @@
+import { cp, mkdir, rename, writeFile } from 'node:fs/promises';
+import path from 'node:path';
+const output = path.resolve('work', 'packages', 'CampaignManager-win32-x64-' + new Date().toISOString().replace(/[:.]/g,'-'));
+if (process.platform !== 'win32') throw new Error('Il pacchetto Windows deve essere verificato su Windows.');
+await mkdir(output,{recursive:true});
+await cp('node_modules/electron/dist',output,{recursive:true});
+await rename(path.join(output,'electron.exe'),path.join(output,'CampaignManager.exe'));
+const app=path.join(output,'resources','app');await mkdir(app,{recursive:true});await cp('dist',path.join(app,'dist'),{recursive:true});
+await writeFile(path.join(app,'package.json'),JSON.stringify({name:'campaign-manager-v2',version:'0.1.0',main:'dist/main.cjs'},null,2));
+await cp('README.md',path.join(output,'README.md'));
+await writeFile('work/packaged-app.json',JSON.stringify({executable:path.join(output,'CampaignManager.exe'),directory:output},null,2));
+console.log('Pacchetto Windows portabile creato: '+output);

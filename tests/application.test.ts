@@ -45,6 +45,17 @@ test('board lifecycle persists, recovers dirty state and preserves external conf
   await restored.run(() => restored.open(root));
   await restored.run(() => restored.openBoard('Scene.board.json'));
   assert.equal(restored.state.activeBoard?.title, 'Locale');
+  assert.equal(restored.state.boardState, 'conflict');
+  await restored.run(() => restored.saveBoard());
+  assert.equal(JSON.parse(await fs.readFile(boardFile, 'utf8')).title, 'Esterno');
+  await assert.rejects(restored.run(() => restored.createBoard('Seconda')), { code: 'conflict' });
+  const revision = restored.state.boardDisk!.revision;
+  await fs.writeFile(boardFile, JSON.stringify({ ...restored.state.boardDisk, title: 'Esterno successivo' }));
+  await assert.rejects(restored.run(() => restored.resolveBoard('local', revision)), { code: 'conflict' });
+  assert.equal(JSON.parse(await fs.readFile(boardFile, 'utf8')).title, 'Esterno successivo');
+  await restored.run(() => restored.resolveBoard('local', restored.state.boardDisk!.revision));
+  assert.equal(restored.state.boardState, 'saved');
+  assert.equal(JSON.parse(await fs.readFile(boardFile, 'utf8')).title, 'Locale');
 });
 test('external clean updates reload, dirty changes conflict and explicit revision is required', async t => {
   const { root, service } = await fixture(t);
@@ -181,4 +192,15 @@ test('save-as refuses a target that has another unresolved recovery', async t =>
   await assert.rejects(fs.stat(path.join(root, 'Other.md')), { code: 'ENOENT' });
   assert.equal((await service.store.listRecovery(service.state.campaign!.campaignId)).find(item => item.key === key)?.draft.markdown, 'older irreplaceable buffer');
   assert.equal(service.state.document?.markdown, 'current buffer');
+});
+
+test('switching boards flushes pending edits before replacing the active board', async t => {
+  const { root, service } = await fixture(t);
+  await service.run(() => service.createBoard('Prima'));
+  await service.run(() => service.updateBoard({ ...service.state.activeBoard!, title: 'Prima modificata' }));
+  await service.run(() => service.createBoard('Seconda'));
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, 'Boards', 'Prima.board.json'), 'utf8')).title, 'Prima modificata');
+  await service.run(() => service.updateBoard({ ...service.state.activeBoard!, title: 'Seconda modificata' }));
+  await service.run(() => service.openBoard('Prima.board.json'));
+  assert.equal(JSON.parse(await fs.readFile(path.join(root, 'Boards', 'Seconda.board.json'), 'utf8')).title, 'Seconda modificata');
 });

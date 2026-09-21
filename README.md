@@ -60,3 +60,7 @@ Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale este
 - `tests`: verifiche di dominio, storage e applicazione.
 
 Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. I documenti di prodotto esistenti non sono stati modificati; la V0.1 locale è in stato verificato e coerente con la roadmap di goal 4 e 5.
+
+### Verifica mirata V0.1 — Goal 3
+
+`npm run test:goal3` compila e avvia due prove Electron su campagne temporanee: lettura CommonMark/GFM, wikilink mancanti/ambigui, backlink, immagini locali, assenza di caricamenti remoti, annulla/ripeti e posizione di lettura; poi salvataggio, chiusura immediata, riapertura, conflitto, recovery e cestino Windows. Le immagini passano da richieste di sola lettura che non riemettono lo stato della campagna. `Ctrl+E` alterna lettura e modifica; `Ctrl+S` salva.

@@ -29,7 +29,7 @@ else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   void app.whenReady().then(async () => {
     service = new CampaignService(new LocalStore(path.join(app.getPath('userData'), 'local')));
-    window = new BrowserWindow({ width: 1200, height: 820, minWidth: 760, minHeight: 540, show: false, backgroundColor: '#1E1333', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
+    window = new BrowserWindow({ width: 1200, height: 820, minWidth: 720, minHeight: 540, show: false, backgroundColor: '#1E1333', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
     window.removeMenu();
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
@@ -52,6 +52,7 @@ else {
             case 'boardOpen': await service.openBoard(text(command.relativePath, 300)); break;
             case 'boardRename': await service.renameBoard(text(command.title, 200)); break;
             case 'boardUpdate': if (!command.board || typeof command.board !== 'object' || Array.isArray(command.board)) throw new CampaignError('invalid_path', 'Board non valida.'); await service.updateBoard(command.board as BoardDocument); break;
+            case 'boardResolve': { if (command.choice !== 'disk' && command.choice !== 'local') throw new CampaignError('invalid_path', 'Scelta non valida.'); await service.resolveBoard(command.choice, command.revision === undefined ? undefined : text(command.revision,100)); break; }
             case 'boardSave': await service.saveBoard(); break;
             case 'boardImportAsset': {
               const selection = await dialog.showOpenDialog(window, { title: 'Importa immagine nella board', properties: ['openFile'], filters: [{ name: 'Immagini', extensions: ['png', 'jpg', 'jpeg', 'webp'] }] });
@@ -156,7 +157,7 @@ else {
           }
           return { ok: true, state: service.state };
         } catch (error) { const failure = ioError(error); return { ok: false, state: service.state, error: { code: failure.code, message: failure.message } }; }
-      });
+      }, !input || typeof input !== 'object' || !['links', 'image'].includes(String((input as Record<string, unknown>).action)));
     });
     window.on('close', event => {
       if (allowClose) return;

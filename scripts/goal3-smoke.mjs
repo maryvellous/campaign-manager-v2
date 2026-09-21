@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { _electron as electron } from 'playwright';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';
@@ -35,7 +36,7 @@ try {
   // Explicit mode toggle preserves both cursor and reading position.
   await tree.getByRole('button', { name: 'Source', exact: true }).click(); await editor.press('Control+e'); await preview.waitFor();
   await page.locator('.center-scroll').evaluate(node => { node.scrollTop = 500; });
-  await page.getByRole('button', { name: 'Modifica', exact: false }).filter({ hasText: 'Ctrl' }).click(); await editor.waitFor(); await editor.press('Control+e'); await preview.waitFor();
+  await page.keyboard.press('Control+e'); await editor.waitFor(); await editor.press('Control+e'); await preview.waitFor();
   assert.ok(await page.locator('.center-scroll').evaluate(node => node.scrollTop) >= 490);
   await page.screenshot({ path: 'work/goal3-electron.png', fullPage: true });
   await page.keyboard.press('Control+e'); await editor.waitFor(); await editor.fill('First content'); await editor.fill('Second content'); await editor.press('Control+z'); assert.equal(await editor.inputValue(), 'First content'); await editor.press('Control+y'); assert.equal(await editor.inputValue(), 'Second content');

@@ -18,31 +18,6 @@ try {
   await page.locator('.root-folder').filter({ hasText: 'Campagna di prova' }).waitFor();
   await page.getByRole('navigation', { name: 'Note della campagna' }).getByRole('button', { name: 'Meradyl', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Contenuto Markdown' });
-  await page.getByRole('button', { name: 'Board', exact: true }).click();
-  await page.getByRole('textbox', { name: 'Nome nuova board' }).fill('Scena smoke');
-  await page.getByRole('button', { name: 'Nuova board', exact: true }).click();
-  await page.getByRole('heading', { name: 'Scena smoke', exact: true }).waitFor();
-  await page.getByRole('button', { name: 'Nota e testo' }).click();
-  await page.getByRole('button', { name: 'Salva board' }).click();
-  const boardFile = JSON.parse(await readFile(path.join(vault, 'Boards', 'Scena smoke.board.json'), 'utf8'));
-  assert.equal(boardFile.schemaVersion, 1);
-  assert.equal(boardFile.elements.length, 1);
-  await page.getByRole('button', { name: 'Mano', exact: true }).click();
-  const canvas = await page.locator('.board-canvas').boundingBox();
-  assert.ok(canvas);
-  await page.mouse.move(canvas.x + canvas.width - 100, canvas.y + canvas.height - 100);
-  await page.mouse.down(); await page.mouse.move(canvas.x + canvas.width - 40, canvas.y + canvas.height - 60, { steps: 4 }); await page.mouse.up();
-  await page.getByRole('button', { name: 'Salva board', exact: true }).click();
-  await page.locator('.board-status').filter({ hasText: /^Salvato$/ }).waitFor();
-  const panned = JSON.parse(await readFile(path.join(vault, 'Boards', 'Scena smoke.board.json'), 'utf8'));
-  assert.equal(panned.viewport.x, 60); assert.equal(panned.viewport.y, 40);
-  assert.deepEqual(panned.elements, boardFile.elements);
-  await page.getByRole('button', { name: 'Note', exact: true }).click();
-  await page.getByRole('button', { name: 'Ricerca', exact: true }).click();
-  const searchInput = page.getByRole('textbox', { name: 'Cerca note e contenuti' });
-  await searchInput.fill('Meradyl');
-  await page.getByRole('button', { name: 'Meradyl', exact: true }).first().waitFor();
-  await page.getByRole('button', { name: 'Note', exact: true }).click();
   await editor.fill('# Meradyl\nUna città sul mare.\nUna modifica reale.');
   await page.getByRole('status').filter({ hasText: /^Modifiche da salvare$/ }).waitFor();
   await editor.press('Control+s');
@@ -58,8 +33,7 @@ try {
   assert.equal(prefs.sandbox, true); assert.equal(prefs.contextIsolation, true); assert.equal(prefs.nodeIntegration, false);
   // Closing immediately after editing must flush the renderer queue before the main process exits.
   await editor.fill('Ultima modifica prima della chiusura.');
-  await desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].close(); });
-  await desktop.waitForEvent('close');
+  await Promise.all([desktop.waitForEvent('close'), desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].close(); })]);
   desktop = undefined;
   assert.equal(await readFile(path.join(vault, 'Meradyl.md'), 'utf8'), 'Ultima modifica prima della chiusura.');
   desktop = await electron.launch({ args: ['.', `--user-data-dir=${path.join(temporary, 'profile')}`], cwd: process.cwd(), env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE')) });
@@ -73,8 +47,7 @@ try {
   await reopened.getByText('La nota è cambiata anche sul disco.', { exact: true }).waitFor();
   assert.equal(await readFile(path.join(vault, 'Meradyl.md'), 'utf8'), 'Versione esterna.');
   await desktop.evaluate(({ dialog }) => { dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false }); });
-  await desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].close(); });
-  await desktop.waitForEvent('close');
+  await Promise.all([desktop.waitForEvent('close'), desktop.evaluate(({ BrowserWindow }) => { BrowserWindow.getAllWindows()[0].close(); })]);
   desktop = undefined;
   desktop = await electron.launch({ args: ['.', `--user-data-dir=${path.join(temporary, 'profile')}`], cwd: process.cwd(), env: Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE')) });
   const recovered = await desktop.firstWindow();
@@ -89,9 +62,9 @@ try {
   await recovered.getByRole('heading', { name: 'La campagna è aperta.' }).waitFor();
   await assert.rejects(readFile(path.join(vault, 'Meradyl.md')), { code: 'ENOENT' });
   console.log('PASS: Electron startup/reopen, real save, close flush, conflict/recovery after restart, Windows system trash, isolated renderer.');
-} finally {
-  if (desktop) await desktop.close();
-  await rm(temporary, { recursive: true, force: true });
+} catch (error) { console.error(error); throw error; } finally {
+  if (desktop) await Promise.all([desktop.waitForEvent('close'), desktop.evaluate(({ app }) => app.exit(0)).catch(() => undefined)]);
+  await rm(temporary, { recursive: true, force: true, maxRetries: 10, retryDelay: 200 });
 }
 
 
