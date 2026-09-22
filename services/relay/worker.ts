@@ -460,8 +460,10 @@ export class LiveSession {
       this.send(webSocket, 'request.rejected', { error: { code: 'PAYLOAD_INVALID', message: 'Messaggio non valido.' } });
       return;
     }
-    // V03-1 has no realtime mutating commands. The socket exists for presence/waiting;
-    // board and token commands are introduced by later V0.3 goals.
+    if (identity.role === 'player' && inbound.type === 'snapshot.request') {
+      this.sendPlayerSnapshot(model, webSocket);
+      return;
+    }
     this.send(webSocket, 'request.rejected', { error: { code: 'PERMISSION_DENIED', message: 'Comando non disponibile in questa versione.' } });
   }
 
