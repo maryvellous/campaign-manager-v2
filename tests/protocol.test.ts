@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { envelope, PROTOCOL_VERSION, safeError, validateActivityBindingStatus, validateActivityPairRequest, validateActivityPairingCode, validateActivityPairingResponse, validateCameraFocusPayload, validateElementHiddenEvent, validateElementRevealedEvent, validateEnvelope, validateJoinPolicy, validateJoinRequest, validateLiveBoardSnapshot, validatePingPayload, validateResumeRequest, validateTokenAssignRequest, validateTokenClearRequest, validateTokenMovePayload } from '../packages/protocol/src/index';
+import { envelope, PROTOCOL_VERSION, safeError, validateActivityBindingStatus, validateActivityJoinRequest, validateActivityPairRequest, validateActivityPairingCode, validateActivityPairingResponse, validateActivityResumeRequest, validateCameraFocusPayload, validateElementHiddenEvent, validateElementRevealedEvent, validateEnvelope, validateJoinPolicy, validateJoinRequest, validateLiveBoardSnapshot, validatePingPayload, validateResumeRequest, validateTokenAssignRequest, validateTokenClearRequest, validateTokenMovePayload } from '../packages/protocol/src/index';
 
 test('join request accepts readable code and duplicate-safe display names', () => {
   assert.deepEqual(validateJoinRequest({ joinCode: 'ABCD-EFGH', displayName: 'Mary' }), { joinCode: 'ABCD-EFGH', displayName: 'Mary' });
@@ -98,4 +98,30 @@ test('unbound Activity status contains no session or campaign data', () => {
   assert.deepEqual(validateActivityBindingStatus({ bound: false }), { bound: false });
   assert.deepEqual(validateActivityBindingStatus({ bound: false, liveSessionId: 'session_secret', board: { private: true } }), { bound: false });
   assert.deepEqual(validateActivityBindingStatus({ bound: true, pairedAt: 123456 }), { bound: true, pairedAt: 123456 });
+});
+
+
+test('Discord Activity join and resume requests reject spoofable or malformed identity input', () => {
+  assert.deepEqual(validateActivityJoinRequest({ instanceId: 'instance_one', code: 'oauth-code-value' }), {
+    instanceId: 'instance_one',
+    code: 'oauth-code-value'
+  });
+  assert.equal(validateActivityJoinRequest({ instanceId: '../bad', code: 'oauth-code-value' }), undefined);
+  assert.equal(validateActivityJoinRequest({ instanceId: 'instance_one', code: '' }), undefined);
+  assert.equal(validateActivityJoinRequest({ instanceId: 'instance_one', code: 'oauth-code-value', discordUserId: 'spoofed' })?.instanceId, 'instance_one');
+
+  assert.deepEqual(validateActivityResumeRequest({
+    instanceId: 'instance_one',
+    participantId: 'participant_abc',
+    activityCredential: 'activity_secret_123'
+  }), {
+    instanceId: 'instance_one',
+    participantId: 'participant_abc',
+    activityCredential: 'activity_secret_123'
+  });
+  assert.equal(validateActivityResumeRequest({
+    instanceId: 'instance_one',
+    participantId: '../participant',
+    activityCredential: 'activity_secret_123'
+  }), undefined);
 });
