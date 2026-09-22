@@ -33,6 +33,9 @@ import {
 interface DurableObjectStorageLike {
   get<T>(key: string): Promise<T | undefined>;
   put<T>(key: string, value: T): Promise<void>;
+  getAlarm(): Promise<number | null>;
+  setAlarm(scheduledTime: number | Date): Promise<void>;
+  deleteAlarm(): Promise<void>;
 }
 
 interface DurableObjectStateLike {
@@ -57,6 +60,8 @@ interface R2BucketLike {
   put(key: string, value: ArrayBuffer | Uint8Array | ReadableStream, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
   get(key: string): Promise<R2ObjectLike | null>;
   head(key: string): Promise<unknown | null>;
+  list(options?: { prefix?: string; cursor?: string }): Promise<{ objects: Array<{ key: string }>; truncated: boolean; cursor?: string }>;
+  delete(keys: string | string[]): Promise<void>;
 }
 
 export interface Env {
@@ -138,6 +143,16 @@ export async function assetsAvailable(bucket: R2BucketLike, liveSessionId: strin
   return true;
 }
 
+async function deleteSessionAssets(bucket: R2BucketLike, liveSessionId: string): Promise<void> {
+  const prefix = `${liveSessionId}/`;
+  let cursor: string | undefined;
+  do {
+    const page = await bucket.list({ prefix, ...(cursor ? { cursor } : {}) });
+    if (page.objects.length) await bucket.delete(page.objects.map(object => object.key));
+    cursor = page.truncated ? page.cursor : undefined;
+  } while (cursor);
+}
+
 function imageMime(bytes: Uint8Array, declared: string): string | undefined {
   if (declared === 'image/png' && bytes.length >= 8 && [137,80,78,71,13,10,26,10].every((value, index) => bytes[index] === value)) return declared;
   if (declared === 'image/jpeg' && bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return declared;
@@ -213,7 +228,7 @@ export class SessionDirectory {
 export class LiveSession {
   private rateWindows = new Map<string, { startedAt: number; count: number }>();
 
-  constructor(private readonly state: DurableObjectStateLike) {}
+  constructor(private readonly state: DurableObjectStateLike, private readonly env: Env) {}
 
   private allowRate(key: string, limit: number, windowMs: number, now = Date.now()): boolean {
     const current = this.rateWindows.get(key);
@@ -249,6 +264,25 @@ export class LiveSession {
 
   private accept(webSocket: WebSocket, requestId: string, payload: Record<string, unknown> = {}): void {
     this.send(webSocket, 'request.accepted', payload, requestId);
+  }
+
+  private async cleanupEndedSession(model: LiveSessionModel): Promise<void> {
+    model.compactEndedRuntime();
+    await this.persist(model);
+    try {
+      await directoryCall(this.env, '/remove', { joinCode: model.record.joinCode, liveSessionId: model.record.liveSessionId });
+      await deleteSessionAssets(this.env.LIVE_ASSETS, model.record.liveSessionId);
+      await this.state.storage.deleteAlarm();
+    } catch {
+      await this.state.storage.setAlarm(Date.now() + 60_000);
+    }
+  }
+
+  private closeEndedSockets(reason: string, endedAt: number): void {
+    for (const socket of this.state.getWebSockets()) {
+      this.send(socket, 'session.ended', { reason, endedAt });
+      try { socket.close(4000, reason); } catch { /* already closed */ }
+    }
   }
 
   private hostSnapshot(model: LiveSessionModel): void {
@@ -319,6 +353,13 @@ export class LiveSession {
 
     const model = await this.model();
     if (!model) return json(safeError('SESSION_NOT_FOUND', 'Sessione non trovata.'), 404);
+    const expired = model.expireHostGrace();
+    if (expired) {
+      await this.persist(model);
+      this.closeEndedSockets(expired.reason, expired.endedAt);
+      await this.cleanupEndedSession(model);
+      return json(safeError('SESSION_ENDED', 'La sessione è terminata.'), 410);
+    }
 
     if (request.headers.get('upgrade')?.toLowerCase() === 'websocket' && url.pathname.endsWith('/ws')) {
       const ticket = ticketFromProtocols(request);
@@ -326,8 +367,9 @@ export class LiveSession {
       const identity = await model.consumeTicket(ticket);
       if (!identity.ok) return resultResponse(identity);
       const connected = model.connect(identity.value);
-      if (!connected.ok) return resultResponse(connected);
+      if (!connected.ok) { await this.persist(model); return resultResponse(connected); }
       await this.persist(model);
+      if (identity.value.role === 'host') await this.state.storage.deleteAlarm();
 
       const pair = new WebSocketPair();
       const client = pair[0];
@@ -395,6 +437,25 @@ export class LiveSession {
       const result = await model.rotateJoinCode(credential, body.joinCode);
       await this.persist(model);
       if (result.ok) this.hostSnapshot(model);
+      return resultResponse(result);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/final-token-positions') {
+      const credential = bearer(request);
+      if (!credential || !(await model.authenticateHost(credential))) return json(safeError('AUTH_FAILED', 'Credenziale host non valida.'), 401);
+      if (model.record.lifecycle === 'ended') return json(safeError('SESSION_ENDED', 'La sessione è terminata.'), 410);
+      return json(model.finalTokenPositions());
+    }
+
+    if (request.method === 'POST' && url.pathname === '/end') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      const result = await model.endSession(credential);
+      await this.persist(model);
+      if (result.ok) {
+        this.closeEndedSockets(result.value.reason, result.value.endedAt);
+        await this.cleanupEndedSession(model);
+      }
       return resultResponse(result);
     }
 
@@ -605,14 +666,42 @@ export class LiveSession {
   async webSocketClose(webSocket: WebSocket): Promise<void> {
     const model = await this.model(); if (!model) return;
     const identity = this.socketIdentity(webSocket); if (!identity) return;
-    model.disconnect(identity);
-    await this.persist(model);
+
+    if (identity.role === 'host') {
+      if (this.state.getWebSockets('host').length > 0) return;
+      model.disconnect(identity);
+      await this.persist(model);
+      const deadline = model.hostGraceDeadline();
+      if (deadline) await this.state.storage.setAlarm(deadline);
+    } else {
+      const participantId = identity.participantId;
+      if (!participantId || this.state.getWebSockets(`participant:${participantId}`).length > 0) return;
+      model.disconnect(identity);
+      await this.persist(model);
+    }
     this.hostSnapshot(model);
     this.playersLifecycle(model);
   }
 
   async webSocketError(webSocket: WebSocket): Promise<void> {
     await this.webSocketClose(webSocket);
+  }
+
+  async alarm(): Promise<void> {
+    const model = await this.model(); if (!model) return;
+    if (model.record.lifecycle === 'ended') {
+      await this.cleanupEndedSession(model);
+      return;
+    }
+    const ended = model.expireHostGrace();
+    if (!ended) {
+      const deadline = model.hostGraceDeadline();
+      if (deadline) await this.state.storage.setAlarm(deadline);
+      return;
+    }
+    await this.persist(model);
+    this.closeEndedSockets(ended.reason, ended.endedAt);
+    await this.cleanupEndedSession(model);
   }
 }
 
@@ -707,6 +796,8 @@ export default {
     }
 
     if (request.method === 'GET' && !tail) return forwardSession(env, liveSessionId, '/summary', request);
+    if (request.method === 'GET' && tail === '/final-token-positions') return forwardSession(env, liveSessionId, '/final-token-positions', request);
+    if (request.method === 'POST' && tail === '/end') return forwardSession(env, liveSessionId, '/end', request);
     if (request.method === 'POST' && tail === '/host-ticket') return forwardSession(env, liveSessionId, '/host-ticket', request);
     if (request.method === 'POST' && tail === '/join-policy') return forwardSession(env, liveSessionId, '/join-policy', request, await requestJson(request));
 

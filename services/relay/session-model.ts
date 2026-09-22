@@ -8,7 +8,10 @@ import {
   type LiveBoardSnapshot,
   type LiveParticipant,
   type LiveRole,
+  type FinalTokenPositionsResponse,
   type PlayerBoardState,
+  type SessionEndReason,
+  type SessionEndedEvent,
   type SessionLifecycle,
   type SessionSummary,
   type TicketResponse,
@@ -19,6 +22,7 @@ import {
 
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const encoder = new TextEncoder();
+export const HOST_GRACE_MS = 10 * 60 * 1000;
 
 function base64url(bytes: Uint8Array): string {
   let binary = '';
@@ -64,6 +68,7 @@ export interface StoredLiveBoard {
   title: string;
   elements: LiveBoardElement[];
   tokenControllers: Record<string, string>;
+  tokenPositions: Record<string, { x: number; y: number }>;
 }
 
 export interface LiveSessionRecord {
@@ -73,6 +78,9 @@ export interface LiveSessionRecord {
   acceptingJoins: boolean;
   hostCredentialHash: string;
   hostConnected: boolean;
+  hostGraceUntil?: number;
+  endedAt?: number;
+  endReason?: SessionEndReason;
   participants: StoredParticipant[];
   tickets: SessionTicket[];
   stateSeq: number;
@@ -89,6 +97,14 @@ export interface TicketIdentity {
 
 const ok = <T>(value: T): SessionResult<T> => ({ ok: true, value });
 const fail = <T>(code: Parameters<typeof safeError>[0], message: string): SessionResult<T> => ({ ok: false, error: safeError(code, message) });
+
+function tokenPositionsFromElements(elements: LiveBoardElement[]): Record<string, { x: number; y: number }> {
+  return Object.fromEntries(elements.filter((element): element is Extract<LiveBoardElement, { type: 'token' }> => element.type === 'token').map(token => [token.elementId, { x: token.x, y: token.y }]));
+}
+
+function storedBoard(payload: LiveBoardPayload): StoredLiveBoard {
+  return { ...structuredClone(payload), tokenControllers: {}, tokenPositions: tokenPositionsFromElements(payload.elements) };
+}
 
 export class LiveSessionModel {
   private constructor(public record: LiveSessionRecord) {}
@@ -116,9 +132,16 @@ export class LiveSessionModel {
     return new LiveSessionModel({
       ...structuredClone(record),
       boards: Array.isArray(record.boards)
-        ? structuredClone(record.boards).map(board => ({ ...board, tokenControllers: board.tokenControllers ?? {} }))
+        ? structuredClone(record.boards).map(board => ({
+            ...board,
+            tokenControllers: board.tokenControllers ?? {},
+            tokenPositions: board.tokenPositions ?? tokenPositionsFromElements(board.elements)
+          }))
         : [],
-      ...(record.activeBoardId ? { activeBoardId: record.activeBoardId } : {})
+      ...(record.activeBoardId ? { activeBoardId: record.activeBoardId } : {}),
+      ...(record.hostGraceUntil ? { hostGraceUntil: record.hostGraceUntil } : {}),
+      ...(record.endedAt ? { endedAt: record.endedAt } : {}),
+      ...(record.endReason ? { endReason: record.endReason } : {})
     });
   }
 
@@ -156,6 +179,7 @@ export class LiveSessionModel {
       })),
       stateSeq: this.record.stateSeq,
       presentation: this.record.activeBoardId ? 'board' : 'waiting',
+      ...(this.record.hostGraceUntil ? { hostGraceUntil: this.record.hostGraceUntil } : {}),
       ...(this.record.activeBoardId ? { activeBoardId: this.record.activeBoardId } : {}),
       ...(this.record.activeBoardId ? { activeElementIds: this.board(this.record.activeBoardId)?.elements.map(element => element.elementId) ?? [] } : {}),
       liveBoards: this.record.boards.map(board => ({ boardId: board.boardId, title: board.title }))
@@ -163,6 +187,7 @@ export class LiveSessionModel {
   }
 
   async authenticateHost(hostCredential: string): Promise<boolean> {
+    if (this.record.lifecycle === 'ended') return false;
     return await secretHash(hostCredential) === this.record.hostCredentialHash;
   }
 
@@ -203,9 +228,56 @@ export class LiveSessionModel {
   }
 
   tokenPosition(boardId: string, tokenId: string): { x: number; y: number } | undefined {
-    const board = this.board(boardId); if (!board) return undefined;
-    const token = this.visibleToken(board, tokenId);
-    return token ? { x: token.x, y: token.y } : undefined;
+    const position = this.board(boardId)?.tokenPositions[tokenId];
+    return position ? { ...position } : undefined;
+  }
+
+  finalTokenPositions(): FinalTokenPositionsResponse {
+    return {
+      boards: this.record.boards.map(board => ({
+        boardId: board.boardId,
+        title: board.title,
+        tokens: Object.entries(board.tokenPositions).map(([tokenId, position]) => ({ tokenId, ...position }))
+      }))
+    };
+  }
+
+  hostGraceDeadline(): number | undefined {
+    return this.record.lifecycle === 'host_reconnecting' ? this.record.hostGraceUntil : undefined;
+  }
+
+  private finish(reason: SessionEndReason, now: number): SessionEndedEvent {
+    this.record.lifecycle = 'ended';
+    this.record.endReason = reason;
+    this.record.endedAt = now;
+    this.record.hostConnected = false;
+    this.record.hostGraceUntil = undefined;
+    this.record.acceptingJoins = false;
+    this.record.activeBoardId = undefined;
+    this.record.tickets = [];
+    for (const participant of this.record.participants) participant.connected = false;
+    this.bump();
+    return { reason, endedAt: now };
+  }
+
+  expireHostGrace(now = Date.now()): SessionEndedEvent | undefined {
+    if (this.record.lifecycle !== 'host_reconnecting' || !this.record.hostGraceUntil || now < this.record.hostGraceUntil) return undefined;
+    return this.finish('host_timeout', now);
+  }
+
+  async endSession(hostCredential: string, now = Date.now()): Promise<SessionResult<SessionEndedEvent>> {
+    if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è già terminata.');
+    if (!(await this.authenticateHost(hostCredential))) return fail('AUTH_FAILED', 'Credenziale host non valida.');
+    return ok(this.finish('explicit', now));
+  }
+
+  compactEndedRuntime(): void {
+    if (this.record.lifecycle !== 'ended') return;
+    this.record.hostCredentialHash = 'ended';
+    this.record.participants = [];
+    this.record.tickets = [];
+    this.record.boards = [];
+    this.record.activeBoardId = undefined;
   }
 
   boardSnapshot(boardId = this.record.activeBoardId, participantId?: string): LiveBoardSnapshot | undefined {
@@ -249,6 +321,7 @@ export class LiveSessionModel {
   }
 
   async hostTicket(hostCredential: string, now = Date.now()): Promise<SessionResult<TicketResponse>> {
+    if (this.record.lifecycle === 'host_reconnecting' && this.record.hostGraceUntil && now >= this.record.hostGraceUntil) this.finish('host_timeout', now);
     if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
     if (!(await this.authenticateHost(hostCredential))) return fail('AUTH_FAILED', 'Credenziale host non valida.');
     return ok({ ticket: await this.issueTicket('host', undefined, now) });
@@ -295,11 +368,16 @@ export class LiveSessionModel {
     return ok({ role: stored.role, ...(stored.participantId ? { participantId: stored.participantId } : {}) });
   }
 
-  connect(identity: TicketIdentity): SessionResult<SessionSummary> {
+  connect(identity: TicketIdentity, now = Date.now()): SessionResult<SessionSummary> {
+    if (identity.role === 'host' && this.record.lifecycle === 'host_reconnecting' && this.record.hostGraceUntil && now >= this.record.hostGraceUntil) this.finish('host_timeout', now);
     if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
     if (identity.role === 'host') {
       this.record.hostConnected = true;
-      if (this.record.lifecycle === 'host_reconnecting') this.record.lifecycle = 'open';
+      if (this.record.lifecycle === 'host_reconnecting') {
+        this.record.lifecycle = 'open';
+        this.record.hostGraceUntil = undefined;
+        this.bump();
+      }
       return ok(this.summary());
     }
     const participant = this.record.participants.find(item => item.participantId === identity.participantId);
@@ -311,10 +389,14 @@ export class LiveSessionModel {
     return ok(this.summary());
   }
 
-  disconnect(identity: TicketIdentity): void {
+  disconnect(identity: TicketIdentity, now = Date.now()): void {
     if (identity.role === 'host') {
       this.record.hostConnected = false;
-      if (this.record.lifecycle === 'open') this.record.lifecycle = 'host_reconnecting';
+      if (this.record.lifecycle === 'open') {
+        this.record.lifecycle = 'host_reconnecting';
+        this.record.hostGraceUntil = now + HOST_GRACE_MS;
+        this.bump();
+      }
       return;
     }
     const participant = this.record.participants.find(item => item.participantId === identity.participantId);
@@ -401,7 +483,7 @@ export class LiveSessionModel {
     const token = this.visibleToken(board, move.tokenId);
     if (!token || board.tokenControllers[move.tokenId] !== participantId) return fail('TOKEN_NOT_CONTROLLABLE', 'Questo token non è controllabile dal partecipante.');
     if (token.x !== move.x || token.y !== move.y) {
-      token.x = move.x; token.y = move.y; this.bump();
+      token.x = move.x; token.y = move.y; board.tokenPositions[move.tokenId] = { x: move.x, y: move.y }; this.bump();
     }
     return ok({ ...move, stateSeq: this.record.stateSeq });
   }
@@ -413,7 +495,7 @@ export class LiveSessionModel {
     const token = this.visibleToken(board, move.tokenId);
     if (!token) return fail('TOKEN_NOT_CONTROLLABLE', 'Il token non è pubblicato nella scena attiva.');
     if (token.x !== move.x || token.y !== move.y) {
-      token.x = move.x; token.y = move.y; this.bump();
+      token.x = move.x; token.y = move.y; board.tokenPositions[move.tokenId] = { x: move.x, y: move.y }; this.bump();
     }
     return ok({ ...move, stateSeq: this.record.stateSeq });
   }
@@ -433,7 +515,7 @@ export class LiveSessionModel {
     const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
     const existing = this.board(payload.boardId);
     if (!existing) {
-      this.record.boards.push({ ...structuredClone(payload), tokenControllers: {} });
+      this.record.boards.push(storedBoard(payload));
       this.record.activeBoardId = payload.boardId;
       this.bump();
     } else if (this.record.activeBoardId !== payload.boardId) {
@@ -446,8 +528,8 @@ export class LiveSessionModel {
   async resetBoard(hostCredential: string, payload: LiveBoardPayload): Promise<SessionResult<LiveBoardSnapshot>> {
     const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
     const index = this.record.boards.findIndex(board => board.boardId === payload.boardId);
-    if (index >= 0) this.record.boards[index] = { ...structuredClone(payload), tokenControllers: {} };
-    else this.record.boards.push({ ...structuredClone(payload), tokenControllers: {} });
+    if (index >= 0) this.record.boards[index] = storedBoard(payload);
+    else this.record.boards.push(storedBoard(payload));
     this.record.activeBoardId = payload.boardId;
     this.bump();
     return ok(this.boardSnapshot(payload.boardId)!);
@@ -480,9 +562,13 @@ export class LiveSessionModel {
       const ids = new Set(board.elements.filter(item => item.type !== 'link').map(item => item.elementId));
       for (const endpoint of [element.from, element.to]) if (endpoint.kind === 'element' && !ids.has(endpoint.elementId)) return fail('PERMISSION_DENIED', 'Il collegamento richiede un endpoint non visibile.');
     }
-    const index = board.elements.findIndex(item => item.elementId === element.elementId);
-    if (index >= 0) board.elements[index] = structuredClone(element);
-    else board.elements.push(structuredClone(element));
+    const restored = element.type === 'token' && board.tokenPositions[element.elementId]
+      ? { ...structuredClone(element), ...board.tokenPositions[element.elementId] }
+      : structuredClone(element);
+    if (restored.type === 'token' && !board.tokenPositions[restored.elementId]) board.tokenPositions[restored.elementId] = { x: restored.x, y: restored.y };
+    const index = board.elements.findIndex(item => item.elementId === restored.elementId);
+    if (index >= 0) board.elements[index] = restored;
+    else board.elements.push(restored);
     this.bump();
     return ok(this.boardSnapshot(boardId)!);
   }

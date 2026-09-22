@@ -11,7 +11,8 @@
     "lint": "eslint .",
     "test:electron": "npm run build && node scripts/smoke.mjs",
     "test:goal2": "npm run build && node scripts/goal2-smoke.mjs",
-    "test:goal3": "npm run build && node scripts/goal3-smoke.mjs"
+    "test:goal3": "npm run build && node scripts/goal3-smoke.mjs",
+    "test:live-network": "node scripts/live-network-smoke.mjs"
   },
   "engines": {
     "node": ">=24.15.0"

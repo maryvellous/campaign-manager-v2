@@ -20,6 +20,7 @@ export const liveErrorCodes = [
 
 export type LiveErrorCode = typeof liveErrorCodes[number];
 export type SessionLifecycle = 'open' | 'host_reconnecting' | 'ending' | 'ended';
+export type SessionEndReason = 'explicit' | 'host_timeout';
 export type PlayerPresentation = 'waiting' | 'board';
 export type LiveRole = 'host' | 'player';
 
@@ -70,6 +71,27 @@ export interface TokenControllerEvent { boardId: string; tokenId: string; contro
 export interface PingPayload { boardId: string; x: number; y: number }
 export interface PingEvent extends PingPayload { participantId: string }
 export interface CameraFocusPayload { boardId: string; mode: 'fit' }
+
+export interface FinalTokenPosition {
+  tokenId: string;
+  x: number;
+  y: number;
+}
+
+export interface FinalBoardTokenPositions {
+  boardId: string;
+  title: string;
+  tokens: FinalTokenPosition[];
+}
+
+export interface FinalTokenPositionsResponse {
+  boards: FinalBoardTokenPositions[];
+}
+
+export interface SessionEndedEvent {
+  reason: SessionEndReason;
+  endedAt: number;
+}
 
 export interface ElementRevealedEvent {
   boardId: string;
@@ -169,6 +191,7 @@ export interface SessionSummary {
   participants: LiveParticipant[];
   stateSeq: number;
   presentation: PlayerPresentation;
+  hostGraceUntil?: number;
   activeBoardId?: string;
   activeElementIds?: string[];
   liveBoards: LiveBoardSummary[];
@@ -325,6 +348,25 @@ export function validatePingPayload(value: unknown): PingPayload | undefined {
 export function validateCameraFocusPayload(value: unknown): CameraFocusPayload | undefined {
   if (!object(value) || !opaqueId(value.boardId) || value.mode !== 'fit') return undefined;
   return { boardId: value.boardId, mode: 'fit' };
+}
+
+export function validateFinalTokenPositionsResponse(value: unknown): FinalTokenPositionsResponse | undefined {
+  if (!object(value) || !Array.isArray(value.boards) || value.boards.length > 1000) return undefined;
+  const boards: FinalBoardTokenPositions[] = [];
+  const boardIds = new Set<string>();
+  for (const rawBoard of value.boards) {
+    if (!object(rawBoard) || !opaqueId(rawBoard.boardId) || !cleanString(rawBoard.title, 500) || !Array.isArray(rawBoard.tokens) || rawBoard.tokens.length > 5000 || boardIds.has(rawBoard.boardId)) return undefined;
+    const tokens: FinalTokenPosition[] = [];
+    const tokenIds = new Set<string>();
+    for (const rawToken of rawBoard.tokens) {
+      if (!object(rawToken) || !opaqueId(rawToken.tokenId) || !finite(rawToken.x) || !finite(rawToken.y) || tokenIds.has(rawToken.tokenId)) return undefined;
+      tokenIds.add(rawToken.tokenId);
+      tokens.push({ tokenId: rawToken.tokenId, x: rawToken.x, y: rawToken.y });
+    }
+    boardIds.add(rawBoard.boardId);
+    boards.push({ boardId: rawBoard.boardId, title: rawBoard.title, tokens });
+  }
+  return { boards };
 }
 
 export function validateEnvelope(value: unknown): ProtocolEnvelope | undefined {
