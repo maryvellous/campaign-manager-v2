@@ -180,3 +180,32 @@ test('final position apply refuses a board with protected local recovery', async
     if (token?.type === 'token') assert.deepEqual({ x: token.x, y: token.y }, { x: 1, y: 2 });
   } finally { await f.cleanup(); }
 });
+
+
+test('host timeout freezes and then ends a table with eight existing players', async () => {
+  const f = await liveFixture();
+  const players = [];
+  for (let index = 0; index < 8; index++) {
+    const joined = await f.model.join('ABCD-EFGH', `Player ${index + 1}`, 2_000 + index);
+    assert.equal(joined.ok, true);
+    if (joined.ok) players.push(joined.value);
+  }
+  assert.equal(players.length, 8);
+
+  f.model.disconnect(f.identity, 20_000);
+  assert.equal(f.model.summary().participants.length, 8);
+  assert.equal(f.model.summary().lifecycle, 'host_reconnecting');
+  for (const player of players) {
+    const resumed = await f.model.resume(player.participantId, player.resumeCredential, 20_100);
+    assert.equal(resumed.ok, true);
+  }
+
+  const ended = f.model.expireHostGrace(20_000 + HOST_GRACE_MS);
+  assert.equal(ended?.reason, 'host_timeout');
+  assert.equal(f.model.summary().lifecycle, 'ended');
+  for (const player of players) {
+    const resumed = await f.model.resume(player.participantId, player.resumeCredential, 20_000 + HOST_GRACE_MS + 1);
+    assert.equal(resumed.ok, false);
+    if (!resumed.ok) assert.equal(resumed.error.error.code, 'SESSION_ENDED');
+  }
+});
