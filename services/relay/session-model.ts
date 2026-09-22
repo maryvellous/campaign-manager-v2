@@ -156,6 +156,14 @@ export class LiveSessionModel {
     return await secretHash(hostCredential) === this.record.hostCredentialHash;
   }
 
+  async authorizeAssetRead(credential: string): Promise<SessionResult<true>> {
+    if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
+    const hash = await secretHash(credential);
+    if (hash === this.record.hostCredentialHash) return ok(true);
+    if (this.record.participants.some(participant => participant.resumeCredentialHash === hash)) return ok(true);
+    return fail('AUTH_FAILED', 'Credenziale asset non valida.');
+  }
+
   private async authorizeHostMutation(hostCredential: string): Promise<SessionResult<true>> {
     if (!(await this.authenticateHost(hostCredential))) return fail('AUTH_FAILED', 'Credenziale host non valida.');
     if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
