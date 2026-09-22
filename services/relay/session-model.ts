@@ -23,6 +23,7 @@ import {
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
 const encoder = new TextEncoder();
 export const HOST_GRACE_MS = 10 * 60 * 1000;
+export const ACTIVITY_PAIRING_TTL_MS = 5 * 60 * 1000;
 
 function base64url(bytes: Uint8Array): string {
   let binary = '';
@@ -45,6 +46,13 @@ export function randomJoinCode(): string {
   let code = '';
   for (let index = 0; index < 8; index++) code += alphabet[bytes[index] % alphabet.length];
   return `${code.slice(0, 4)}-${code.slice(4)}`;
+}
+
+export function randomActivityPairingCode(): string {
+  const bytes = randomBytes(6);
+  let code = '';
+  for (let index = 0; index < 6; index++) code += alphabet[bytes[index] % alphabet.length];
+  return `${code.slice(0, 3)}-${code.slice(3)}`;
 }
 
 export async function secretHash(secret: string): Promise<string> {
@@ -588,8 +596,26 @@ export class LiveSessionModel {
   }
 }
 
+export interface ActivityPairingRecord {
+  liveSessionId: string;
+  expiresAt: number;
+}
+
+export interface ActivityBindingRecord {
+  liveSessionId: string;
+  pairedAt: number;
+}
+
 export class SessionDirectoryModel {
-  constructor(public codes: Record<string, string> = {}) {}
+  constructor(
+    public codes: Record<string, string> = {},
+    public pairings: Record<string, ActivityPairingRecord> = {},
+    public activityBindings: Record<string, ActivityBindingRecord> = {}
+  ) {}
+
+  private cleanupPairings(now: number): void {
+    for (const [code, pairing] of Object.entries(this.pairings)) if (pairing.expiresAt <= now) delete this.pairings[code];
+  }
 
   resolve(joinCode: string): string | undefined {
     return this.codes[joinCode];
@@ -608,8 +634,43 @@ export class SessionDirectoryModel {
     return true;
   }
 
-  remove(joinCode: string, liveSessionId: string): void {
+  reserveActivityPairing(pairingCode: string, liveSessionId: string, now = Date.now()): ActivityPairingRecord | undefined {
+    this.cleanupPairings(now);
+    if (this.pairings[pairingCode]) return undefined;
+    for (const [code, pairing] of Object.entries(this.pairings)) if (pairing.liveSessionId === liveSessionId) delete this.pairings[code];
+    const pairing = { liveSessionId, expiresAt: now + ACTIVITY_PAIRING_TTL_MS };
+    this.pairings[pairingCode] = pairing;
+    return { ...pairing };
+  }
+
+  consumeActivityPairing(pairingCode: string, instanceId: string, now = Date.now()): ActivityBindingRecord | undefined {
+    this.cleanupPairings(now);
+    const pairing = this.pairings[pairingCode];
+    if (!pairing || this.activityBindings[instanceId]) return undefined;
+    delete this.pairings[pairingCode];
+    const binding = { liveSessionId: pairing.liveSessionId, pairedAt: now };
+    this.activityBindings[instanceId] = binding;
+    return { ...binding };
+  }
+
+  activityBinding(instanceId: string): ActivityBindingRecord | undefined {
+    const binding = this.activityBindings[instanceId];
+    return binding ? { ...binding } : undefined;
+  }
+
+  activityBindingForSession(liveSessionId: string): { instanceId: string; pairedAt: number } | undefined {
+    const match = Object.entries(this.activityBindings).find(([, binding]) => binding.liveSessionId === liveSessionId);
+    return match ? { instanceId: match[0], pairedAt: match[1].pairedAt } : undefined;
+  }
+
+  removeSession(joinCode: string, liveSessionId: string): void {
     if (this.codes[joinCode] === liveSessionId) delete this.codes[joinCode];
+    for (const [code, pairing] of Object.entries(this.pairings)) if (pairing.liveSessionId === liveSessionId) delete this.pairings[code];
+    for (const [instanceId, binding] of Object.entries(this.activityBindings)) if (binding.liveSessionId === liveSessionId) delete this.activityBindings[instanceId];
+  }
+
+  remove(joinCode: string, liveSessionId: string): void {
+    this.removeSession(joinCode, liveSessionId);
   }
 }
 
