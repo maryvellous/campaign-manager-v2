@@ -7,6 +7,7 @@ import {
   boardPathFromTitle,
   boardTitleFromPath,
   parseBoardDocument,
+  remapBoardNoteSources,
   validateBoardAssetPath,
   validateBoardPath,
   type BoardDocument,
@@ -231,6 +232,18 @@ export class BoardRepository {
         }
       }
     } catch (error) { throw ioError(error); }
+  }
+
+  async remapNoteSources(oldPath: string, newPath: string): Promise<string[]> {
+    const changed: string[] = [];
+    for (const board of await this.discover()) {
+      const snapshot = await this.readBoard(board.path);
+      const document = remapBoardNoteSources(snapshot.document, oldPath, newPath);
+      if (document === snapshot.document) continue;
+      await this.saveBoard(snapshot.path, document, snapshot.revision);
+      changed.push(snapshot.path);
+    }
+    return changed;
   }
 
   async readAsset(assetPath: string): Promise<string> {
