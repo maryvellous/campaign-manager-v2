@@ -328,6 +328,10 @@ export class LiveSessionModel {
     return this.authorizeHostMutation(hostCredential);
   }
 
+  async authorizeActivityPairing(hostCredential: string): Promise<SessionResult<true>> {
+    return this.authorizeHostMutation(hostCredential);
+  }
+
   async hostTicket(hostCredential: string, now = Date.now()): Promise<SessionResult<TicketResponse>> {
     if (this.record.lifecycle === 'host_reconnecting' && this.record.hostGraceUntil && now >= this.record.hostGraceUntil) this.finish('host_timeout', now);
     if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
