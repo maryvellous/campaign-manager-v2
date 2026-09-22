@@ -652,6 +652,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
 
   const currentElement = session && selectedIds.length === 1 ? session.snapshot.document.elements.find(element => element.elementId === selectedIds[0]) : undefined;
   const currentConnector = session && selectedConnector ? session.snapshot.document.connectors.find(connector => connector.connectorId === selectedConnector) : undefined;
+  const pendingConnectionPoint = session && connectionStart ? endpointPoint(session.snapshot.document, connectionStart) : undefined;
   const selectionLocked = session ? session.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId)).some(element => element.locked) : false;
   const groupedSelection = session ? session.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId)).some(element => !!element.groupId) : false;
   const saveLabel = session?.state === 'clean' ? 'Salvata' : session?.state === 'saving' ? 'Salvataggio…' : session?.state === 'conflict' ? 'Conflitto' : session?.state === 'error' ? 'Errore' : 'Da salvare';
@@ -695,14 +696,37 @@ export function BoardWorkspace({ command }: { command: Command }) {
           onDragOver={event => { if ([...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
           onDrop={event => { const file = event.dataTransfer.files?.[0]; if (!file) return; event.preventDefault(); void importFile(file, worldPoint(event.clientX, event.clientY)); }}>
           <div className="board-stage" style={{ transform: `translate(${session.snapshot.document.camera.x}px, ${session.snapshot.document.camera.y}px) scale(${session.snapshot.document.camera.zoom})` }}>
+            <svg className="board-connectors" aria-label="Collegamenti board">
+              <defs><marker id="board-arrow" viewBox="0 0 10 10" refX="9" refY="5" markerWidth="7" markerHeight="7" orient="auto-start-reverse"><path d="M 0 0 L 10 5 L 0 10 z" /></marker></defs>
+              {session.snapshot.document.connectors.map(connector => {
+                const from = endpointPoint(session.snapshot.document, connector.from);
+                const to = endpointPoint(session.snapshot.document, connector.to);
+                if (!from || !to) return null;
+                return <line key={connector.connectorId} className={`board-connector ${selectedConnector === connector.connectorId ? 'selected' : ''} ${connector.locked ? 'locked' : ''}`} x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd={connector.style === 'arrow' ? 'url(#board-arrow)' : undefined} onPointerDown={event => { event.stopPropagation(); if (tool === 'select') { setSelectedConnector(connector.connectorId); setSelectedIds([]); } }} />;
+              })}
+            </svg>
+            {pendingConnectionPoint && <span className="board-link-start" style={{ left: pendingConnectionPoint.x, top: pendingConnectionPoint.y }} />}
             {session.snapshot.document.elements.slice().sort(byZ).map(element => <div key={element.elementId}
-              className={`board-element ${selected === element.elementId ? 'selected' : ''} ${element.locked ? 'locked' : ''} board-${element.type}`}
+              className={`board-element ${selectedIds.includes(element.elementId) ? 'selected' : ''} ${element.locked ? 'locked' : ''} board-${element.type}`}
               style={{ left: element.x, top: element.y, width: element.width, height: element.height, zIndex: element.z }}
-              onPointerDown={event => beginMove(event, element)} onClick={event => { event.stopPropagation(); setSelected(element.elementId); }}>
-              {element.type === 'text' ? textEditing?.elementId === element.elementId ? <textarea className="board-text-editor" autoFocus value={textEditing.text} onPointerDown={event => event.stopPropagation()} onChange={event => setTextEditing({ elementId: element.elementId, text: event.target.value })} onBlur={commitTextEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTextEditing(undefined); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} /> : <div className="board-text-content" onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTextEditing({ elementId: element.elementId, text: element.text }); }}>{element.text}</div> : <BoardImage element={element} command={command} />}
-              {selected === element.elementId && !element.locked && <button className="board-resize" aria-label="Ridimensiona elemento" onPointerDown={event => beginResize(event, element)} />}
+              onPointerDown={event => beginMove(event, element)} onClick={event => event.stopPropagation()}>
+              {element.type === 'text'
+                ? textEditing?.elementId === element.elementId
+                  ? <textarea className="board-text-editor" autoFocus value={textEditing.text} onPointerDown={event => event.stopPropagation()} onChange={event => setTextEditing({ elementId: element.elementId, text: event.target.value })} onBlur={commitTextEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTextEditing(undefined); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+                  : <div className="board-text-content" onDoubleClick={event => { event.stopPropagation(); if (!element.locked) { setSelectedIds(selectionForElement(element)); setTextEditing({ elementId: element.elementId, text: element.text }); } }}>{element.text}</div>
+                : element.type === 'image'
+                  ? <BoardAsset assetPath={element.assetPath} command={command} />
+                  : <div className="board-token-content" onDoubleClick={event => { event.stopPropagation(); if (!element.locked) { setSelectedIds(selectionForElement(element)); setTokenEditing({ elementId: element.elementId, name: element.name }); } }}>
+                      <div className="board-token-avatar">{element.avatarPath ? <BoardAsset assetPath={element.avatarPath} command={command} alt={element.name} /> : <span>{tokenInitials(element.name)}</span>}</div>
+                      {tokenEditing?.elementId === element.elementId
+                        ? <input className="board-token-name-editor" autoFocus value={tokenEditing.name} onPointerDown={event => event.stopPropagation()} onChange={event => setTokenEditing({ elementId: element.elementId, name: event.target.value })} onBlur={commitTokenEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTokenEditing(undefined); } if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+                        : <span className="board-token-name">{element.name || 'Token'}</span>}
+                    </div>}
+              {selectedIds.length === 1 && selectedIds[0] === element.elementId && !element.locked && <button className="board-resize" aria-label="Ridimensiona elemento" onPointerDown={event => beginResize(event, element)} />}
               {element.locked && <span className="board-lock-badge">Bloccato</span>}
+              {element.groupId && selectedIds.includes(element.elementId) && <span className="board-group-badge">Gruppo</span>}
             </div>)}
+            {marquee && <div className="board-marquee" style={{ left: marquee.x, top: marquee.y, width: marquee.width, height: marquee.height }} />}
             {textDraft && <textarea className="board-text-draft" autoFocus style={{ left: textDraft.x, top: textDraft.y }} placeholder="Scrivi…" value={textDraft.text} onChange={event => setTextDraft({ ...textDraft, text: event.target.value })} onBlur={commitTextDraft} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTextDraft(undefined); setTool('select'); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />}
           </div>
         </div>
