@@ -4,12 +4,15 @@ import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as fs from 'node:fs/promises';
 import { CampaignService } from './application/campaign-service';
+import { BoardService } from './application/board-service';
+import type { BoardDocument } from './application/board-types';
 import { LocalStore } from './infrastructure/local-store';
 import { CampaignError } from '../../packages/core/src/index';
 import { ioError } from './infrastructure/campaign-repository';
 
 let window: BrowserWindow;
 let service: CampaignService;
+let boardService: BoardService;
 let selectedPath: string | undefined;
 let allowClose = false;
 let closeRequested = false;
@@ -27,7 +30,9 @@ if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   void app.whenReady().then(async () => {
-    service = new CampaignService(new LocalStore(path.join(app.getPath('userData'), 'local')));
+    const store = new LocalStore(path.join(app.getPath('userData'), 'local'));
+    service = new CampaignService(store);
+    boardService = new BoardService(store);
     window = new BrowserWindow({ width: 1200, height: 820, minWidth: 760, minHeight: 540, show: false, backgroundColor: '#1E1333', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
     window.removeMenu();
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -47,6 +52,15 @@ else {
             case 'search': return { ok: true, data: await service.searchNotes(text(command.query, 2000)) };
             case 'rebuildSearch': await service.rebuildSearch(); break;
             case 'graph': return { ok: true, data: await service.graphProjection() };
+            case 'boards:list': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.list() };
+            case 'board:create': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.create(text(command.title, 250)) };
+            case 'board:open': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.open(text(command.path, 2000)) };
+            case 'board:protect': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.protect(text(command.path, 2000), text(command.baseRevision, 100), command.document as BoardDocument) };
+            case 'board:save': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.save(text(command.path, 2000), text(command.baseRevision, 100), command.document as BoardDocument) };
+            case 'board:rename': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.rename(text(command.path, 2000), text(command.title, 250)) };
+            case 'board:importImage': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.importImage(text(command.name, 260), text(command.base64, 30 * 1024 * 1024)) };
+            case 'board:asset': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.readAsset(text(command.assetPath, 2000)) };
+            case 'board:discardRecovery': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.discardRecovery(text(command.path, 2000)) };
             case 'image': return { ok: true, data: await service.readImage(text(command.noteId, 2000), text(command.source, 2000)) };
             case 'external': await shell.openExternal(externalUrl(text(command.url, 8000))); break;
             case 'createLinkedNote': await service.createLinkedNote(text(command.target, 2000)); break;
@@ -76,7 +90,7 @@ else {
             case 'draftTitle': await service.setDraftTitle(text(command.title, 250)); break;
             case 'view': {
               const view = text(command.view, 30);
-              if (!['notes', 'search', 'graph', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
+              if (!['notes', 'search', 'graph', 'boards', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
               await service.setView(view as Parameters<CampaignService['setView']>[0]); break;
             }
             case 'ui': {
