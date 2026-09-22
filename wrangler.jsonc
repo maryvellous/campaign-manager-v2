@@ -12,6 +12,9 @@
     "LiveSession": { "type": "durable-object", "storage": "sqlite" },
     "SessionDirectory": { "type": "durable-object", "storage": "sqlite" }
   },
+  "vars": {
+    "DISCORD_CLIENT_ID": "1551919866074628228"
+  },
   "r2_buckets": [
     {
       "binding": "LIVE_ASSETS",
