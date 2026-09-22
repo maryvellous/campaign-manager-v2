@@ -149,11 +149,12 @@ export function parseBoardDocument(value: unknown): BoardDocument {
     if (typeof element.elementId !== 'string' || !uuid.test(element.elementId) || seen.has(element.elementId)) throw new CampaignError('metadata_invalid', 'Identità elemento board non valida.');
     seen.add(element.elementId);
     if (!finite(element.z) || typeof element.locked !== 'boolean') throw new CampaignError('metadata_invalid', 'Ordine o lock elemento board non validi.');
+    const groupId = parseGroupId(element.groupId);
     const base = {
       elementId: element.elementId,
       z: element.z,
       locked: element.locked,
-      groupId: parseGroupId(element.groupId)
+      ...(groupId ? { groupId } : {})
     };
 
     if (element.type === 'link') {
@@ -182,7 +183,8 @@ export function parseBoardDocument(value: unknown): BoardDocument {
     if (element.type === 'token') {
       if (typeof element.name !== 'string' || !element.name.trim()) throw new CampaignError('metadata_invalid', 'Nome token non valido.');
       if (element.assetPath !== undefined && typeof element.assetPath !== 'string') throw new CampaignError('metadata_invalid', 'Avatar token non valido.');
-      return { ...box, type: 'token', name: element.name.trim(), assetPath: element.assetPath === undefined ? undefined : validateBoardAssetPath(element.assetPath) };
+      const assetPath = element.assetPath === undefined ? undefined : validateBoardAssetPath(element.assetPath);
+      return { ...box, type: 'token', name: element.name.trim(), ...(assetPath ? { assetPath } : {}) };
     }
     throw new CampaignError('metadata_invalid', 'Tipo elemento board non supportato.');
   });
