@@ -139,6 +139,9 @@ test('ordinary opening cannot overwrite an unresolved recovery from a previous r
   const { root, service } = await fixture(t);
   await service.run(() => service.openNote('Note.md')); await service.run(() => service.edit('irreplaceable old recovery'));
   const key = service.state.document!.recoveryKey!;
+  // Model the prior process ending: its scheduled autosave must not race the
+  // recovery check performed by the fresh process below.
+  await service.dispose();
   const fresh = new CampaignService(service.store);
   try {
     await fresh.run(() => fresh.initialize());
