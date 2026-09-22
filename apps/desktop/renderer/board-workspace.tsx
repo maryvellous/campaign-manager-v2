@@ -255,17 +255,22 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const start = { x: event.clientX, y: event.clientY };
     const base = { x: element.x, y: element.y };
     const zoom = current.snapshot.document.camera.zoom;
+    let moved = false;
     const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const now = sessionRef.current; if (!now) return;
-      const elements = now.snapshot.document.elements.map(item => item.elementId === element.elementId ? { ...item, x: base.x + (pointer.clientX - start.x) / zoom, y: base.y + (pointer.clientY - start.y) / zoom } : item);
+      const nextX = base.x + (pointer.clientX - start.x) / zoom;
+      const nextY = base.y + (pointer.clientY - start.y) / zoom;
+      if (nextX === base.x && nextY === base.y) return;
+      moved = true;
+      const elements = now.snapshot.document.elements.map(item => item.elementId === element.elementId ? { ...item, x: nextX, y: nextY } : item);
       const next = { ...now, snapshot: { ...now.snapshot, document: { ...now.snapshot.document, elements } }, state: 'dirty' as const };
       setSession(next); sessionRef.current = next;
     };
     const up = () => {
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
-      const now = sessionRef.current; if (!now) return;
+      const now = sessionRef.current; if (!now || !moved) return;
       history.current.past.push(before); history.current.future = []; scheduleSave(now);
     };
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
@@ -279,11 +284,14 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const start = { x: event.clientX, y: event.clientY };
     const ratio = element.width / element.height;
     const zoom = current.snapshot.document.camera.zoom;
+    let resized = false;
     const target = event.currentTarget as HTMLElement; target.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const dx = (pointer.clientX - start.x) / zoom;
       const width = Math.max(60, element.width + dx);
       const height = element.type === 'image' ? width / ratio : Math.max(48, element.height + (pointer.clientY - start.y) / zoom);
+      if (width === element.width && height === element.height) return;
+      resized = true;
       const now = sessionRef.current; if (!now) return;
       const elements = now.snapshot.document.elements.map(item => item.elementId === element.elementId ? { ...item, width, height } : item);
       const next = { ...now, snapshot: { ...now.snapshot, document: { ...now.snapshot.document, elements } }, state: 'dirty' as const };
@@ -291,7 +299,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     };
     const up = () => {
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
-      const now = sessionRef.current; if (!now) return;
+      const now = sessionRef.current; if (!now || !resized) return;
       history.current.past.push(before); history.current.future = []; scheduleSave(now);
     };
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
@@ -301,13 +309,13 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const edit = textEditing;
     if (!edit) return;
     setTextEditing(undefined);
-    const value = edit.text.trim();
-    if (!value) return;
-    changeElement(edit.elementId, element => element.type === 'text' ? { ...element, text: value } : element);
+    if (!edit.text.trim()) return;
+    changeElement(edit.elementId, element => element.type === 'text' ? { ...element, text: edit.text } : element);
   };
 
   const importFile = async (file: File, world?: { x: number; y: number }) => {
-    if (!/image\/(png|jpeg|webp)/u.test(file.type)) { setMessage('Usa un’immagine PNG, JPG/JPEG o WebP.'); return; }
+    if (!/image\/(png|jpeg|webp)/u.test(file.type) && !/\.(png|jpe?g|webp)$/iu.test(file.name)) { setMessage('Usa un’immagine PNG, JPG/JPEG o WebP.'); return; }
+    if (file.size > 20 * 1024 * 1024) { setMessage('L’immagine supera il limite di 20 MB.'); return; }
     const [buffer, size] = await Promise.all([file.arrayBuffer(), imageSize(file)]);
     const reply = await command({ action: 'board:importImage', name: file.name, base64: bytesToBase64(new Uint8Array(buffer)) });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
@@ -339,16 +347,21 @@ export function BoardWorkspace({ command }: { command: Command }) {
     event.preventDefault();
     const before = clone(current.snapshot.document);
     const start = { x: event.clientX, y: event.clientY, cameraX: before.camera.x, cameraY: before.camera.y };
+    let panned = false;
     const target = event.currentTarget; target.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const now = sessionRef.current; if (!now) return;
-      const document = { ...now.snapshot.document, camera: { ...now.snapshot.document.camera, x: start.cameraX + pointer.clientX - start.x, y: start.cameraY + pointer.clientY - start.y } };
+      const x = start.cameraX + pointer.clientX - start.x;
+      const y = start.cameraY + pointer.clientY - start.y;
+      if (x === start.cameraX && y === start.cameraY) return;
+      panned = true;
+      const document = { ...now.snapshot.document, camera: { ...now.snapshot.document.camera, x, y } };
       const next = { ...now, snapshot: { ...now.snapshot, document }, state: 'dirty' as const };
       setSession(next); sessionRef.current = next;
     };
     const up = () => {
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
-      const now = sessionRef.current; if (now) scheduleSave(now);
+      const now = sessionRef.current; if (now && panned) scheduleSave(now);
     };
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
   };
@@ -371,7 +384,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!current || !draft) return;
     setTextDraft(undefined);
     if (!draft.text.trim()) return;
-    const element: BoardTextElement = { type: 'text', elementId: crypto.randomUUID(), text: draft.text.trim(), x: draft.x, y: draft.y, width: 260, height: 120, z: nextZ(current.snapshot.document), locked: false };
+    const element: BoardTextElement = { type: 'text', elementId: crypto.randomUUID(), text: draft.text, x: draft.x, y: draft.y, width: 260, height: 120, z: nextZ(current.snapshot.document), locked: false };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelected(element.elementId); setTool('select');
   };
