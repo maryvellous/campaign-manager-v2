@@ -48,7 +48,8 @@ export class BoardRepository {
 
   private async ensureDirectory(relative: 'Boards' | 'Assets/Board'): Promise<string> {
     await this.checkRoot();
-    let cursor = this.root;
+    const realRoot = await fs.realpath(this.root);
+    let cursor = realRoot;
     for (const segment of relative.split('/')) {
       cursor = path.join(cursor, segment);
       try {
@@ -65,7 +66,7 @@ export class BoardRepository {
         if (stat.isSymbolicLink() || !stat.isDirectory()) throw new CampaignError('outside_campaign_root', 'La cartella board non è sicura.');
       }
       const real = await fs.realpath(cursor);
-      const rel = path.relative(this.root, real);
+      const rel = path.relative(realRoot, real);
       if (rel.startsWith('..') || path.isAbsolute(rel)) throw new CampaignError('outside_campaign_root', 'Percorso board esterno alla campagna.');
     }
     return cursor;
@@ -74,7 +75,8 @@ export class BoardRepository {
   private async target(relative: string, missingLeaf = false): Promise<string> {
     validateRelativePath(relative);
     await this.checkRoot();
-    let cursor = this.root;
+    const realRoot = await fs.realpath(this.root);
+    let cursor = realRoot;
     const segments = relative.split('/');
     for (let index = 0; index < segments.length; index++) {
       const names = await fs.readdir(cursor);
@@ -91,7 +93,7 @@ export class BoardRepository {
       }
     }
     const parent = await fs.realpath(path.dirname(cursor));
-    const rel = path.relative(this.root, parent);
+    const rel = path.relative(realRoot, parent);
     if (rel.startsWith('..') || path.isAbsolute(rel)) throw new CampaignError('outside_campaign_root', 'Percorso board esterno alla campagna.');
     return cursor;
   }
@@ -177,7 +179,7 @@ export class BoardRepository {
     return serialized(`${this.root}/boards-rename`, async () => {
       try {
         const source = await this.target(oldPath);
-        const destination = path.join(this.root, ...newPath.split('/'));
+        const destination = path.join(await fs.realpath(this.root), ...newPath.split('/'));
         if (oldPath.toLowerCase() === newPath.toLowerCase()) {
           const temporary = path.join(path.dirname(source), `.cmv2-board-rename-${randomUUID()}`);
           await fs.rename(source, temporary);

@@ -13,6 +13,17 @@ npm start
 
 L'installazione scarica il runtime Electron. L'uso della campagna non richiede rete o account.
 
+## Packaging Windows
+
+Il pacchetto Windows usa NSIS e viene costruito realmente su un runner Windows della CI. In locale:
+
+```powershell
+npm ci
+npm run package:win
+```
+
+L'output viene scritto in `release/` come `Diaspro-RPG-Campaign-Manager-<version>-Setup.exe`. La CI verifica che l'installer venga prodotto e lo conserva come artifact temporaneo. L'installer è attualmente **non firmato**: code signing e publisher verificato restano un passaggio di distribuzione separato perché richiedono un certificato/credenziali reali.
+
 ## Stato: V0.6 — Personaggi collegati alle note
 
 La V0.6 permette di usare una normale nota Markdown come riferimento di un personaggio senza introdurre un database o un formato scheda proprietario. Un token può avere un collegamento opzionale `characterNoteId`; dal token il DM può collegare, sostituire, scollegare o aprire la nota associata. Se la nota viene rinominata o spostata tramite Campaign Manager, il riferimento viene aggiornato anche nelle recovery delle board senza modificare automaticamente il nome personalizzato del token.

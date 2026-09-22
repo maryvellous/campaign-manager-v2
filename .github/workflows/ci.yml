@@ -23,3 +23,31 @@ jobs:
       - run: npm run build
       - run: npm run test:live-network
       - run: npx --yes wrangler@4.136.1 deploy --dry-run --outdir .wrangler-dry-run
+
+  windows-package:
+    runs-on: windows-latest
+    timeout-minutes: 25
+    steps:
+      - uses: actions/checkout@v4
+      - uses: actions/setup-node@v4
+        with:
+          node-version: '24.15.0'
+          cache: npm
+      - run: npm ci
+      - run: npm test
+      - run: npm run test:electron
+      - run: npm run package:win
+      - name: Verify installer
+        shell: pwsh
+        run: |
+          $installer = Get-ChildItem -Path release -Filter "Diaspro-RPG-Campaign-Manager-*-Setup.exe" | Select-Object -First 1
+          if (-not $installer) { throw "Windows installer not found." }
+          if ($installer.Length -lt 10MB) { throw "Windows installer is unexpectedly small." }
+          Write-Host "Verified installer: $($installer.FullName) ($([math]::Round($installer.Length / 1MB, 1)) MB)"
+      - uses: actions/upload-artifact@v4
+        with:
+          name: campaign-manager-windows-installer
+          path: release/Diaspro-RPG-Campaign-Manager-*-Setup.exe
+          if-no-files-found: error
+          retention-days: 7
+
