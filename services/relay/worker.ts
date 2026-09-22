@@ -353,6 +353,13 @@ export class LiveSession {
 
     const model = await this.model();
     if (!model) return json(safeError('SESSION_NOT_FOUND', 'Sessione non trovata.'), 404);
+    const expired = model.expireHostGrace();
+    if (expired) {
+      await this.persist(model);
+      this.closeEndedSockets(expired.reason, expired.endedAt);
+      await this.cleanupEndedSession(model);
+      return json(safeError('SESSION_ENDED', 'La sessione è terminata.'), 410);
+    }
 
     if (request.headers.get('upgrade')?.toLowerCase() === 'websocket' && url.pathname.endsWith('/ws')) {
       const ticket = ticketFromProtocols(request);
