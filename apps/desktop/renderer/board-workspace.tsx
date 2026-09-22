@@ -70,7 +70,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
   const [textDraft, setTextDraft] = useState<{ x: number; y: number; text: string }>();
   const [textEditing, setTextEditing] = useState<{ elementId: string; text: string }>();
   const history = useRef<{ past: BoardDocument[]; future: BoardDocument[] }>({ past: [], future: [] });
-  const autosaveTimer = useRef<ReturnType<typeof setTimeout>>();
+  const autosaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const input = useRef<HTMLInputElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
 
@@ -88,18 +88,24 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!reply.ok) setSession(value => value ? { ...value, state: 'error', error: `Recovery non riuscita: ${reply.error?.message ?? 'errore sconosciuto'}` } : value);
   }, [command]);
 
-  const save = useCallback(async (current = sessionRef.current) => {
-    if (!current || current.state === 'clean' || current.state === 'saving' || current.state === 'conflict') return;
-    setSession(value => value ? { ...value, state: 'saving', error: undefined } : value);
+  const save = useCallback(async (current = sessionRef.current): Promise<BoardSession | undefined> => {
+    if (!current) return undefined;
+    if (current.state === 'clean') return current;
+    if (current.state === 'saving' || current.state === 'conflict') return undefined;
+    const saving: BoardSession = { ...current, state: 'saving', error: undefined };
+    setSession(saving); sessionRef.current = saving;
     const reply = await command({ action: 'board:save', path: current.snapshot.path, baseRevision: current.snapshot.revision, document: current.snapshot.document });
     if (!reply.ok) {
-      setSession(value => value ? { ...value, state: reply.error?.code === 'conflict' ? 'conflict' : 'error', error: reply.error?.message } : value);
-      return;
+      const failed: BoardSession = { ...current, state: reply.error?.code === 'conflict' ? 'conflict' : 'error', error: reply.error?.message };
+      setSession(failed); sessionRef.current = failed;
+      return undefined;
     }
     const snapshot = (reply.data as { snapshot: BoardSnapshot }).snapshot;
-    setSession({ snapshot, state: 'clean' });
+    const saved: BoardSession = { snapshot, state: 'clean' };
+    setSession(saved); sessionRef.current = saved;
     setRecoveries(list => list.filter(item => item.draft.boardPath !== snapshot.path));
     void refreshList();
+    return saved;
   }, [command, refreshList]);
 
   const scheduleSave = useCallback((current: BoardSession) => {
@@ -123,16 +129,26 @@ export function BoardWorkspace({ command }: { command: Command }) {
   }, [scheduleSave]);
 
   const openBoard = useCallback(async (path: string) => {
+    const current = sessionRef.current;
+    if (current && current.snapshot.path !== path && current.state !== 'clean') {
+      const saved = await save(current);
+      if (!saved || saved.state !== 'clean') return;
+    }
     const reply = await command({ action: 'board:open', path });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardOpenReply;
     setSession({ snapshot: data.snapshot, state: 'clean', recovery: data.recovery });
     setSelected(undefined); setTextDraft(undefined); setTextEditing(undefined); setMessage(undefined);
     history.current = { past: [], future: [] };
-  }, [command]);
+  }, [command, save]);
 
   const createBoard = async () => {
     if (!newTitle.trim()) return;
+    const current = sessionRef.current;
+    if (current && current.state !== 'clean') {
+      const saved = await save(current);
+      if (!saved || saved.state !== 'clean') return;
+    }
     const reply = await command({ action: 'board:create', title: newTitle.trim() });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardCreateReply;
@@ -143,8 +159,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
   const renameBoard = async () => {
     const current = sessionRef.current;
     if (!current || !renameTitle.trim()) return;
-    await save(current);
-    const latest = sessionRef.current;
+    const latest = await save(current);
     if (!latest || latest.state !== 'clean') return;
     const reply = await command({ action: 'board:rename', path: latest.snapshot.path, title: renameTitle.trim() });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
@@ -260,8 +275,8 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const target = event.currentTarget as HTMLElement; target.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const dx = (pointer.clientX - start.x) / zoom;
-      let width = Math.max(60, element.width + dx);
-      let height = element.type === 'image' ? width / ratio : Math.max(48, element.height + (pointer.clientY - start.y) / zoom);
+      const width = Math.max(60, element.width + dx);
+      const height = element.type === 'image' ? width / ratio : Math.max(48, element.height + (pointer.clientY - start.y) / zoom);
       const now = sessionRef.current; if (!now) return;
       const elements = now.snapshot.document.elements.map(item => item.elementId === element.elementId ? { ...item, width, height } : item);
       const next = { ...now, snapshot: { ...now.snapshot, document: { ...now.snapshot.document, elements } }, state: 'dirty' as const };
@@ -382,7 +397,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
           <div className="board-header-actions"><span className={`board-save-state ${session.state}`}>{saveLabel}</span><button disabled={session.state === 'clean' || session.state === 'saving' || session.state === 'conflict'} onClick={() => void save()}>Salva <kbd>Ctrl S</kbd></button></div>
         </header>
         {message && <div className="board-notice" role="alert">{message}<button onClick={() => setMessage(undefined)}>Chiudi</button></div>}
-        {session.recovery && <div className="board-notice"><strong>È disponibile una recovery più recente.</strong><div><button onClick={restoreRecovery}>Ripristina recovery</button><button onClick={() => void discardRecovery()}>Scarta recovery</button></div></div>}
+        {session.recovery && <div className="board-notice"><strong>È disponibile una recovery locale.</strong><div><button onClick={restoreRecovery}>Ripristina recovery</button><button onClick={() => void discardRecovery()}>Scarta recovery</button></div></div>}
         {session.state === 'conflict' && <div className="board-notice" role="alert"><strong>La board è cambiata anche sul disco.</strong><p>{session.error}</p><div><button onClick={() => void reloadDisk()}>Usa versione su disco</button><button onClick={() => void overwriteAfterConflict()}>Usa la mia versione</button></div></div>}
         {session.state === 'error' && <div className="board-notice" role="alert">{session.error}</div>}
         <div className="board-toolbar" role="toolbar" aria-label="Strumenti board">
