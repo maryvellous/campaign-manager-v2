@@ -37,6 +37,7 @@ export interface BoardTokenElement extends BoardBoxElementBase {
   type: 'token';
   name: string;
   assetPath?: string;
+  characterNoteId?: string;
 }
 
 export interface BoardCardElement extends BoardBoxElementBase {
@@ -195,7 +196,14 @@ export function parseBoardDocument(value: unknown): BoardDocument {
       if (typeof element.name !== 'string' || !element.name.trim()) throw new CampaignError('metadata_invalid', 'Nome token non valido.');
       if (element.assetPath !== undefined && typeof element.assetPath !== 'string') throw new CampaignError('metadata_invalid', 'Avatar token non valido.');
       const assetPath = element.assetPath === undefined ? undefined : validateBoardAssetPath(element.assetPath);
-      return { ...box, type: 'token', name: element.name.trim(), ...(assetPath ? { assetPath } : {}) };
+      const characterNoteId = element.characterNoteId === undefined ? undefined : validateNoteId(element.characterNoteId as string);
+      return {
+        ...box,
+        type: 'token',
+        name: element.name.trim(),
+        ...(assetPath ? { assetPath } : {}),
+        ...(characterNoteId ? { characterNoteId } : {})
+      };
     }
     if (element.type === 'card') {
       if (element.cardKind !== 'note' && element.cardKind !== 'excerpt') throw new CampaignError('metadata_invalid', 'Tipo card board non valido.');
