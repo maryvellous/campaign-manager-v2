@@ -87,6 +87,47 @@ else {
               clipboard.writeText(liveService.state.joinCode);
               return { ok: true, data: liveService.state };
             }
+            case 'live:boards': {
+              boardService.bind(service.state.campaign);
+              const listed = await boardService.list();
+              return { ok: true, data: listed.boards };
+            }
+            case 'live:publishBoard': {
+              boardService.bind(service.state.campaign);
+              const boardPath = text(command.path, 2000);
+              const prepared = await boardService.liveProjection(boardPath);
+              const existing = liveService.state.liveBoards.some(board => board.boardId === prepared.board.boardId);
+              const result = existing
+                ? await liveService.switchBoard(prepared.board.boardId)
+                : await liveService.publishBoard(prepared.board.title, prepared.board, assetPath => boardService.liveAsset(assetPath));
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:resetBoard': {
+              boardService.bind(service.state.campaign);
+              const prepared = await boardService.liveProjection(text(command.path, 2000));
+              const result = await liveService.publishBoard(prepared.board.title, prepared.board, assetPath => boardService.liveAsset(assetPath), true);
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:unpublish': {
+              const result = await liveService.unpublish();
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:elements': {
+              boardService.bind(service.state.campaign);
+              return { ok: true, data: await boardService.liveElementList(text(command.path, 2000)) };
+            }
+            case 'live:revealElement': {
+              boardService.bind(service.state.campaign);
+              const prepared = await boardService.liveElement(text(command.path, 2000), text(command.elementId, 160));
+              if (!liveService.state.activeBoardId || prepared.boardId !== liveService.state.activeBoardId) throw new CampaignError('conflict', 'La board selezionata non è la scena live attiva.');
+              const result = await liveService.revealElement(prepared.boardId, prepared.element, assetPath => boardService.liveAsset(assetPath));
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:hideElement': {
+              if (!liveService.state.activeBoardId) throw new CampaignError('not_found', 'Nessuna board live attiva.');
+              const result = await liveService.hideElement(liveService.state.activeBoardId, text(command.elementId, 160));
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
             case 'boards:list': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.list() };
             case 'board:create': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.create(text(command.title, 250)) };
             case 'board:open': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.open(text(command.path, 2000)) };
