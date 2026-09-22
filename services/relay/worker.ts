@@ -367,10 +367,16 @@ export class SessionDirectory {
       const instanceId = typeof data.instanceId === 'string' ? data.instanceId : '';
       if (!pairingCode || !instanceId) return json(safeError('PAYLOAD_INVALID', 'Pairing non valido.'), 400);
       if (!this.allowPairAttempt(instanceId)) return json(safeError('RATE_LIMITED', 'Troppi tentativi di pairing.'), 429);
+      const pending = model.pairings[pairingCode];
+      const previous = pending ? model.activityBindingForSession(pending.liveSessionId) : undefined;
       const binding = model.consumeActivityPairing(pairingCode, instanceId);
       if (!binding) return json(safeError('CODE_INVALID', 'Pairing scaduto, già usato o non valido.'), 400);
       await this.persist(model);
-      return json({ bound: true });
+      return json({
+        bound: true,
+        liveSessionId: binding.liveSessionId,
+        ...(previous && previous.instanceId !== instanceId ? { previousInstanceId: previous.instanceId } : {})
+      });
     }
 
     if (url.pathname === '/remove') {
@@ -565,6 +571,20 @@ export class LiveSession {
       const credential = bearer(request);
       if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
       return resultResponse(await model.authorizeActivityPairing(credential));
+    }
+
+    if (request.method === 'POST' && url.pathname === '/activity-instance-replaced') {
+      const body = await requestJson(request) as { instanceId?: unknown } | undefined;
+      if (typeof body?.instanceId !== 'string') return json(safeError('PAYLOAD_INVALID', 'Activity instance non valida.'), 400);
+      const revokedParticipantIds = model.revokeActivityInstance(body.instanceId);
+      await this.persist(model);
+      for (const participantId of revokedParticipantIds) {
+        for (const socket of this.state.getWebSockets(`participant:${participantId}`)) {
+          try { socket.close(4004, 'activity_replaced'); } catch { /* already closed */ }
+        }
+      }
+      if (revokedParticipantIds.length) this.hostSnapshot(model);
+      return json({ revoked: revokedParticipantIds.length });
     }
 
     if (request.method === 'POST' && url.pathname === '/activity-join') {
@@ -941,7 +961,14 @@ export default {
     if (request.method === 'POST' && url.pathname === '/api/activity/pair') {
       const input = validateActivityPairRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Pairing Activity non valido.'), 400);
-      return directoryCall(env, '/pairing-consume', input);
+      const paired = await directoryCall(env, '/pairing-consume', input);
+      if (!paired.ok) return paired;
+      const value = await paired.json() as { bound?: unknown; liveSessionId?: unknown; previousInstanceId?: unknown };
+      if (value.bound !== true || typeof value.liveSessionId !== 'string') return json(safeError('INTERNAL_ERROR', 'Binding Activity non valido.'), 500);
+      if (typeof value.previousInstanceId === 'string') {
+        await forwardSession(env, value.liveSessionId, '/activity-instance-replaced', new Request(request.url, { method: 'POST' }), { instanceId: value.previousInstanceId });
+      }
+      return json({ bound: true });
     }
 
     if (request.method === 'POST' && url.pathname === '/api/activity/join') {
