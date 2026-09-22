@@ -48,6 +48,33 @@ type ApiFailure = LiveApiError['error'];
 type Camera = { x: number; y: number; zoom: number };
 
 const storageKey = 'cmv2-live-resume-v1';
+const activityStoragePrefix = 'cmv2-discord-resume-v1:';
+
+function storedActivityResume(instanceId: string): ActivityResume | undefined {
+  try {
+    const value = JSON.parse(localStorage.getItem(activityStoragePrefix + instanceId) ?? 'null') as Partial<ActivityResume> | null;
+    if (!value || value.kind !== 'activity' || value.instanceId !== instanceId || typeof value.liveSessionId !== 'string' || typeof value.participantId !== 'string' || typeof value.activityCredential !== 'string' || typeof value.displayName !== 'string') return undefined;
+    return {
+      kind: 'activity',
+      instanceId,
+      liveSessionId: value.liveSessionId,
+      participantId: value.participantId,
+      activityCredential: value.activityCredential,
+      displayName: value.displayName
+    };
+  } catch { return undefined; }
+}
+
+function saveActivityResume(resume: ActivityResume | undefined): void {
+  if (resume) localStorage.setItem(activityStoragePrefix + resume.instanceId, JSON.stringify(resume));
+  else {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(activityStoragePrefix)) localStorage.removeItem(key);
+    }
+  }
+}
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 function storedResume(): StoredResume | undefined {
@@ -566,11 +593,88 @@ async function activityFetch<T>(path: string, init: RequestInit = {}): Promise<{
 }
 
 function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivityContext }) {
-  const [status, setStatus] = useState<'booting' | 'unbound' | 'bound' | 'error'>('booting');
+  const [status, setStatus] = useState<'booting' | 'unbound' | 'authorizing' | 'error'>('booting');
   const [pairingCode, setPairingCode] = useState('');
   const [error, setError] = useState<string>();
   const [pairing, setPairing] = useState(false);
+  const [session, setSession] = useState<ActivitySessionBootstrap>();
   const instanceId = useRef(initialContext.instanceId);
+  const readySdk = useRef<ReadyDiscordActivity>();
+  const config = useRef<ActivityConfig>();
+
+  const enterBoundActivity = useCallback(async () => {
+    const ready = readySdk.current;
+    const currentConfig = config.current;
+    if (!ready || !currentConfig?.clientId) return;
+
+    setStatus('authorizing');
+    setError(undefined);
+
+    const prior = storedActivityResume(instanceId.current);
+    if (prior) {
+      const resumed = await activityFetch<ActivityResumeResponse>('/api/activity/resume', {
+        method: 'POST',
+        body: JSON.stringify({
+          instanceId: prior.instanceId,
+          participantId: prior.participantId,
+          activityCredential: prior.activityCredential
+        })
+      });
+      if (resumed.ok) {
+        const next = { ...prior, liveSessionId: resumed.value.liveSessionId, displayName: resumed.value.displayName };
+        saveActivityResume(next);
+        setSession({ resume: next, ticket: resumed.value.ticket });
+        return;
+      }
+      if (resumed.error.code === 'SESSION_ENDED' || resumed.error.code === 'SESSION_NOT_FOUND' || resumed.error.code === 'AUTH_FAILED') {
+        saveActivityResume(undefined);
+      }
+    }
+
+    if (!currentConfig.identityReady) {
+      setError('L’identità Discord server-side non è ancora configurata sul relay.');
+      setStatus('error');
+      return;
+    }
+
+    try {
+      const authorization = await ready.sdk.commands.authorize({
+        client_id: currentConfig.clientId,
+        response_type: 'code',
+        state: '',
+        prompt: 'none',
+        scope: ['identify']
+      });
+      if (!authorization?.code) throw new Error('Discord non ha restituito un codice OAuth.');
+
+      const joined = await activityFetch<ActivityJoinResponse>('/api/activity/join', {
+        method: 'POST',
+        body: JSON.stringify({ instanceId: instanceId.current, code: authorization.code })
+      });
+      if (!joined.ok) {
+        setError(joined.error.message);
+        setStatus('error');
+        return;
+      }
+
+      const authenticated = await ready.sdk.commands.authenticate({ access_token: joined.value.accessToken });
+      if (!authenticated) throw new Error('Discord non ha completato authenticate.');
+
+      const resume: ActivityResume = {
+        kind: 'activity',
+        instanceId: instanceId.current,
+        liveSessionId: joined.value.liveSessionId,
+        participantId: joined.value.participantId,
+        activityCredential: joined.value.activityCredential,
+        displayName: joined.value.displayName
+      };
+      saveActivityResume(resume);
+      setSession({ resume, ticket: joined.value.ticket });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Autenticazione Discord non riuscita.');
+      setStatus('error');
+    }
+  }, []);
 
   const readBinding = useCallback(async () => {
     const result = await activityFetch<unknown>(`/api/activity/instances/${encodeURIComponent(instanceId.current)}`, { method: 'GET' });
@@ -578,8 +682,9 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
     const binding = validateActivityBindingStatus(result.value);
     if (!binding) { setError('Il relay ha restituito uno stato Activity non valido.'); setStatus('error'); return; }
     setError(undefined);
-    setStatus(binding.bound ? 'bound' : 'unbound');
-  }, []);
+    if (binding.bound) await enterBoundActivity();
+    else setStatus('unbound');
+  }, [enterBoundActivity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -594,6 +699,8 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       try {
         const ready = await readyDiscordActivity(configResult.value.clientId, initialContext);
         if (cancelled) return;
+        config.current = configResult.value;
+        readySdk.current = ready;
         instanceId.current = ready.instanceId;
         await readBinding();
       } catch (failure) {
@@ -619,13 +726,16 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       const binding = validateActivityBindingStatus(result.value);
       if (!binding?.bound) { setError('Il pairing non è stato confermato dal relay.'); return; }
       setPairingCode('');
-      setStatus('bound');
+      await enterBoundActivity();
     } finally { setPairing(false); }
   }
+
+  if (session) return <App activitySession={session} />;
 
   return <main className="player-shell discord-shell">
     <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>Discord Activity</small></span></div>
     {status === 'booting' && <section className="waiting-card"><span className="spinner" /><h1>Avvio Activity…</h1><p>Sto leggendo il contesto dell’istanza Discord.</p></section>}
+    {status === 'authorizing' && <section className="waiting-card"><span className="spinner" /><h1>Ingresso al tavolo…</h1><p>Discord sta verificando identità e appartenenza a questa Activity.</p></section>}
     {status === 'unbound' && <section className="join-card discord-pair-card">
       <span className="eyebrow">COLLEGA QUESTA ACTIVITY</span>
       <h1>Inserisci il pairing del master.</h1>
@@ -636,14 +746,7 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       </form>
       {error && <div className="player-error inline-error" role="alert">{error}</div>}
     </section>}
-    {status === 'bound' && <section className="waiting-card discord-bound-card">
-      <span className="connection-dot online" />
-      <span className="eyebrow">ACTIVITY COLLEGATA</span>
-      <h1>Questa istanza è pronta.</h1>
-      <p>Il pairing è completato. Campaign Manager Desktop resta l’unico host autorevole della sessione.</p>
-      <small>L’ingresso automatico dei giocatori arriva nel prossimo blocco V0.4.</small>
-    </section>}
-    {status === 'error' && <section className="waiting-card"><h1>Activity non disponibile.</h1><p>{error ?? 'Non riesco a inizializzare Discord.'}</p><button onClick={() => void readBinding()}>Riprova stato</button></section>}
+    {status === 'error' && <section className="waiting-card"><h1>Activity non disponibile.</h1><p>{error ?? 'Non riesco a inizializzare Discord.'}</p><button onClick={() => void readBinding()}>Riprova</button></section>}
   </main>;
 }
 
