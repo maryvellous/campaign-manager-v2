@@ -6,7 +6,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { CampaignError, type RecoveryDraft } from '../../../packages/core/src/index';
 import { ioError } from './campaign-repository';
 import { parseBoardDocument, validateBoardPath, type BoardRecoveryDraft } from '../application/board-types';
-import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS, type AiThread, type OpenAiModel } from '../../../packages/ai/src/index';
+import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS, type AiMessage, type AiThread, type OpenAiModel } from '../../../packages/ai/src/index';
 export interface RecentCampaign { campaignId: string; path: string; name: string }
 export interface Preferences { recent: RecentCampaign[]; lastPath?: string }
 export interface AiPreferences { provider: 'openai'; model: OpenAiModel; encryptedKey?: string; privacyAccepted: boolean }
@@ -167,12 +167,29 @@ export class LocalStore {
     return path.join(this.root, 'campaigns', campaignId, 'ai', 'thread.json');
   }
 
+  private validAiMessage(message: AiMessage): boolean {
+    return Boolean(
+      message
+      && typeof message.id === 'string'
+      && ['user', 'assistant'].includes(message.role)
+      && typeof message.content === 'string'
+      && typeof message.createdAt === 'string'
+      && (message.sources === undefined || (
+        Array.isArray(message.sources)
+        && message.sources.every(source => source
+          && typeof source.noteId === 'string'
+          && typeof source.title === 'string'
+          && typeof source.relativePath === 'string')
+      ))
+    );
+  }
+
   async readAiThread(campaignId: string): Promise<AiThread> {
     try {
       const value: unknown = JSON.parse(await fs.readFile(this.aiThreadFile(campaignId), 'utf8'));
       if (!value || typeof value !== 'object' || !Array.isArray((value as AiThread).messages)) throw new Error('Invalid AI thread');
       const messages = (value as AiThread).messages;
-      if (messages.some(message => !message || typeof message.id !== 'string' || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || typeof message.createdAt !== 'string')) throw new Error('Invalid AI message');
+      if (messages.some(message => !this.validAiMessage(message))) throw new Error('Invalid AI message');
       return { messages: messages.slice(-100) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.warning = 'La conversazione IA locale non è leggibile ed è stata ignorata. Le note sono intatte.';
@@ -181,7 +198,7 @@ export class LocalStore {
   }
 
   async writeAiThread(campaignId: string, thread: AiThread): Promise<void> {
-    if (!Array.isArray(thread.messages) || thread.messages.some(message => !message || typeof message.id !== 'string' || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || typeof message.createdAt !== 'string')) throw new CampaignError('invalid_path', 'Conversazione IA non valida.');
+    if (!Array.isArray(thread.messages) || thread.messages.some(message => !this.validAiMessage(message))) throw new CampaignError('invalid_path', 'Conversazione IA non valida.');
     await this.write(this.aiThreadFile(campaignId), { messages: thread.messages.slice(-100) });
   }
 

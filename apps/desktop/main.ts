@@ -11,6 +11,8 @@ import { CampaignError } from '../../packages/core/src/index';
 import { ioError } from './infrastructure/campaign-repository';
 import { LiveSessionClient } from './application/live-session-client';
 import { AiService } from './application/ai-service';
+import { AiContextError, prepareAiContext } from './application/ai-context';
+import type { AiContextSelection } from '../../packages/ai/src/index';
 
 let window: BrowserWindow;
 let service: CampaignService;
@@ -24,6 +26,15 @@ const page = pathToFileURL(path.join(__dirname, 'index.html')).href;
 function text(value: unknown, limit = Number.MAX_SAFE_INTEGER): string {
   if (typeof value !== 'string' || value.length > limit) throw new CampaignError('invalid_path', 'Richiesta non valida.');
   return value;
+}
+function aiContextSelection(value: unknown): AiContextSelection {
+  if (value === undefined) return { kind: 'campaign' };
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CampaignError('invalid_path', 'Contesto IA non valido.');
+  const input = value as Record<string, unknown>;
+  if (input.kind === 'campaign') return { kind: 'campaign' };
+  if (input.kind === 'note') return { kind: 'note', noteId: text(input.noteId, 2000) };
+  if (input.kind === 'selection') return { kind: 'selection', noteId: text(input.noteId, 2000), selection: text(input.selection, 60_000) };
+  throw new CampaignError('invalid_path', 'Contesto IA non valido.');
 }
 function trusted(event: IpcMainInvokeEvent): boolean { return event.sender === window.webContents && event.senderFrame === window.webContents.mainFrame && event.senderFrame.url === page; }
 async function exportText(content: string) {
@@ -123,7 +134,17 @@ else {
             }
             case 'ai:send': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
-              return { ok: true, data: await aiService.send(text(command.prompt, 20000)) };
+              const prompt = text(command.prompt, 20000);
+              try {
+                const context = await prepareAiContext(service, prompt, aiContextSelection(command.context));
+                return { ok: true, data: await aiService.send(prompt, context) };
+              } catch (error) {
+                if (error instanceof AiContextError) {
+                  const state = aiService.contextError(error.code, error.message);
+                  return { ok: false, data: state, error: { code: error.code, message: error.message } };
+                }
+                throw error;
+              }
             }
             case 'live:state': return { ok: true, data: liveService.state };
             case 'live:start': {
