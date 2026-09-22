@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { envelope, PROTOCOL_VERSION, safeError, validateCameraFocusPayload, validateElementHiddenEvent, validateElementRevealedEvent, validateEnvelope, validateJoinPolicy, validateJoinRequest, validateLiveBoardSnapshot, validatePingPayload, validateResumeRequest, validateTokenAssignRequest, validateTokenClearRequest, validateTokenMovePayload } from '../packages/protocol/src/index';
+import { envelope, PROTOCOL_VERSION, safeError, validateActivityBindingStatus, validateActivityPairRequest, validateActivityPairingCode, validateActivityPairingResponse, validateCameraFocusPayload, validateElementHiddenEvent, validateElementRevealedEvent, validateEnvelope, validateJoinPolicy, validateJoinRequest, validateLiveBoardSnapshot, validatePingPayload, validateResumeRequest, validateTokenAssignRequest, validateTokenClearRequest, validateTokenMovePayload } from '../packages/protocol/src/index';
 
 test('join request accepts readable code and duplicate-safe display names', () => {
   assert.deepEqual(validateJoinRequest({ joinCode: 'ABCD-EFGH', displayName: 'Mary' }), { joinCode: 'ABCD-EFGH', displayName: 'Mary' });
@@ -80,4 +80,22 @@ test('player board snapshot can expose only the current player controllable toke
     controlledTokenIds: ['../bad'],
     elements: []
   }), undefined);
+});
+
+
+test('Discord Activity pairing protocol accepts only opaque instance and short pairing code', () => {
+  assert.deepEqual(validateActivityPairRequest({ instanceId: 'instance_abc.123:test', pairingCode: 'ABC-DEF' }), {
+    instanceId: 'instance_abc.123:test',
+    pairingCode: 'ABC-DEF'
+  });
+  assert.equal(validateActivityPairRequest({ instanceId: '../bad', pairingCode: 'ABC-DEF' }), undefined);
+  assert.equal(validateActivityPairingCode('abc-def'), undefined);
+  assert.equal(validateActivityPairingCode('ABC-DEF'), 'ABC-DEF');
+  assert.deepEqual(validateActivityPairingResponse({ pairingCode: 'ABC-DEF', expiresAt: 123456 }), { pairingCode: 'ABC-DEF', expiresAt: 123456 });
+});
+
+test('unbound Activity status contains no session or campaign data', () => {
+  assert.deepEqual(validateActivityBindingStatus({ bound: false }), { bound: false });
+  assert.deepEqual(validateActivityBindingStatus({ bound: false, liveSessionId: 'session_secret', board: { private: true } }), { bound: false });
+  assert.deepEqual(validateActivityBindingStatus({ bound: true, pairedAt: 123456 }), { bound: true, pairedAt: 123456 });
 });
