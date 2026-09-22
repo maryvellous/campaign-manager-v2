@@ -1,5 +1,5 @@
 import { useEffect, useRef, useState } from 'react';
-export type IconName = 'note' | 'search' | 'graph' | 'board' | 'book' | 'clock' | 'star' | 'settings' | 'folder' | 'plus' | 'back' | 'forward' | 'close' | 'chevron' | 'panel' | 'more' | 'trash' | 'move' | 'rename' | 'refresh';
+export type IconName = 'note' | 'search' | 'graph' | 'board' | 'live' | 'book' | 'clock' | 'star' | 'settings' | 'folder' | 'plus' | 'back' | 'forward' | 'close' | 'chevron' | 'panel' | 'more' | 'trash' | 'move' | 'rename' | 'refresh';
 const paths: Record<IconName, string> = {
   note: 'M5 3h10l4 4v14H5z M14 3v5h5 M8 12h8 M8 16h6',
   search: 'M16 16l5 5 M18 10a8 8 0 1 1-16 0a8 8 0 1 1 16 0',
