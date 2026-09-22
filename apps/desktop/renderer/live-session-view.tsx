@@ -6,6 +6,8 @@ type Command = (input: Record<string, unknown>) => Promise<Reply>;
 type LocalBoard = { path: string; title: string; boardId: string };
 type LocalElement = { elementId: string; type: string; visibleByDefault: boolean; label: string };
 type ElementList = { boardPath: string; boardId: string; title: string; elements: LocalElement[] };
+type ActivityPairing = { pairingCode: string; expiresAt: number };
+type ActivityBinding = { bound: boolean; instanceId?: string; pairedAt?: number };
 
 export function LiveSessionView({ live, command }: { live: DesktopLiveState; command: Command }) {
   const active = !!live.liveSessionId;
@@ -15,6 +17,8 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
   const [busyAction, setBusyAction] = useState<string>();
   const [message, setMessage] = useState<string>();
   const [endPrompt, setEndPrompt] = useState(false);
+  const [activityPairing, setActivityPairing] = useState<ActivityPairing>();
+  const [activityBinding, setActivityBinding] = useState<ActivityBinding>({ bound: false });
 
   const selectedBoard = useMemo(() => boards.find(board => board.path === selectedPath), [boards, selectedPath]);
   const selectedIsActive = !!selectedBoard && selectedBoard.boardId === live.activeBoardId;
@@ -44,6 +48,23 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
 
   useEffect(() => { void loadBoards(); }, [loadBoards]);
   useEffect(() => { void loadElements(selectedPath); }, [loadElements, selectedPath]);
+
+  const loadActivityBinding = useCallback(async () => {
+    if (!active) { setActivityBinding({ bound: false }); setActivityPairing(undefined); return; }
+    const reply = await command({ action: 'live:discordBinding' });
+    if (!reply.ok) return;
+    const binding = reply.data as ActivityBinding | undefined;
+    if (!binding || typeof binding.bound !== 'boolean') return;
+    setActivityBinding(binding);
+    if (binding.bound) setActivityPairing(undefined);
+  }, [active, command]);
+
+  useEffect(() => { void loadActivityBinding(); }, [loadActivityBinding]);
+  useEffect(() => {
+    if (!activityPairing || activityBinding.bound || activityPairing.expiresAt <= Date.now()) return;
+    const timer = window.setInterval(() => void loadActivityBinding(), 2500);
+    return () => window.clearInterval(timer);
+  }, [activityBinding.bound, activityPairing, loadActivityBinding]);
 
   const run = async (key: string, input: Record<string, unknown>, reloadElements = false) => {
     setBusyAction(key); setMessage(undefined);
@@ -81,9 +102,24 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       : { action: 'live:clearToken', tokenId });
   };
 
+  const createActivityPairing = async () => {
+    setBusyAction('discord-pairing'); setMessage(undefined);
+    try {
+      const reply = await command({ action: 'live:createDiscordPairing' });
+      if (!reply.ok) { setMessage(reply.error?.message ?? 'Non riesco a generare il pairing Discord.'); return; }
+      const pairing = reply.data as ActivityPairing | undefined;
+      if (!pairing || typeof pairing.pairingCode !== 'string' || typeof pairing.expiresAt !== 'number') {
+        setMessage('Il relay ha restituito un pairing Discord non valido.');
+        return;
+      }
+      setActivityPairing(pairing);
+      setActivityBinding({ bound: false });
+    } finally { setBusyAction(undefined); }
+  };
+
   return <section className="live-view">
     <header className="live-view-header">
-      <div><span className="eyebrow">V0.3 · LIVE WEB</span><h1>Sessione live</h1><p>Fai entrare i giocatori dal browser e condividi solo ciò che decidi tu.</p></div>
+      <div><span className="eyebrow">V0.4 · LIVE + DISCORD</span><h1>Sessione live</h1><p>Fai entrare i giocatori dal browser e condividi solo ciò che decidi tu.</p></div>
       <div className="live-header-status">{active && <button className="danger subtle" onClick={() => setEndPrompt(true)}>Termina sessione</button>}<span className={`live-status ${live.connected ? 'online' : ''}`}>{active ? live.connected ? 'Relay connesso' : 'Riconnessione' : 'Nessuna sessione'}</span></div>
     </header>
 
@@ -105,6 +141,21 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       <section className="live-card">
         <div className="live-card-heading"><div><span className="eyebrow">INGRESSI</span><h2>Nuovi giocatori</h2></div><label className="live-switch"><input type="checkbox" checked={live.acceptingJoins} onChange={event => void command({ action: 'live:setAccepting', acceptingJoins: event.target.checked })} /><span>{live.acceptingJoins ? 'Aperti' : 'Chiusi'}</span></label></div>
         <p>{live.acceptingJoins ? 'Chi ha un codice valido entra direttamente.' : 'I nuovi join sono bloccati; i partecipanti esistenti possono riconnettersi.'}</p>
+      </section>
+
+      <section className="live-card discord-activity-card">
+        <div className="live-card-heading"><div><span className="eyebrow">DISCORD ACTIVITY</span><h2>{activityBinding.bound ? 'Activity collegata' : 'Collega Discord'}</h2></div><span className={`live-status ${activityBinding.bound ? 'online' : ''}`}>{activityBinding.bound ? 'Collegata' : 'Non collegata'}</span></div>
+        {activityBinding.bound ? <>
+          <p>Questa live è associata a una specifica istanza della Discord Activity. Il desktop resta l’unico host della sessione.</p>
+          <button onClick={() => void loadActivityBinding()}>Aggiorna stato</button>
+        </> : activityPairing && activityPairing.expiresAt > Date.now() ? <>
+          <p>Apri la Activity in Discord e inserisci questo codice master. È monouso e scade alle {new Date(activityPairing.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.</p>
+          <div className="discord-pairing-code" aria-label={`Codice pairing ${activityPairing.pairingCode}`}>{activityPairing.pairingCode}</div>
+          <div className="actions"><button disabled={busyAction === 'discord-pairing'} onClick={() => void createActivityPairing()}>Rigenera</button><button onClick={() => void loadActivityBinding()}>Ho collegato l’Activity</button></div>
+        </> : <>
+          <p>Genera un codice breve da inserire nella Discord Activity del master. Il codice serve solo al pairing dell’istanza e non sostituisce il codice giocatore web.</p>
+          <button className="primary" disabled={busyAction === 'discord-pairing' || !live.connected} onClick={() => void createActivityPairing()}>{busyAction === 'discord-pairing' ? 'Genero…' : 'Genera pairing'}</button>
+        </>}
       </section>
 
       <section className="live-card participants-card">
