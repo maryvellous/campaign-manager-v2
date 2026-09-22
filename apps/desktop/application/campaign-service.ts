@@ -382,9 +382,9 @@ export class CampaignService {
     const boardChange = new Map(boardChanges.map(change => [change.path, change]));
     for (const item of await this.store.listBoardRecovery(repo.metadata.campaignId)) {
       const document = remapBoardNoteSources(item.draft.document, oldId, newId);
-      if (document === item.draft.document) continue;
       const change = boardChange.get(item.draft.boardPath);
       const baseRevision = change && item.draft.baseRevision === change.previousRevision ? change.revision : item.draft.baseRevision;
+      if (document === item.draft.document && baseRevision === item.draft.baseRevision) continue;
       await this.store.putBoardRecovery({ ...item.draft, baseRevision, document });
     }
     const map = (id: string) => remapPath(id, oldId, newId);
