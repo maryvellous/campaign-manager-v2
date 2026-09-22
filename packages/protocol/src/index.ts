@@ -234,6 +234,14 @@ function validateEndpoint(value: unknown): LiveBoardEndpoint | undefined {
   return undefined;
 }
 
+export function validateActivityInstanceId(value: unknown): string | undefined {
+  return activityInstanceId(value) ? value : undefined;
+}
+
+export function validateActivityPairingCode(value: unknown): string | undefined {
+  return activityPairingCode(value) ? value : undefined;
+}
+
 export function validateActivityPairRequest(value: unknown): ActivityPairRequest | undefined {
   if (!object(value) || !activityInstanceId(value.instanceId) || !activityPairingCode(value.pairingCode)) return undefined;
   return { instanceId: value.instanceId, pairingCode: value.pairingCode };
