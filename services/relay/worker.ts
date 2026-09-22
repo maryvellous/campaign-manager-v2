@@ -14,9 +14,13 @@ import {
   validateTokenMovePayload,
   validatePingPayload,
   validateCameraFocusPayload,
+  validateActivityJoinRequest,
   validateActivityPairRequest,
+  validateActivityResumeRequest,
   validateActivityInstanceId,
   type ActivityBindingStatus,
+  type ActivityJoinResponse,
+  type ActivityResumeResponse,
   type ActivityPairingResponse,
   type ConnectionReadyPayload,
   type LiveApiError,
@@ -77,6 +81,8 @@ export interface Env {
   LIVE_ASSETS: R2BucketLike;
   ASSETS: AssetBinding;
   DISCORD_CLIENT_ID?: string;
+  DISCORD_CLIENT_SECRET?: string;
+  DISCORD_BOT_TOKEN?: string;
 }
 
 declare const WebSocketPair: {
@@ -204,6 +210,53 @@ async function reserveActivityPairing(env: Env, liveSessionId: string): Promise<
   throw new Error('Unable to reserve activity pairing code');
 }
 
+interface VerifiedDiscordUser {
+  userId: string;
+  displayName: string;
+  accessToken: string;
+}
+
+function discordIdentityConfigured(env: Env): env is Env & { DISCORD_CLIENT_ID: string; DISCORD_CLIENT_SECRET: string; DISCORD_BOT_TOKEN: string } {
+  return !!env.DISCORD_CLIENT_ID && !!env.DISCORD_CLIENT_SECRET && !!env.DISCORD_BOT_TOKEN;
+}
+
+async function verifyDiscordActivityUser(env: Env & { DISCORD_CLIENT_ID: string; DISCORD_CLIENT_SECRET: string; DISCORD_BOT_TOKEN: string }, code: string, instanceId: string): Promise<VerifiedDiscordUser | undefined> {
+  const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.DISCORD_CLIENT_ID,
+      client_secret: env.DISCORD_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code
+    })
+  });
+  if (!tokenResponse.ok) return undefined;
+  const token = await tokenResponse.json() as { access_token?: unknown; token_type?: unknown };
+  if (typeof token.access_token !== 'string' || !token.access_token || token.token_type !== 'Bearer') return undefined;
+
+  const userResponse = await fetch('https://discord.com/api/v10/users/@me', {
+    headers: { authorization: `Bearer ${token.access_token}` }
+  });
+  if (!userResponse.ok) return undefined;
+  const user = await userResponse.json() as { id?: unknown; username?: unknown; global_name?: unknown };
+  if (typeof user.id !== 'string' || !/^\d{5,32}$/u.test(user.id) || typeof user.username !== 'string' || !user.username) return undefined;
+  const displayName = typeof user.global_name === 'string' && user.global_name.trim()
+    ? user.global_name.trim().slice(0, 80)
+    : user.username.trim().slice(0, 80);
+
+  const instanceResponse = await fetch(
+    `https://discord.com/api/v10/applications/${encodeURIComponent(env.DISCORD_CLIENT_ID)}/activity-instances/${encodeURIComponent(instanceId)}`,
+    { headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } }
+  );
+  if (!instanceResponse.ok) return undefined;
+  const instance = await instanceResponse.json() as { application_id?: unknown; instance_id?: unknown; users?: unknown };
+  if (instance.application_id !== env.DISCORD_CLIENT_ID || instance.instance_id !== instanceId || !Array.isArray(instance.users) || !instance.users.every(value => typeof value === 'string')) return undefined;
+  if (!(instance.users as string[]).includes(user.id)) return undefined;
+
+  return { userId: user.id, displayName: displayName || 'Discord user', accessToken: token.access_token };
+}
+
 export class SessionDirectory {
   private pairAttempts = new Map<string, { startedAt: number; count: number }>();
 
@@ -256,6 +309,12 @@ export class SessionDirectory {
       const binding = liveSessionId ? model.activityBindingForSession(liveSessionId) : undefined;
       const status: ActivityBindingStatus = binding ? { bound: true, instanceId: binding.instanceId, pairedAt: binding.pairedAt } : { bound: false };
       return json(status);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/activity-resolve') {
+      const instanceId = url.searchParams.get('instanceId') ?? '';
+      const binding = instanceId ? model.activityBinding(instanceId) : undefined;
+      return binding ? json({ liveSessionId: binding.liveSessionId }) : json(safeError('SESSION_NOT_FOUND', 'Activity non associata.'), 404);
     }
 
     if (request.method !== 'POST') return json(safeError('PAYLOAD_INVALID', 'Metodo non supportato.'), 405);
