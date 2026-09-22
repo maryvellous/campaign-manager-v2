@@ -197,9 +197,11 @@ function PlayerBoard({
         x: start.x + (nativeEvent.clientX - start.clientX) / camera.zoom,
         y: start.y + (nativeEvent.clientY - start.clientY) / camera.zoom
       };
-      onPreview(element.elementId, latest.x, latest.y);
       const now = performance.now();
-      if (now - lastPreview >= 35) lastPreview = now;
+      if (now - lastPreview >= 35) {
+        lastPreview = now;
+        onPreview(element.elementId, latest.x, latest.y);
+      }
     };
     const up = () => {
       target.removeEventListener('pointermove', move);
