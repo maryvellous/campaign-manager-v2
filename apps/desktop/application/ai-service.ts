@@ -244,7 +244,7 @@ export class AiService {
   }
 
   private parseObject(text: string): Record<string, unknown> {
-    const trimmed = text.trim().replace(/^\`\`\`(?:json)?\s*/iu, '').replace(/\s*\`\`\`$/u, '');
+    const trimmed = text.trim().replace(/^```(?:json)?\s*/iu, '').replace(/\s*```$/u, '');
     let value: unknown;
     try { value = JSON.parse(trimmed); }
     catch { throw new CampaignError('invalid_path', 'Il provider non ha restituito una proposta valida.'); }
