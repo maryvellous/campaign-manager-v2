@@ -350,6 +350,25 @@ export function validateCameraFocusPayload(value: unknown): CameraFocusPayload |
   return { boardId: value.boardId, mode: 'fit' };
 }
 
+export function validateFinalTokenPositionsResponse(value: unknown): FinalTokenPositionsResponse | undefined {
+  if (!object(value) || !Array.isArray(value.boards) || value.boards.length > 1000) return undefined;
+  const boards: FinalBoardTokenPositions[] = [];
+  const boardIds = new Set<string>();
+  for (const rawBoard of value.boards) {
+    if (!object(rawBoard) || !opaqueId(rawBoard.boardId) || !cleanString(rawBoard.title, 500) || !Array.isArray(rawBoard.tokens) || rawBoard.tokens.length > 5000 || boardIds.has(rawBoard.boardId)) return undefined;
+    const tokens: FinalTokenPosition[] = [];
+    const tokenIds = new Set<string>();
+    for (const rawToken of rawBoard.tokens) {
+      if (!object(rawToken) || !opaqueId(rawToken.tokenId) || !finite(rawToken.x) || !finite(rawToken.y) || tokenIds.has(rawToken.tokenId)) return undefined;
+      tokenIds.add(rawToken.tokenId);
+      tokens.push({ tokenId: rawToken.tokenId, x: rawToken.x, y: rawToken.y });
+    }
+    boardIds.add(rawBoard.boardId);
+    boards.push({ boardId: rawBoard.boardId, title: rawBoard.title, tokens });
+  }
+  return { boards };
+}
+
 export function validateEnvelope(value: unknown): ProtocolEnvelope | undefined {
   if (!object(value) || value.protocolVersion !== PROTOCOL_VERSION || typeof value.type !== 'string' || !value.type || !('payload' in value)) return undefined;
   if (value.requestId !== undefined && !opaqueId(value.requestId)) return undefined;
