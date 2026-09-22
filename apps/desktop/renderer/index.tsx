@@ -1,5 +1,5 @@
 import { MarkdownView } from './markdown-view';
-import { BoardWorkspace } from './board-workspace';
+import { BoardWorkspace, type CharacterTokenRequest } from './board-workspace';
 import { LiveSessionView } from './live-session-view';
 import { AiSettingsPanel, AiWorkspace } from './ai-workspace';
 import { parseWikiLinks, resolveWikiLink } from '../../../packages/core/src/markdown';
@@ -27,6 +27,9 @@ const stem = (id: string) => id.split('/').at(-1)?.replace(/\.md$/iu, '') ?? '';
 const parent = (id: string) => id.split('/').slice(0, -1).join('/');
 const title = (doc?: ShellDocument) => !doc ? 'Nuova tab' : doc.draft ? doc.draft.manualTitle || 'Nuova nota' : stem(doc.noteId);
 type Operation = { kind: 'folder' | 'rename' | 'move' | 'saveAs'; id: string; value: string };
+type BoardTransfer =
+  | { kind: 'card'; noteId: string; excerpt?: string; boards: Array<{ path: string; title: string }> }
+  | { kind: 'character-token'; noteId: string; boards: Array<{ path: string; title: string }> };
 function App() {
   const [modes, setModes] = useState<Record<string, boolean>>({}); const [wiki, setWiki] = useState<string>();
   const modesRef = useRef(modes); modesRef.current = modes; const readingPositions = useRef(new Map<string, number>());
@@ -47,7 +50,8 @@ function App() {
   const [viewport, setViewport] = useState(window.innerWidth); const panelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [dropTarget, setDropTarget] = useState<string>(); const [conflictExpanded, setConflictExpanded] = useState(true);
   const [selectedText, setSelectedText] = useState('');
-  const [boardTransfer, setBoardTransfer] = useState<{ noteId: string; excerpt?: string; boards: Array<{ path: string; title: string }> }>();
+  const [boardTransfer, setBoardTransfer] = useState<BoardTransfer>();
+  const [characterTokenRequest, setCharacterTokenRequest] = useState<CharacterTokenRequest>();
   const editor = useRef<HTMLTextAreaElement>(null); const pending = useRef(0); const unsynced = useRef(false); const localBuffer = useRef('');
   const editing = useRef<Promise<unknown>>(Promise.resolve()); const currentId = useRef<string | undefined>(undefined);
   const positions = useRef(new Map<string, { start: number; end: number; scroll: number }>());
