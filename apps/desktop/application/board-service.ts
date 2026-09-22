@@ -133,27 +133,28 @@ export class BoardService {
     const map = (noteId: string) => noteId === oldPath || noteId.startsWith(oldPath + '/') ? newPath + noteId.slice(oldPath.length) : noteId;
     const recoveries = await this.store.listBoardRecovery(campaign.campaignId);
     const recoveryByPath = new Map(recoveries.map(item => [item.draft.boardPath, item]));
+    const remapElement = (element: BoardDocument['elements'][number]): BoardDocument['elements'][number] => {
+      if (element.type === 'card') {
+        const sourceNoteId = map(element.sourceNoteId);
+        return sourceNoteId === element.sourceNoteId
+          ? element
+          : { ...element, sourceNoteId, sourceTitle: sourceNoteId.split('/').at(-1)!.replace(/\.md$/iu, '') };
+      }
+      if (element.type === 'token' && element.characterNoteId) {
+        const characterNoteId = map(element.characterNoteId);
+        return characterNoteId === element.characterNoteId ? element : { ...element, characterNoteId };
+      }
+      return element;
+    };
     for (const board of await repo.discover()) {
       const before = await repo.readBoard(board.path);
-      let changed = false;
-      const elements = before.document.elements.map(element => {
-        if (element.type !== 'card') return element;
-        const sourceNoteId = map(element.sourceNoteId);
-        if (sourceNoteId === element.sourceNoteId) return element;
-        changed = true;
-        return { ...element, sourceNoteId, sourceTitle: sourceNoteId.split('/').at(-1)!.replace(/\.md$/iu, '') };
-      });
+      const elements = before.document.elements.map(remapElement);
+      const changed = elements.some((element, index) => element !== before.document.elements[index]);
       const after = changed ? await repo.saveBoard(board.path, { ...before.document, elements }, before.revision) : before;
       const recovery = recoveryByPath.get(board.path);
       if (!recovery) continue;
-      let recoveryChanged = false;
-      const recoveryElements = recovery.draft.document.elements.map(element => {
-        if (element.type !== 'card') return element;
-        const sourceNoteId = map(element.sourceNoteId);
-        if (sourceNoteId === element.sourceNoteId) return element;
-        recoveryChanged = true;
-        return { ...element, sourceNoteId, sourceTitle: sourceNoteId.split('/').at(-1)!.replace(/\.md$/iu, '') };
-      });
+      const recoveryElements = recovery.draft.document.elements.map(remapElement);
+      const recoveryChanged = recoveryElements.some((element, index) => element !== recovery.draft.document.elements[index]);
       if (!recoveryChanged && after.revision === before.revision) continue;
       await this.store.putBoardRecovery({
         ...recovery.draft,

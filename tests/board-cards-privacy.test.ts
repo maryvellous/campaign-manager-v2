@@ -61,6 +61,7 @@ test('player projection excludes private elements and strips NoteId and board-on
   const publicCard = randomUUID();
   const privateText = randomUUID();
   const privateCard = randomUUID();
+  const publicToken = randomUUID();
   const document = parseBoardDocument({
     schemaVersion: 1,
     boardId: randomUUID(),
@@ -70,19 +71,22 @@ test('player projection excludes private elements and strips NoteId and board-on
       { type: 'text', elementId: privateText, text: 'PRIVATE_TEXT', x: 200, y: 0, width: 120, height: 80, z: 2, locked: false, visibleByDefault: false },
       { type: 'card', cardKind: 'excerpt', elementId: publicCard, sourceNoteId: 'Segreti.md', sourceTitle: 'Segreti', excerpt: 'PUBLIC_EXCERPT', x: 0, y: 150, width: 260, height: 160, z: 3, locked: false, visibleByDefault: true },
       { type: 'card', cardKind: 'excerpt', elementId: privateCard, sourceNoteId: 'Privata.md', sourceTitle: 'Privata', excerpt: 'PRIVATE_EXCERPT', x: 300, y: 150, width: 260, height: 160, z: 4, locked: false, visibleByDefault: false },
-      { type: 'link', elementId: randomUUID(), from: { kind: 'element', elementId: publicText }, to: { kind: 'element', elementId: publicCard }, arrow: 'end', z: 5, locked: false, visibleByDefault: true },
-      { type: 'link', elementId: randomUUID(), from: { kind: 'element', elementId: publicText }, to: { kind: 'element', elementId: privateText }, arrow: 'end', z: 6, locked: false, visibleByDefault: true }
+      { type: 'token', elementId: publicToken, name: 'Nyx', characterNoteId: 'Characters/Nyx.md', x: 620, y: 150, width: 84, height: 84, z: 5, locked: false, visibleByDefault: true },
+      { type: 'link', elementId: randomUUID(), from: { kind: 'element', elementId: publicText }, to: { kind: 'element', elementId: publicCard }, arrow: 'end', z: 6, locked: false, visibleByDefault: true },
+      { type: 'link', elementId: randomUUID(), from: { kind: 'element', elementId: publicText }, to: { kind: 'element', elementId: privateText }, arrow: 'end', z: 7, locked: false, visibleByDefault: true }
     ]
   }) as BoardDocument;
 
   const projection = projectPreparedBoardForPlayers(document);
   const serialized = JSON.stringify(projection);
-  assert.equal(projection.elements.length, 3);
+  assert.equal(projection.elements.length, 4);
   assert.equal(serialized.includes('PRIVATE_TEXT'), false);
   assert.equal(serialized.includes('PRIVATE_EXCERPT'), false);
   assert.equal(serialized.includes('Segreti.md'), false);
   assert.equal(serialized.includes('Privata.md'), false);
   assert.equal(serialized.includes('sourceNoteId'), false);
+  assert.equal(serialized.includes('Characters/Nyx.md'), false);
+  assert.equal(serialized.includes('characterNoteId'), false);
   assert.equal(serialized.includes('visibleByDefault'), false);
   assert.equal(serialized.includes('groupId'), false);
   assert.equal(serialized.includes('"locked"'), false);
@@ -152,4 +156,72 @@ test('card parser rejects accidental Markdown payload on a whole-note card', () 
       x: 0, y: 0, width: 200, height: 100, z: 1, locked: false
     }]
   }), /non deve incorporare il Markdown/u);
+});
+
+
+test('token character-note links remap in board and recovery without changing token display name', async () => {
+  const testFixture = await fixture();
+  try {
+    const created = await testFixture.service.create('Personaggi');
+    const tokenId = randomUUID();
+    const document = parseBoardDocument({
+      ...created.snapshot.document,
+      elements: [{
+        type: 'token',
+        elementId: tokenId,
+        name: 'Nome personalizzato',
+        characterNoteId: 'Characters/Nyx.md',
+        x: 20, y: 30, width: 84, height: 84, z: 1, locked: false
+      }]
+    });
+    const saved = await testFixture.service.save(created.snapshot.path, created.snapshot.revision, document);
+    await testFixture.service.protect(saved.snapshot.path, saved.snapshot.revision, {
+      ...saved.snapshot.document,
+      camera: { x: 12, y: 8, zoom: 1 }
+    });
+
+    await testFixture.service.remapNoteReferences('Characters', 'Archivio/Personaggi');
+
+    const opened = await testFixture.service.open(saved.snapshot.path);
+    const token = opened.snapshot.document.elements.find(element => element.elementId === tokenId);
+    assert.ok(token && token.type === 'token');
+    assert.equal(token.characterNoteId, 'Archivio/Personaggi/Nyx.md');
+    assert.equal(token.name, 'Nome personalizzato');
+
+    const recoveries = (await testFixture.service.list()).recoveries;
+    const recoveryToken = recoveries[0]?.draft.document.elements.find(element => element.elementId === tokenId);
+    assert.ok(recoveryToken && recoveryToken.type === 'token');
+    assert.equal(recoveryToken.characterNoteId, 'Archivio/Personaggi/Nyx.md');
+    assert.equal(recoveryToken.name, 'Nome personalizzato');
+    assert.equal(recoveries[0].draft.baseRevision, opened.snapshot.revision);
+  } finally { await testFixture.cleanup(); }
+});
+
+test('linked token remains valid when the character note is missing and generic tokens remain unchanged', () => {
+  const linked = parseBoardDocument({
+    schemaVersion: 1,
+    boardId: randomUUID(),
+    camera: { x: 0, y: 0, zoom: 1 },
+    elements: [{
+      type: 'token',
+      elementId: randomUUID(),
+      name: 'Nyx',
+      characterNoteId: 'Characters/Missing.md',
+      x: 0, y: 0, width: 84, height: 84, z: 1, locked: false
+    }]
+  });
+  assert.equal(linked.elements[0].type === 'token' && linked.elements[0].characterNoteId, 'Characters/Missing.md');
+
+  const generic = parseBoardDocument({
+    schemaVersion: 1,
+    boardId: randomUUID(),
+    camera: { x: 0, y: 0, zoom: 1 },
+    elements: [{
+      type: 'token',
+      elementId: randomUUID(),
+      name: 'Mostro',
+      x: 0, y: 0, width: 84, height: 84, z: 1, locked: false
+    }]
+  });
+  assert.equal(generic.elements[0].type === 'token' && generic.elements[0].characterNoteId, undefined);
 });

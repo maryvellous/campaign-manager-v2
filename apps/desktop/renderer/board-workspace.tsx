@@ -33,6 +33,13 @@ type BoardCreateReply = BoardListReply & { snapshot: BoardSnapshot };
 type Point = { x: number; y: number };
 type Bounds = { left: number; top: number; right: number; bottom: number };
 
+export interface CharacterTokenRequest {
+  requestId: string;
+  boardPath: string;
+  noteId: string;
+  name: string;
+}
+
 const clone = (document: BoardDocument): BoardDocument => structuredClone(document);
 const byZ = (a: BoardElement, b: BoardElement) => a.z - b.z;
 const nextZ = (document: BoardDocument) => Math.max(0, ...document.elements.map(element => element.z)) + 1;
@@ -165,7 +172,21 @@ function BoardLinkVisual({
   </svg>;
 }
 
-export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds: string[] }) {
+export function BoardWorkspace({
+  command,
+  noteIds,
+  characterTokenRequest,
+  onCharacterTokenRequestHandled,
+  activeBoardPath,
+  onActiveBoardPathChange,
+}: {
+  command: Command;
+  noteIds: string[];
+  characterTokenRequest?: CharacterTokenRequest;
+  onCharacterTokenRequestHandled?: () => void;
+  activeBoardPath?: string;
+  onActiveBoardPathChange?: (boardPath?: string) => void;
+}) {
   const [boards, setBoards] = useState<BoardListItem[]>([]);
   const [recoveries, setRecoveries] = useState<RecoveryItem[]>([]);
   const [session, setSession] = useState<BoardSession>();
@@ -181,6 +202,8 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
   const [textEditing, setTextEditing] = useState<{ elementId: string; text: string }>();
   const [tokenDraft, setTokenDraft] = useState<{ x: number; y: number; name: string }>();
   const [tokenEditing, setTokenEditing] = useState<{ elementId: string; name: string }>();
+  const [characterNoteQuery, setCharacterNoteQuery] = useState('');
+  const [characterTokenPlacement, setCharacterTokenPlacement] = useState<CharacterTokenRequest>();
   const [linkStart, setLinkStart] = useState<BoardLinkEndpoint>();
   const [marquee, setMarquee] = useState<{ start: Point; end: Point }>();
   const history = useRef<{ past: BoardDocument[]; future: BoardDocument[] }>({ past: [], future: [] });
@@ -279,20 +302,41 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
     setSelection([...existing]);
   }, [setSelection]);
 
-  const openBoard = useCallback(async (boardPath: string, force = false) => {
+  const openBoard = useCallback(async (boardPath: string, force = false): Promise<boolean> => {
     const current = sessionRef.current;
-    if (current?.snapshot.path === boardPath && !force) return;
+    if (current?.snapshot.path === boardPath && !force) return true;
     if (current && current.snapshot.path !== boardPath && current.state !== 'clean') {
       const saved = await save(current);
-      if (!saved || saved.state !== 'clean') return;
+      if (!saved || saved.state !== 'clean') return false;
     }
     const reply = await command({ action: 'board:open', path: boardPath });
-    if (!reply.ok) { setMessage(reply.error?.message); return; }
+    if (!reply.ok) { setMessage(reply.error?.message); return false; }
     const data = reply.data as BoardOpenReply;
-    setSession({ snapshot: data.snapshot, state: 'clean', recovery: data.recovery });
+    const next: BoardSession = { snapshot: data.snapshot, state: 'clean', recovery: data.recovery };
+    setSession(next); sessionRef.current = next;
+    onActiveBoardPathChange?.(boardPath);
     setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMessage(undefined);
     history.current = { past: [], future: [] };
-  }, [command, save, setSelection]);
+    return true;
+  }, [command, onActiveBoardPathChange, save, setSelection]);
+
+  useEffect(() => {
+    if (characterTokenRequest || !activeBoardPath || sessionRef.current) return;
+    void openBoard(activeBoardPath).then(opened => { if (!opened) onActiveBoardPathChange?.(undefined); });
+  }, [activeBoardPath, characterTokenRequest, onActiveBoardPathChange, openBoard]);
+
+  useEffect(() => {
+    let alive = true;
+    if (!characterTokenRequest) return () => { alive = false; };
+    void openBoard(characterTokenRequest.boardPath).then(opened => {
+      if (!alive) return;
+      if (!opened) { onCharacterTokenRequestHandled?.(); return; }
+      setCharacterTokenPlacement(characterTokenRequest);
+      setTool('select');
+      setMessage(`Clicca sulla board per posizionare il token di ${characterTokenRequest.name}. Esc per annullare.`);
+    });
+    return () => { alive = false; };
+  }, [characterTokenRequest?.requestId, openBoard, onCharacterTokenRequestHandled]);
 
   const createBoard = async () => {
     if (!newTitle.trim()) return;
@@ -305,7 +349,8 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardCreateReply;
     setBoards(data.boards); setRecoveries(data.recoveries); setNewTitle('');
-    setSession({ snapshot: data.snapshot, state: 'clean' }); setSelection([]); history.current = { past: [], future: [] };
+    const next: BoardSession = { snapshot: data.snapshot, state: 'clean' };
+    setSession(next); sessionRef.current = next; onActiveBoardPathChange?.(data.snapshot.path); setSelection([]); history.current = { past: [], future: [] };
   };
 
   const renameBoard = async () => {
@@ -316,7 +361,8 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
     const reply = await command({ action: 'board:rename', path: latest.snapshot.path, title: renameTitle.trim() });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardCreateReply;
-    setBoards(data.boards); setRecoveries(data.recoveries); setSession({ snapshot: data.snapshot, state: 'clean' }); setRenaming(false);
+    const next: BoardSession = { snapshot: data.snapshot, state: 'clean' };
+    setBoards(data.boards); setRecoveries(data.recoveries); setSession(next); sessionRef.current = next; onActiveBoardPathChange?.(data.snapshot.path); setRenaming(false);
   };
 
   const restoreRecovery = () => {
@@ -382,6 +428,13 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
   const changeElement = (elementId: string, updater: (element: BoardElement) => BoardElement, remember = true) => {
     const current = sessionRef.current; if (!current) return;
     applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => element.elementId === elementId ? updater(element) : element) }, remember);
+  };
+
+  const setCharacterNoteLink = (elementId: string, noteId?: string) => {
+    changeElement(elementId, element => element.type === 'token'
+      ? { ...element, ...(noteId ? { characterNoteId: noteId } : { characterNoteId: undefined }) }
+      : element);
+    setCharacterNoteQuery('');
   };
 
   const toggleLock = useCallback(() => {
@@ -659,6 +712,29 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
   const viewportPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const current = sessionRef.current; if (!current) return;
     const point = worldPoint(event.clientX, event.clientY);
+    if (characterTokenPlacement && current.snapshot.path === characterTokenPlacement.boardPath) {
+      if (event.button !== 0) return;
+      const element: BoardTokenElement = {
+        type: 'token',
+        elementId: crypto.randomUUID(),
+        name: characterTokenPlacement.name,
+        characterNoteId: characterTokenPlacement.noteId,
+        x: point.x,
+        y: point.y,
+        width: 84,
+        height: 84,
+        z: nextZ(current.snapshot.document),
+        locked: false,
+        visibleByDefault: false
+      };
+      applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
+      setSelection([element.elementId]);
+      setCharacterTokenPlacement(undefined);
+      setMessage(undefined);
+      setTool('select');
+      onCharacterTokenRequestHandled?.();
+      return;
+    }
     if (tool === 'text') { setTextDraft({ ...point, text: '' }); setSelection([]); return; }
     if (tool === 'token') { setTokenDraft({ ...point, name: '' }); setSelection([]); return; }
     if (tool === 'link') { linkEndpoint({ kind: 'point', ...point }); return; }
@@ -727,16 +803,20 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
         return;
       }
       if (event.key === 'Escape') {
+        if (characterTokenPlacement) { setCharacterTokenPlacement(undefined); onCharacterTokenRequestHandled?.(); }
         setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMarquee(undefined); setMessage(undefined); setTool('select');
       }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
-  }, [deleteSelection, duplicateSelection, groupSelection, nudgeSelection, save, setSelection, undo]);
+  }, [characterTokenPlacement, deleteSelection, duplicateSelection, groupSelection, nudgeSelection, onCharacterTokenRequestHandled, save, setSelection, undo]);
 
   const current = session?.snapshot.document;
   const primaryId = selectedIds.at(-1);
   const currentElement = current?.elements.find(element => element.elementId === primaryId);
   const selection = selectedElements();
+  const linkedCharacterNoteId = currentElement?.type === 'token' ? currentElement.characterNoteId : undefined;
+  const linkedCharacterMissing = !!linkedCharacterNoteId && !noteIds.includes(linkedCharacterNoteId);
+  const characterNoteMatch = noteIds.find(noteId => noteId.toLocaleLowerCase() === characterNoteQuery.trim().toLocaleLowerCase());
   const sameGroup = selection.length > 0 && !!selection[0].groupId && selection.every(element => element.groupId === selection[0].groupId);
   const allLocked = selection.length > 0 && selection.every(element => element.locked);
   const allVisible = selection.length > 0 && selection.every(element => element.visibleByDefault === true);
@@ -745,9 +825,9 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
 
   return <div className="boards-workspace">
     <aside className="boards-list">
-      <div className="boards-list-heading"><div><span className="eyebrow">V0.2</span><h2>Board</h2></div><button title="Aggiorna elenco" onClick={() => void refreshList()}>↻</button></div>
+      <div className="boards-list-heading"><div><span className="eyebrow">V0.6</span><h2>Board</h2></div><button title="Aggiorna elenco" onClick={() => void refreshList()}>↻</button></div>
       <form className="board-new" onSubmit={event => { event.preventDefault(); void createBoard(); }}><input aria-label="Nome nuova board" placeholder="Nuova board…" value={newTitle} onChange={event => setNewTitle(event.target.value)} /><button type="submit" disabled={!newTitle.trim()}>+</button></form>
-      <nav>{boards.map(board => <button key={board.boardId} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => void openBoard(board.path)}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
+      <nav>{boards.map(board => <button key={board.boardId} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => { if (characterTokenPlacement) { setCharacterTokenPlacement(undefined); onCharacterTokenRequestHandled?.(); } void openBoard(board.path); }}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
     </aside>
     <section className="board-main">
       {!session ? <div className="board-empty"><span>◇</span><h1>Prepara una scena</h1><p>Le board restano nella cartella della campagna e funzionano offline.</p></div> : <>
@@ -778,6 +858,21 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
           </div>
           <span className="board-zoom">{selectedIds.length > 1 ? `${selectedIds.length} selezionati · ` : ''}{Math.round(session.snapshot.document.camera.zoom * 100)}%</span>
         </div>
+        {currentElement?.type === 'token' && selectedIds.length === 1 && <section className="board-character-link" aria-label="Nota personaggio del token">
+          <div className="board-character-link-status">
+            <span>Nota personaggio</span>
+            {linkedCharacterNoteId
+              ? <><strong>{linkedCharacterNoteId}</strong>{linkedCharacterMissing && <em>Nota personaggio mancante</em>}</>
+              : <small>Nessuna nota collegata</small>}
+          </div>
+          <div className="board-character-link-actions">
+            <input list="board-character-note-options" aria-label="Cerca nota personaggio" placeholder="Cerca o incolla il percorso di una nota…" value={characterNoteQuery} onChange={event => setCharacterNoteQuery(event.target.value)} />
+            <datalist id="board-character-note-options">{noteIds.map(noteId => <option key={noteId} value={noteId}>{noteId.split('/').at(-1)?.replace(/\.md$/iu, '')}</option>)}</datalist>
+            <button disabled={currentElement.locked || !characterNoteMatch} onClick={() => characterNoteMatch && setCharacterNoteLink(currentElement.elementId, characterNoteMatch)}>{linkedCharacterNoteId ? 'Sostituisci' : 'Collega'}</button>
+            {linkedCharacterNoteId && !linkedCharacterMissing && <button onClick={() => void command({ action: 'note', noteId: linkedCharacterNoteId })}>Apri nota personaggio</button>}
+            {linkedCharacterNoteId && <button disabled={currentElement.locked} onClick={() => setCharacterNoteLink(currentElement.elementId)}>Scollega</button>}
+          </div>
+        </section>}
         <input ref={imageInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importImageElement(file); event.currentTarget.value = ''; }} />
         <input ref={tokenAvatarInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importTokenAvatar(file); event.currentTarget.value = ''; }} />
         <div ref={viewport} className={`board-viewport tool-${tool}`} onPointerDown={viewportPointerDown} onWheel={zoom}
