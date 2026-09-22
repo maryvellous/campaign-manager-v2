@@ -407,12 +407,13 @@ export class LiveSessionModel {
     });
   }
 
-  async resumeDiscordParticipant(instanceId: string, participantId: string, activityCredential: string, now = Date.now()): Promise<SessionResult<{ ticket: string; displayName: string }>> {
+  async resumeDiscordParticipant(instanceId: string, participantId: string, activityCredential: string, now = Date.now()): Promise<SessionResult<{ ticket: string; displayName: string; discordUserId: string }>> {
     if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
     const participant = this.record.participants.find(item => item.participantId === participantId);
     if (!participant || participant.activityInstanceId !== instanceId || !participant.activityCredentialHash) return fail('AUTH_FAILED', 'Credenziale Activity non valida.');
     if (await secretHash(activityCredential) !== participant.activityCredentialHash) return fail('AUTH_FAILED', 'Credenziale Activity non valida.');
-    return ok({ ticket: await this.issueTicket('player', participantId, now), displayName: participant.displayName });
+    if (!participant.discordUserId) return fail('AUTH_FAILED', 'Identità Discord del partecipante non valida.');
+    return ok({ ticket: await this.issueTicket('player', participantId, now), displayName: participant.displayName, discordUserId: participant.discordUserId });
   }
 
   async consumeTicket(ticket: string, now = Date.now()): Promise<SessionResult<TicketIdentity>> {
