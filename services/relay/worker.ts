@@ -1,18 +1,25 @@
 import {
   envelope,
   safeError,
+  validateBoardIdRequest,
   validateEnvelope,
+  validateHideElementRequest,
   validateJoinPolicy,
   validateJoinRequest,
+  validatePublishBoardRequest,
   validateResumeRequest,
+  validateRevealElementRequest,
   type ConnectionReadyPayload,
   type LiveApiError,
+  type LiveBoardElement,
+  type LiveBoardPayload,
   type SessionSummary
 } from '../../packages/protocol/src/index';
 import {
   createResponse,
   LiveSessionModel,
   randomJoinCode,
+  randomOpaque,
   SessionDirectoryModel,
   type LiveSessionRecord,
   type TicketIdentity
@@ -37,10 +44,20 @@ interface DurableObjectNamespaceLike {
 }
 
 interface AssetBinding { fetch(request: Request): Promise<Response> }
+interface R2ObjectLike {
+  body: ReadableStream<Uint8Array> | null;
+  httpMetadata?: { contentType?: string };
+}
+interface R2BucketLike {
+  put(key: string, value: ArrayBuffer | Uint8Array | ReadableStream, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
+  get(key: string): Promise<R2ObjectLike | null>;
+  head(key: string): Promise<unknown | null>;
+}
 
 export interface Env {
   LIVE_SESSIONS: DurableObjectNamespaceLike;
   SESSION_DIRECTORY: DurableObjectNamespaceLike;
+  LIVE_ASSETS: R2BucketLike;
   ASSETS: AssetBinding;
 }
 
@@ -62,11 +79,16 @@ function json(value: unknown, status = 200): Response {
 function errorStatus(error: LiveApiError): number {
   switch (error.error.code) {
     case 'AUTH_FAILED': return 401;
-    case 'PERMISSION_DENIED': return 403;
+    case 'PERMISSION_DENIED':
+    case 'TOKEN_NOT_CONTROLLABLE': return 403;
     case 'SESSION_NOT_FOUND': return 404;
     case 'SESSION_ENDED': return 410;
     case 'JOIN_LOCKED':
-    case 'HOST_OFFLINE': return 409;
+    case 'HOST_OFFLINE':
+    case 'BOARD_NOT_ACTIVE':
+    case 'ASSET_UNAVAILABLE':
+    case 'STALE_STATE': return 409;
+    case 'RATE_LIMITED': return 429;
     case 'CODE_INVALID':
     case 'PAYLOAD_INVALID': return 400;
     default: return 500;
@@ -94,6 +116,28 @@ function ticketFromProtocols(request: Request): string | undefined {
   const protocols = (request.headers.get('sec-websocket-protocol') ?? '').split(',').map(value => value.trim());
   const ticketProtocol = protocols.find(value => value.startsWith('cmv2.ticket.'));
   return ticketProtocol?.slice('cmv2.ticket.'.length);
+}
+
+function assetIdsFromElement(element: LiveBoardElement): string[] {
+  if (element.type === 'image') return [element.publishedAssetId];
+  if (element.type === 'token' && element.publishedAssetId) return [element.publishedAssetId];
+  return [];
+}
+
+function assetIdsFromBoard(board: LiveBoardPayload): string[] {
+  return [...new Set(board.elements.flatMap(assetIdsFromElement))];
+}
+
+export async function assetsAvailable(bucket: R2BucketLike, liveSessionId: string, assetIds: string[]): Promise<boolean> {
+  for (const assetId of assetIds) if (!await bucket.head(`${liveSessionId}/${assetId}`)) return false;
+  return true;
+}
+
+function imageMime(bytes: Uint8Array, declared: string): string | undefined {
+  if (declared === 'image/png' && bytes.length >= 8 && [137,80,78,71,13,10,26,10].every((value, index) => bytes[index] === value)) return declared;
+  if (declared === 'image/jpeg' && bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return declared;
+  if (declared === 'image/webp' && bytes.length >= 12 && new TextDecoder().decode(bytes.slice(0,4)) === 'RIFF' && new TextDecoder().decode(bytes.slice(8,12)) === 'WEBP') return declared;
+  return undefined;
 }
 
 function sessionStub(env: Env, liveSessionId: string): DurableObjectStubLike {
@@ -186,12 +230,22 @@ export class LiveSession {
     for (const socket of this.state.getWebSockets('host')) this.send(socket, 'session.state', summary);
   }
 
+  private sendPlayerSnapshot(model: LiveSessionModel, socket: WebSocket): void {
+    const snapshot = model.playerSnapshot();
+    if (snapshot.presentation === 'board') this.send(socket, 'board.snapshot', snapshot.board);
+    else this.send(socket, 'presentation.waiting', snapshot);
+  }
+
+  private broadcastPlayerSnapshot(model: LiveSessionModel): void {
+    for (const socket of this.state.getWebSockets('player')) this.sendPlayerSnapshot(model, socket);
+  }
+
   private playersLifecycle(model: LiveSessionModel): void {
     const summary = model.summary();
     for (const socket of this.state.getWebSockets('player')) {
       this.send(socket, 'session.state', {
         lifecycle: summary.lifecycle,
-        presentation: 'waiting',
+        presentation: summary.presentation,
         stateSeq: summary.stateSeq
       });
     }
@@ -203,12 +257,12 @@ export class LiveSession {
       role: identity.role,
       lifecycle: summary.lifecycle,
       stateSeq: summary.stateSeq,
-      presentation: 'waiting',
+      presentation: summary.presentation,
       ...(identity.participantId ? { participantId: identity.participantId } : {})
     };
     this.send(socket, 'connection.ready', payload);
     if (identity.role === 'host') this.send(socket, 'session.state', summary);
-    else this.send(socket, 'presentation.waiting', { lifecycle: summary.lifecycle, presentation: 'waiting', stateSeq: summary.stateSeq, acceptingJoins: summary.acceptingJoins });
+    else this.sendPlayerSnapshot(model, socket);
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -303,6 +357,81 @@ export class LiveSession {
       return resultResponse(result);
     }
 
+    if (request.method === 'POST' && url.pathname === '/asset-authorize') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      return resultResponse(await model.authorizeAssetUpload(credential));
+    }
+
+    if (request.method === 'GET' && url.pathname === '/asset-read-authorize') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale asset mancante.'), 401);
+      return resultResponse(await model.authorizeAssetRead(credential));
+    }
+
+    if (request.method === 'POST' && url.pathname === '/publish-board') {
+      const credential = bearer(request); const input = validatePublishBoardRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      const result = await model.publishBoard(credential, input.board);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/reset-board') {
+      const credential = bearer(request); const input = validatePublishBoardRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      const result = await model.resetBoard(credential, input.board);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/switch-board') {
+      const credential = bearer(request); const input = validateBoardIdRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      const result = await model.switchBoard(credential, input.boardId);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/unpublish') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      const result = await model.unpublish(credential);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/reveal') {
+      const credential = bearer(request); const input = validateRevealElementRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      const result = await model.revealElement(credential, input.boardId, input.element);
+      await this.persist(model);
+      if (result.ok) {
+        this.hostSnapshot(model);
+        for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.revealed', { boardId: input.boardId, element: input.element, stateSeq: result.value.stateSeq });
+      }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/hide') {
+      const credential = bearer(request); const input = validateHideElementRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      const before = model.boardSnapshot(input.boardId);
+      const result = await model.hideElement(credential, input.boardId, input.elementId);
+      await this.persist(model);
+      if (result.ok) {
+        this.hostSnapshot(model);
+        const afterIds = new Set(result.value.elements.map(element => element.elementId));
+        const removedIds = before?.elements.filter(element => !afterIds.has(element.elementId)).map(element => element.elementId) ?? [input.elementId];
+        for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.hidden', { boardId: input.boardId, elementIds: removedIds, stateSeq: result.value.stateSeq });
+      }
+      return resultResponse(result);
+    }
+
     const removeMatch = url.pathname.match(/^\/participants\/([^/]+)\/remove$/u);
     if (request.method === 'POST' && removeMatch) {
       const credential = bearer(request);
@@ -342,8 +471,10 @@ export class LiveSession {
       this.send(webSocket, 'request.rejected', { error: { code: 'PAYLOAD_INVALID', message: 'Messaggio non valido.' } });
       return;
     }
-    // V03-1 has no realtime mutating commands. The socket exists for presence/waiting;
-    // board and token commands are introduced by later V0.3 goals.
+    if (identity.role === 'player' && inbound.type === 'snapshot.request') {
+      this.sendPlayerSnapshot(model, webSocket);
+      return;
+    }
     this.send(webSocket, 'request.rejected', { error: { code: 'PERMISSION_DENIED', message: 'Comando non disponibile in questa versione.' } });
   }
 
@@ -420,9 +551,68 @@ export default {
       return sessionStub(env, liveSessionId).fetch(request);
     }
 
+    const assetMatch = tail.match(/^\/assets\/([A-Za-z0-9_-]+)$/u);
+    if (request.method === 'GET' && assetMatch) {
+      const authorized = await forwardSession(env, liveSessionId, '/asset-read-authorize', request);
+      if (!authorized.ok) return authorized;
+      const publishedAssetId = assetMatch[1];
+      const object = await env.LIVE_ASSETS.get(`${liveSessionId}/${publishedAssetId}`);
+      if (!object?.body) return json(safeError('ASSET_UNAVAILABLE', 'Asset live non disponibile.'), 404);
+      return new Response(object.body, {
+        headers: {
+          'content-type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+          'cache-control': 'private, max-age=3600',
+          'x-content-type-options': 'nosniff'
+        }
+      });
+    }
+
+    if (request.method === 'POST' && tail === '/assets') {
+      const authorized = await forwardSession(env, liveSessionId, '/asset-authorize', request);
+      if (!authorized.ok) return authorized;
+      const declared = (request.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(declared)) return json(safeError('PAYLOAD_INVALID', 'Formato asset live non supportato.'), 400);
+      const contentLength = Number(request.headers.get('content-length') ?? '0');
+      if (Number.isFinite(contentLength) && contentLength > 20 * 1024 * 1024) return json(safeError('PAYLOAD_INVALID', 'Asset live troppo grande.'), 413);
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      const mime = imageMime(bytes, declared);
+      if (!bytes.length || bytes.length > 20 * 1024 * 1024 || !mime) return json(safeError('PAYLOAD_INVALID', 'Asset live non valido.'), 400);
+      const publishedAssetId = randomOpaque('asset', 18);
+      await env.LIVE_ASSETS.put(`${liveSessionId}/${publishedAssetId}`, bytes, { httpMetadata: { contentType: mime } });
+      return json({ publishedAssetId }, 201);
+    }
+
     if (request.method === 'GET' && !tail) return forwardSession(env, liveSessionId, '/summary', request);
     if (request.method === 'POST' && tail === '/host-ticket') return forwardSession(env, liveSessionId, '/host-ticket', request);
     if (request.method === 'POST' && tail === '/join-policy') return forwardSession(env, liveSessionId, '/join-policy', request, await requestJson(request));
+
+    if (request.method === 'POST' && (tail === '/publish-board' || tail === '/reset-board')) {
+      const input = validatePublishBoardRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      if (!await assetsAvailable(env.LIVE_ASSETS, liveSessionId, assetIdsFromBoard(input.board))) return json(safeError('ASSET_UNAVAILABLE', 'Uno o più asset della board non sono disponibili.'), 409);
+      return forwardSession(env, liveSessionId, tail, request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/switch-board') {
+      const input = validateBoardIdRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      return forwardSession(env, liveSessionId, '/switch-board', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/unpublish') return forwardSession(env, liveSessionId, '/unpublish', request);
+
+    if (request.method === 'POST' && tail === '/reveal') {
+      const input = validateRevealElementRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      if (!await assetsAvailable(env.LIVE_ASSETS, liveSessionId, assetIdsFromElement(input.element))) return json(safeError('ASSET_UNAVAILABLE', 'Asset dell’elemento non disponibile.'), 409);
+      return forwardSession(env, liveSessionId, '/reveal', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/hide') {
+      const input = validateHideElementRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      return forwardSession(env, liveSessionId, '/hide', request, input);
+    }
 
     if (request.method === 'POST' && tail === '/rotate-code') {
       const authorization = bearer(request);

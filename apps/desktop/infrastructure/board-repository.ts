@@ -233,7 +233,7 @@ export class BoardRepository {
     } catch (error) { throw ioError(error); }
   }
 
-  async readAsset(assetPath: string): Promise<string> {
+  async readAssetBinary(assetPath: string): Promise<{ mime: string; bytes: Uint8Array }> {
     try {
       validateBoardAssetPath(assetPath);
       const target = await this.target(assetPath);
@@ -244,8 +244,13 @@ export class BoardRepository {
         const bytes = await handle.readFile();
         const { mime } = supportedImage(assetPath);
         if (!validImage(bytes, mime)) throw new CampaignError('invalid_path', 'Asset board non valido.');
-        return `data:${mime};base64,${bytes.toString('base64')}`;
+        return { mime, bytes };
       } finally { await handle.close(); }
     } catch (error) { throw ioError(error); }
+  }
+
+  async readAsset(assetPath: string): Promise<string> {
+    const asset = await this.readAssetBinary(assetPath);
+    return `data:${asset.mime};base64,${Buffer.from(asset.bytes).toString('base64')}`;
   }
 }

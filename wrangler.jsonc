@@ -12,6 +12,12 @@
     "LiveSession": { "type": "durable-object", "storage": "sqlite" },
     "SessionDirectory": { "type": "durable-object", "storage": "sqlite" }
   },
+  "r2_buckets": [
+    {
+      "binding": "LIVE_ASSETS",
+      "bucket_name": "campaign-manager-live-assets"
+    }
+  ],
   "assets": {
     "directory": "./dist/activity",
     "binding": "ASSETS",

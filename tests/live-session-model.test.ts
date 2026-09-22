@@ -134,3 +134,24 @@ test('host disconnect freezes new joins but existing participant can still obtai
   const resumed = await model.resume(joined.value.participantId, joined.value.resumeCredential, 1004);
   assert.equal(resumed.ok, true);
 });
+
+
+test('asset read credential becomes invalid when participant is removed', async () => {
+  const { model, hostCredential, ticket } = await LiveSessionModel.create('ABCD-EFGH', 1000);
+  const host = await model.consumeTicket(ticket, 1001);
+  assert.equal(host.ok, true);
+  if (host.ok) model.connect(host.value);
+
+  const joined = await model.join('ABCD-EFGH', 'Asset reader', 1002);
+  assert.equal(joined.ok, true);
+  if (!joined.ok) return;
+
+  assert.equal((await model.authorizeAssetRead(joined.value.resumeCredential)).ok, true);
+  assert.equal((await model.authorizeAssetRead(hostCredential)).ok, true);
+
+  const removed = await model.removeParticipant(hostCredential, joined.value.participantId);
+  assert.equal(removed.ok, true);
+  const denied = await model.authorizeAssetRead(joined.value.resumeCredential);
+  assert.equal(denied.ok, false);
+  if (!denied.ok) assert.equal(denied.error.error.code, 'AUTH_FAILED');
+});

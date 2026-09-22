@@ -29,7 +29,7 @@ function App() {
   const [backlinks, setBacklinks] = useState<string[]>([]); const [linkWarning, setLinkWarning] = useState<string>();
   const undoStack = useRef(new Map<string, { past: string[]; future: string[] }>());
   const [state, setState] = useState<ShellState>(); const stateRef = useRef<ShellState | undefined>(undefined);
-  const [live, setLive] = useState<DesktopLiveState>({ status: 'idle', connected: false, acceptingJoins: true, participants: [], stateSeq: 0 });
+  const [live, setLive] = useState<DesktopLiveState>({ status: 'idle', connected: false, acceptingJoins: true, participants: [], stateSeq: 0, presentation: 'waiting', activeElementIds: [], liveBoards: [] });
   const [content, setContent] = useState(''); const [error, setError] = useState<Reply['error']>();
   const [busy, setBusy] = useState(false); const actionBusy = useRef(false); const [lastCommand, setLastCommand] = useState<Record<string, unknown>>();
   const [palette, setPalette] = useState(false); const [filter, setFilter] = useState(''); const [operation, setOperation] = useState<Operation>();
