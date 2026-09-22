@@ -220,8 +220,13 @@ function discordIdentityConfigured(env: Env): env is Env & { DISCORD_CLIENT_ID: 
   return !!env.DISCORD_CLIENT_ID && !!env.DISCORD_CLIENT_SECRET && !!env.DISCORD_BOT_TOKEN;
 }
 
-async function verifyDiscordActivityUser(env: Env & { DISCORD_CLIENT_ID: string; DISCORD_CLIENT_SECRET: string; DISCORD_BOT_TOKEN: string }, code: string, instanceId: string): Promise<VerifiedDiscordUser | undefined> {
-  const tokenResponse = await fetch('https://discord.com/api/oauth2/token', {
+export async function verifyDiscordActivityUser(
+  env: Env & { DISCORD_CLIENT_ID: string; DISCORD_CLIENT_SECRET: string; DISCORD_BOT_TOKEN: string },
+  code: string,
+  instanceId: string,
+  fetcher: typeof fetch = fetch
+): Promise<VerifiedDiscordUser | undefined> {
+  const tokenResponse = await fetcher('https://discord.com/api/oauth2/token', {
     method: 'POST',
     headers: { 'content-type': 'application/x-www-form-urlencoded' },
     body: new URLSearchParams({
@@ -235,7 +240,7 @@ async function verifyDiscordActivityUser(env: Env & { DISCORD_CLIENT_ID: string;
   const token = await tokenResponse.json() as { access_token?: unknown; token_type?: unknown };
   if (typeof token.access_token !== 'string' || !token.access_token || token.token_type !== 'Bearer') return undefined;
 
-  const userResponse = await fetch('https://discord.com/api/v10/users/@me', {
+  const userResponse = await fetcher('https://discord.com/api/v10/users/@me', {
     headers: { authorization: `Bearer ${token.access_token}` }
   });
   if (!userResponse.ok) return undefined;
@@ -245,7 +250,7 @@ async function verifyDiscordActivityUser(env: Env & { DISCORD_CLIENT_ID: string;
     ? user.global_name.trim().slice(0, 80)
     : user.username.trim().slice(0, 80);
 
-  const instanceResponse = await fetch(
+  const instanceResponse = await fetcher(
     `https://discord.com/api/v10/applications/${encodeURIComponent(env.DISCORD_CLIENT_ID)}/activity-instances/${encodeURIComponent(instanceId)}`,
     { headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } }
   );
@@ -255,6 +260,25 @@ async function verifyDiscordActivityUser(env: Env & { DISCORD_CLIENT_ID: string;
   if (!(instance.users as string[]).includes(user.id)) return undefined;
 
   return { userId: user.id, displayName: displayName || 'Discord user', accessToken: token.access_token };
+}
+
+export async function verifyDiscordInstanceMembership(
+  env: Env & { DISCORD_CLIENT_ID: string; DISCORD_BOT_TOKEN: string },
+  instanceId: string,
+  discordUserId: string,
+  fetcher: typeof fetch = fetch
+): Promise<boolean> {
+  const response = await fetcher(
+    `https://discord.com/api/v10/applications/${encodeURIComponent(env.DISCORD_CLIENT_ID)}/activity-instances/${encodeURIComponent(instanceId)}`,
+    { headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } }
+  );
+  if (!response.ok) return false;
+  const instance = await response.json() as { application_id?: unknown; instance_id?: unknown; users?: unknown };
+  return instance.application_id === env.DISCORD_CLIENT_ID
+    && instance.instance_id === instanceId
+    && Array.isArray(instance.users)
+    && instance.users.every(value => typeof value === 'string')
+    && (instance.users as string[]).includes(discordUserId);
 }
 
 export class SessionDirectory {
@@ -963,8 +987,11 @@ export default {
       if (typeof liveSessionId !== 'string') return json(safeError('INTERNAL_ERROR', 'Binding Activity non valido.'), 500);
       const resumedResponse = await forwardSession(env, liveSessionId, '/activity-resume', new Request(request.url, { method: 'POST' }), input);
       if (!resumedResponse.ok) return resumedResponse;
-      const resumed = await resumedResponse.json() as { ticket?: unknown; displayName?: unknown };
-      if (typeof resumed.ticket !== 'string' || typeof resumed.displayName !== 'string') return json(safeError('INTERNAL_ERROR', 'Resume Activity non valido.'), 500);
+      const resumed = await resumedResponse.json() as { ticket?: unknown; displayName?: unknown; discordUserId?: unknown };
+      if (typeof resumed.ticket !== 'string' || typeof resumed.displayName !== 'string' || typeof resumed.discordUserId !== 'string') return json(safeError('INTERNAL_ERROR', 'Resume Activity non valido.'), 500);
+      if (!discordIdentityConfigured(env) || !await verifyDiscordInstanceMembership(env, input.instanceId, resumed.discordUserId)) {
+        return json(safeError('AUTH_FAILED', 'Discord non conferma più la presenza in questa Activity.'), 401);
+      }
       const response: ActivityResumeResponse = {
         liveSessionId,
         participantId: input.participantId,
