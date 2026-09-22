@@ -5,6 +5,7 @@ import path from 'node:path';
 import { randomUUID, createHash } from 'node:crypto';
 import { CampaignError, type RecoveryDraft } from '../../../packages/core/src/index';
 import { ioError } from './campaign-repository';
+import { parseBoardDocument, validateBoardPath, type BoardRecoveryDraft } from '../application/board-types';
 export interface RecentCampaign { campaignId: string; path: string; name: string }
 export interface Preferences { recent: RecentCampaign[]; lastPath?: string }
 export class LocalStore {
@@ -43,7 +44,7 @@ export class LocalStore {
       const value = JSON.parse(await fs.readFile(path.join(this.recoveryDirectory(campaignId), '..', 'ui.json'), 'utf8'));
       if (!value || !value.ui || !value.workspace || !Array.isArray(value.workspace.tabs)) throw new Error('Invalid UI');
       for (const key of ['favorites', 'recentNotes', 'expandedFolders'] as const) if (Array.isArray(value.ui[key]) && value.ui[key].every((v: unknown) => typeof v === 'string')) result.ui[key] = value.ui[key];
-      if (['notes', 'search', 'graph', 'compendium', 'recent', 'favorites', 'settings'].includes(value.ui.view)) result.ui.view = value.ui.view;
+      if (['notes', 'search', 'graph', 'boards', 'compendium', 'recent', 'favorites', 'settings'].includes(value.ui.view)) result.ui.view = value.ui.view;
       if (typeof value.ui.selectedFolder === 'string') result.ui.selectedFolder = value.ui.selectedFolder;
       for (const key of ['sidebarCollapsed', 'inspectorCollapsed'] as const) if (typeof value.ui[key] === 'boolean') result.ui[key] = value.ui[key];
       for (const key of ['sidebarWidth', 'inspectorWidth'] as const) if (typeof value.ui[key] === 'number' && Number.isFinite(value.ui[key])) result.ui[key] = Math.max(key === 'sidebarWidth' ? 200 : 240, Math.min(360, value.ui[key]));
@@ -96,5 +97,46 @@ export class LocalStore {
     if (!/^[0-9a-f]{64}$/u.test(key)) throw new CampaignError('invalid_path', 'Bozza non valida.');
     await fs.unlink(path.join(this.recoveryDirectory(campaignId), `${key}.json`)).catch(error => { if (error.code !== 'ENOENT') throw ioError(error); });
   }
+
+  private boardRecoveryDirectory(campaignId: string): string {
+    if (!/^[0-9a-f-]{36}$/iu.test(campaignId)) throw new CampaignError('invalid_path', 'Identità recovery board non valida.');
+    return path.join(this.root, 'campaigns', campaignId, 'board-recovery');
+  }
+  boardRecoveryKey(boardPath: string): string {
+    validateBoardPath(boardPath);
+    return createHash('sha256').update(boardPath.toLowerCase()).digest('hex');
+  }
+  async putBoardRecovery(draft: BoardRecoveryDraft): Promise<string> {
+    const key = this.boardRecoveryKey(draft.boardPath);
+    await this.write(path.join(this.boardRecoveryDirectory(draft.campaignId), `${key}.json`), draft);
+    return key;
+  }
+  async listBoardRecovery(campaignId: string): Promise<Array<{ key: string; draft: BoardRecoveryDraft }>> {
+    const directory = this.boardRecoveryDirectory(campaignId);
+    let names: string[];
+    try { names = await fs.readdir(directory); }
+    catch (error) { if ((error as NodeJS.ErrnoException).code === 'ENOENT') return []; throw ioError(error); }
+    const result: Array<{ key: string; draft: BoardRecoveryDraft }> = [];
+    for (const name of names.filter(name => /^[0-9a-f]{64}\.json$/u.test(name))) {
+      try {
+        const draft = JSON.parse(await fs.readFile(path.join(directory, name), 'utf8')) as BoardRecoveryDraft;
+        if (draft.campaignId !== campaignId || typeof draft.boardPath !== 'string' || typeof draft.baseRevision !== 'string' || typeof draft.capturedAt !== 'string') throw new Error('Invalid board recovery');
+        validateBoardPath(draft.boardPath);
+        draft.document = parseBoardDocument(draft.document);
+        if (this.boardRecoveryKey(draft.boardPath) !== name.slice(0, -5)) throw new Error('Invalid board recovery key');
+        result.push({ key: name.slice(0, -5), draft });
+      } catch {
+        this.warning = 'Una recovery board non è leggibile ed è stata conservata per il recupero manuale.';
+      }
+    }
+    return result;
+  }
+  async removeBoardRecovery(campaignId: string, boardPath: string): Promise<void> {
+    const key = this.boardRecoveryKey(boardPath);
+    await fs.unlink(path.join(this.boardRecoveryDirectory(campaignId), `${key}.json`)).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw ioError(error);
+    });
+  }
+
 }
 

@@ -1,3 +1,4 @@
+import { Buffer } from 'node:buffer';
 import { _electron as electron } from 'playwright';
 import { mkdtemp, mkdir, writeFile, readFile, rm } from 'node:fs/promises';
 import path from 'node:path';

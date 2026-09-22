@@ -317,7 +317,7 @@ export class CampaignService {
     doc.draft.manualTitle = name; doc.error = undefined; if (doc.state !== 'clean') doc.state = 'dirty'; await this.protect();
   }
   async setView(view: View): Promise<void> {
-    if (!['notes', 'search', 'graph', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
+    if (!['notes', 'search', 'graph', 'boards', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
     if (!(await this.leaveCurrent())) throw new CampaignError('conflict', 'Risolvi le modifiche prima di cambiare vista.');
     this.state.ui.view = view; await this.persistUi();
   }
@@ -468,8 +468,8 @@ export class CampaignService {
       const titleNorm = normalizeSearchText(title);
       const pathNorm = normalizeSearchText(document.relativePath);
       const bodyNorm = normalizeSearchText(document.bodyText);
-      let score = -1;
-      let matchKind: SearchMatchKind = 'body';
+      let score: number;
+      let matchKind: SearchMatchKind;
       let snippet: string | undefined;
       if (titleNorm === target) { score = 1000; matchKind = 'title-exact'; }
       else if (titleNorm.startsWith(target)) { score = 900; matchKind = 'title-prefix'; }
@@ -484,7 +484,6 @@ export class CampaignService {
         const end = Math.min(document.bodyText.length, index + 70);
         snippet = document.bodyText.slice(start, end).replace(/\s+/gu, ' ').trim();
       }
-      if (score < 0) continue;
       results.push({ noteId: document.noteId, title, relativePath: document.relativePath, score, matchKind, snippet });
     }
     return results.sort((left, right) => right.score - left.score || normalizeSearchText(left.title).localeCompare(normalizeSearchText(right.title)) || left.relativePath.localeCompare(right.relativePath)).slice(0, 50);
