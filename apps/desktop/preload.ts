@@ -1,6 +1,7 @@
 import { contextBridge, ipcRenderer } from 'electron';
 import type { AppState } from './application/campaign-service';
 import type { DesktopLiveState } from './application/live-session-client';
+import type { AiState } from './application/ai-service';
 contextBridge.exposeInMainWorld('campaign', Object.freeze({
   command: (input: unknown) => ipcRenderer.invoke('campaign:command', input),
   beforeClose: (listener: () => void) => {
@@ -17,6 +18,11 @@ contextBridge.exposeInMainWorld('campaign', Object.freeze({
     const handler = (_event: unknown, state: DesktopLiveState) => listener(state);
     ipcRenderer.on('live:state', handler);
     return () => ipcRenderer.removeListener('live:state', handler);
+  },
+  subscribeAi: (listener: (state: AiState) => void) => {
+    const handler = (_event: unknown, state: AiState) => listener(state);
+    ipcRenderer.on('ai:state', handler);
+    return () => ipcRenderer.removeListener('ai:state', handler);
   }
 }));
 
