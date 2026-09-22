@@ -79,8 +79,8 @@ function App() {
   useEffect(() => {
     const listener = (event: KeyboardEvent) => {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'k') { event.preventDefault(); setPalette(true); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void command({ action: 'save' }); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'e') { event.preventDefault(); void toggleReading(); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's' && stateRef.current?.ui.view !== 'boards') { event.preventDefault(); void command({ action: 'save' }); }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'e' && stateRef.current?.ui.view !== 'boards') { event.preventDefault(); void toggleReading(); }
       if (event.target === editor.current && (event.ctrlKey || event.metaKey) && ['z', 'y'].includes(event.key.toLowerCase())) { event.preventDefault(); undo(event.shiftKey || event.key.toLowerCase() === 'y'); }
       if (event.key === 'Escape' && !palette) { setWiki(undefined); setOperation(undefined); setTitleEditing(false); setDropTarget(undefined); }
     }; window.addEventListener('keydown', listener); return () => window.removeEventListener('keydown', listener);
