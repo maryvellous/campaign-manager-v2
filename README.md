@@ -34,7 +34,7 @@ Il collegamento resta privato: la proiezione player non contiene `characterNoteI
 
 Il Goal V06-2 non aggiunge oggi adapter o UI di integrazione fittizi. La specifica mantiene un confine futuro per provider personaggio reali, ma finché non esiste un contratto API concreto non vengono creati framework plugin, provider EcoGDR/BeFolder simulati o sincronizzazioni implicite.
 
-La V0.5 Assistente IA resta opzionale e local-first: retrieval controllato con fonti verificabili, proposte di modifica/new-note non autorevoli e applicazione soltanto dopo approvazione esplicita. La V0.4 Discord Activity resta implementata e verificata in CI; il collaudo end-to-end dentro un vero client Discord rimane un gate operativo esterno separato.
+La V0.5 Assistente IA resta opzionale e local-first: retrieval controllato con fonti verificabili, proposte di modifica/new-note non autorevoli e applicazione soltanto dopo approvazione esplicita. La V0.4 Discord Activity è implementata, verificata in CI e collaudata dentro un vero client Discord fino a pairing master, consenso OAuth, autenticazione e ingresso nella live session. Il test manuale con più partecipanti reali nella stessa Activity resta un collaudo separato.
 
 ## Persistenza e isolamento
 
@@ -68,4 +68,4 @@ Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale este
 - `packages/protocol`: contratto runtime condiviso desktop/relay/player.
 - `tests`: verifiche di dominio, storage, protocollo e lifecycle live.
 
-Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. Le versioni autocontenute previste dalla roadmap fino alla V0.6 sono implementate e verificate in CI. I milestone successivi richiedono contratti esterni reali: backend/dataset cloud per Auth/Compendio oppure API reali per EcoGDR. Il collaudo reale della Discord Activity resta un gate operativo esterno separato.
+Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. Le versioni autocontenute previste dalla roadmap fino alla V0.6 sono implementate e verificate in CI. I milestone successivi richiedono contratti esterni reali: backend/dataset cloud per Auth/Compendio oppure API reali per EcoGDR. Il flusso reale Discord Activity è stato verificato fino all’ingresso autenticato nella live session; resta soltanto il collaudo manuale multi-partecipante.
