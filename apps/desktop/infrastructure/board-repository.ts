@@ -132,7 +132,7 @@ export class BoardRepository {
 
   async createBoard(title: string): Promise<BoardSnapshot> {
     const boardPath = boardPathFromTitle(title);
-    const document: BoardDocument = { schemaVersion: 1, boardId: randomUUID(), camera: { x: 0, y: 0, zoom: 1 }, elements: [] };
+    const document: BoardDocument = { schemaVersion: 2, boardId: randomUUID(), camera: { x: 0, y: 0, zoom: 1 }, elements: [], connectors: [] };
     return this.saveBoard(boardPath, document, null);
   }
 
