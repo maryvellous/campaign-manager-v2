@@ -138,3 +138,33 @@ test('ping and token preview are blocked when host is reconnecting', async () =>
   assert.equal(preview.ok, false);
   if (!preview.ok) assert.equal(preview.error.error.code, 'HOST_OFFLINE');
 });
+
+
+test('burst of drag previews never replaces or loses the final durable commit', async () => {
+  const f = await fixture();
+  await f.model.assignTokenController(f.hostCredential, f.boardId, f.tokenId, f.one.participantId);
+  const before = f.model.summary().stateSeq;
+
+  for (let index = 0; index < 120; index++) {
+    const preview = f.model.authorizePlayerTokenPreview(f.one.participantId, {
+      boardId: f.boardId,
+      tokenId: f.tokenId,
+      x: 20 + index,
+      y: 30 + index
+    });
+    assert.equal(preview.ok, true);
+  }
+
+  assert.equal(f.model.summary().stateSeq, before);
+  assert.deepEqual(f.model.tokenPosition(f.boardId, f.tokenId), { x: 10, y: 20 });
+
+  const committed = f.model.commitPlayerTokenMove(f.one.participantId, {
+    boardId: f.boardId,
+    tokenId: f.tokenId,
+    x: 420,
+    y: 315
+  });
+  assert.equal(committed.ok, true);
+  assert.equal(f.model.summary().stateSeq, before + 1);
+  assert.deepEqual(f.model.tokenPosition(f.boardId, f.tokenId), { x: 420, y: 315 });
+});
