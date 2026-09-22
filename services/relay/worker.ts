@@ -1,0 +1,444 @@
+import {
+  envelope,
+  safeError,
+  validateJoinPolicy,
+  validateJoinRequest,
+  validateResumeRequest,
+  type ConnectionReadyPayload,
+  type LiveApiError,
+  type SessionSummary
+} from '../../packages/protocol/src/index';
+import {
+  createResponse,
+  LiveSessionModel,
+  randomJoinCode,
+  SessionDirectoryModel,
+  type LiveSessionRecord,
+  type TicketIdentity
+} from './session-model';
+
+interface DurableObjectStorageLike {
+  get<T>(key: string): Promise<T | undefined>;
+  put<T>(key: string, value: T): Promise<void>;
+}
+
+interface DurableObjectStateLike {
+  storage: DurableObjectStorageLike;
+  acceptWebSocket(webSocket: WebSocket, tags?: string[]): void;
+  getWebSockets(tag?: string): WebSocket[];
+}
+
+interface DurableObjectIdLike {}
+interface DurableObjectStubLike { fetch(input: Request | string, init?: RequestInit): Promise<Response> }
+interface DurableObjectNamespaceLike {
+  idFromName(name: string): DurableObjectIdLike;
+  get(id: DurableObjectIdLike): DurableObjectStubLike;
+}
+
+interface AssetBinding { fetch(request: Request): Promise<Response> }
+
+export interface Env {
+  LIVE_SESSIONS: DurableObjectNamespaceLike;
+  SESSION_DIRECTORY: DurableObjectNamespaceLike;
+  ASSETS: AssetBinding;
+}
+
+declare const WebSocketPair: {
+  new(): { 0: WebSocket; 1: WebSocket };
+};
+
+type AttachedSocket = WebSocket & {
+  serializeAttachment?: (value: TicketIdentity) => void;
+  deserializeAttachment?: () => TicketIdentity | undefined;
+};
+
+const jsonHeaders = { 'content-type': 'application/json; charset=utf-8', 'cache-control': 'no-store' };
+
+function json(value: unknown, status = 200): Response {
+  return new Response(JSON.stringify(value), { status, headers: jsonHeaders });
+}
+
+function errorStatus(error: LiveApiError): number {
+  switch (error.error.code) {
+    case 'AUTH_FAILED': return 401;
+    case 'PERMISSION_DENIED': return 403;
+    case 'SESSION_NOT_FOUND': return 404;
+    case 'SESSION_ENDED': return 410;
+    case 'JOIN_LOCKED':
+    case 'HOST_OFFLINE': return 409;
+    case 'CODE_INVALID':
+    case 'PAYLOAD_INVALID': return 400;
+    default: return 500;
+  }
+}
+
+function resultResponse<T>(result: { ok: true; value: T } | { ok: false; error: LiveApiError }): Response {
+  return result.ok ? json(result.value) : json(result.error, errorStatus(result.error));
+}
+
+async function requestJson(request: Request): Promise<unknown> {
+  const contentType = request.headers.get('content-type') ?? '';
+  if (!contentType.toLowerCase().startsWith('application/json')) return undefined;
+  try { return await request.json(); } catch { return undefined; }
+}
+
+function bearer(request: Request): string | undefined {
+  const header = request.headers.get('authorization');
+  if (!header?.startsWith('Bearer ')) return undefined;
+  const value = header.slice('Bearer '.length);
+  return value && value.length <= 256 ? value : undefined;
+}
+
+function ticketFromProtocols(request: Request): string | undefined {
+  const protocols = (request.headers.get('sec-websocket-protocol') ?? '').split(',').map(value => value.trim());
+  const ticketProtocol = protocols.find(value => value.startsWith('cmv2.ticket.'));
+  return ticketProtocol?.slice('cmv2.ticket.'.length);
+}
+
+function sessionStub(env: Env, liveSessionId: string): DurableObjectStubLike {
+  return env.LIVE_SESSIONS.get(env.LIVE_SESSIONS.idFromName(liveSessionId));
+}
+
+function directoryStub(env: Env): DurableObjectStubLike {
+  return env.SESSION_DIRECTORY.get(env.SESSION_DIRECTORY.idFromName('directory'));
+}
+
+async function directoryCall(env: Env, path: string, body?: unknown): Promise<Response> {
+  return directoryStub(env).fetch(`https://directory.internal${path}`, body === undefined ? undefined : {
+    method: 'POST',
+    headers: { 'content-type': 'application/json' },
+    body: JSON.stringify(body)
+  });
+}
+
+async function reserveCode(env: Env, liveSessionId: string): Promise<string> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const joinCode = randomJoinCode();
+    const response = await directoryCall(env, '/reserve', { joinCode, liveSessionId });
+    if (response.ok) return joinCode;
+  }
+  throw new Error('Unable to reserve join code');
+}
+
+export class SessionDirectory {
+  constructor(private readonly state: DurableObjectStateLike) {}
+
+  private async model(): Promise<SessionDirectoryModel> {
+    return new SessionDirectoryModel(await this.state.storage.get<Record<string, string>>('codes') ?? {});
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+    const model = await this.model();
+
+    if (request.method === 'GET' && url.pathname === '/resolve') {
+      const joinCode = url.searchParams.get('code') ?? '';
+      const liveSessionId = model.resolve(joinCode);
+      return liveSessionId ? json({ liveSessionId }) : json(safeError('CODE_INVALID', 'Codice sessione non valido.'), 404);
+    }
+
+    if (request.method !== 'POST') return json(safeError('PAYLOAD_INVALID', 'Metodo non supportato.'), 405);
+    const body = await requestJson(request);
+    if (!body || typeof body !== 'object' || Array.isArray(body)) return json(safeError('PAYLOAD_INVALID', 'Richiesta non valida.'), 400);
+    const data = body as Record<string, unknown>;
+    const joinCode = typeof data.joinCode === 'string' ? data.joinCode : '';
+    const liveSessionId = typeof data.liveSessionId === 'string' ? data.liveSessionId : '';
+
+    if (url.pathname === '/reserve') {
+      if (!joinCode || !liveSessionId || !model.reserve(joinCode, liveSessionId)) return json(safeError('CODE_INVALID', 'Codice non disponibile.'), 409);
+      await this.state.storage.put('codes', model.codes);
+      return json({ ok: true });
+    }
+
+    if (url.pathname === '/remove') {
+      model.remove(joinCode, liveSessionId);
+      await this.state.storage.put('codes', model.codes);
+      return json({ ok: true });
+    }
+
+    return json(safeError('SESSION_NOT_FOUND', 'Endpoint directory non trovato.'), 404);
+  }
+}
+
+export class LiveSession {
+  constructor(private readonly state: DurableObjectStateLike) {}
+
+  private async model(): Promise<LiveSessionModel | undefined> {
+    const record = await this.state.storage.get<LiveSessionRecord>('session');
+    return record ? LiveSessionModel.from(record) : undefined;
+  }
+
+  private async persist(model: LiveSessionModel): Promise<void> {
+    await this.state.storage.put('session', model.record);
+  }
+
+  private socketIdentity(webSocket: WebSocket): TicketIdentity | undefined {
+    return (webSocket as AttachedSocket).deserializeAttachment?.();
+  }
+
+  private send(webSocket: WebSocket, type: string, payload: unknown): void {
+    try { webSocket.send(JSON.stringify(envelope(type, payload))); } catch { /* closing socket */ }
+  }
+
+  private hostSnapshot(model: LiveSessionModel): void {
+    const summary = model.summary();
+    for (const socket of this.state.getWebSockets('host')) this.send(socket, 'session.state', summary);
+  }
+
+  private playersLifecycle(model: LiveSessionModel): void {
+    const summary = model.summary();
+    for (const socket of this.state.getWebSockets('player')) {
+      this.send(socket, 'session.state', {
+        lifecycle: summary.lifecycle,
+        presentation: 'waiting',
+        stateSeq: summary.stateSeq
+      });
+    }
+  }
+
+  private connectionReady(model: LiveSessionModel, socket: WebSocket, identity: TicketIdentity): void {
+    const summary = model.summary();
+    const payload: ConnectionReadyPayload = {
+      role: identity.role,
+      lifecycle: summary.lifecycle,
+      stateSeq: summary.stateSeq,
+      presentation: 'waiting',
+      ...(identity.participantId ? { participantId: identity.participantId } : {})
+    };
+    this.send(socket, 'connection.ready', payload);
+    if (identity.role === 'host') this.send(socket, 'session.state', summary);
+    else this.send(socket, 'presentation.waiting', { lifecycle: summary.lifecycle, presentation: 'waiting', stateSeq: summary.stateSeq, acceptingJoins: summary.acceptingJoins });
+  }
+
+  async fetch(request: Request): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (request.method === 'POST' && url.pathname === '/internal/init') {
+      if (await this.model()) return json(safeError('PERMISSION_DENIED', 'Sessione già inizializzata.'), 409);
+      const body = await requestJson(request) as { record?: LiveSessionRecord } | undefined;
+      if (!body?.record?.liveSessionId) return json(safeError('PAYLOAD_INVALID', 'Stato iniziale non valido.'), 400);
+      await this.state.storage.put('session', body.record);
+      return json({ ok: true });
+    }
+
+    const model = await this.model();
+    if (!model) return json(safeError('SESSION_NOT_FOUND', 'Sessione non trovata.'), 404);
+
+    if (request.headers.get('upgrade')?.toLowerCase() === 'websocket' && url.pathname.endsWith('/ws')) {
+      const ticket = ticketFromProtocols(request);
+      if (!ticket) return json(safeError('AUTH_FAILED', 'Ticket di connessione mancante.'), 401);
+      const identity = await model.consumeTicket(ticket);
+      if (!identity.ok) return resultResponse(identity);
+      const connected = model.connect(identity.value);
+      if (!connected.ok) return resultResponse(connected);
+      await this.persist(model);
+
+      const pair = new WebSocketPair();
+      const client = pair[0];
+      const server = pair[1] as AttachedSocket;
+      server.serializeAttachment?.(identity.value);
+      const tags = identity.value.role === 'host'
+        ? ['host']
+        : ['player', `participant:${identity.value.participantId}`];
+      this.state.acceptWebSocket(server, tags);
+      this.connectionReady(model, server, identity.value);
+      this.hostSnapshot(model);
+      this.playersLifecycle(model);
+      return new Response(null, {
+        status: 101,
+        headers: { 'sec-websocket-protocol': 'cmv2.v1' },
+        webSocket: client
+      } as ResponseInit & { webSocket: WebSocket });
+    }
+
+    if (request.method === 'GET' && url.pathname === '/summary') {
+      const credential = bearer(request);
+      if (!credential || !(await model.authenticateHost(credential))) return json(safeError('AUTH_FAILED', 'Credenziale host non valida.'), 401);
+      return json(model.summary());
+    }
+
+    if (request.method === 'POST' && url.pathname === '/host-ticket') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      const result = await model.hostTicket(credential);
+      await this.persist(model);
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/join') {
+      const input = validateJoinRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Codice o nome non valido.'), 400);
+      const result = await model.join(input.joinCode, input.displayName);
+      await this.persist(model);
+      if (result.ok) this.hostSnapshot(model);
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/resume') {
+      const input = validateResumeRequest(await requestJson(request));
+      if (!input || input.liveSessionId !== model.record.liveSessionId) return json(safeError('PAYLOAD_INVALID', 'Dati di resume non validi.'), 400);
+      const result = await model.resume(input.participantId, input.resumeCredential);
+      await this.persist(model);
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/join-policy') {
+      const credential = bearer(request);
+      const input = validateJoinPolicy(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Policy ingressi non valida.'), 400);
+      const result = await model.setAcceptingJoins(credential, input.acceptingJoins);
+      await this.persist(model);
+      if (result.ok) this.hostSnapshot(model);
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/rotate-code') {
+      const credential = bearer(request);
+      const body = await requestJson(request) as { joinCode?: unknown } | undefined;
+      if (!credential || typeof body?.joinCode !== 'string') return json(safeError('PAYLOAD_INVALID', 'Nuovo codice non valido.'), 400);
+      const result = await model.rotateJoinCode(credential, body.joinCode);
+      await this.persist(model);
+      if (result.ok) this.hostSnapshot(model);
+      return resultResponse(result);
+    }
+
+    const removeMatch = url.pathname.match(/^\/participants\/([^/]+)\/remove$/u);
+    if (request.method === 'POST' && removeMatch) {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      const participantId = decodeURIComponent(removeMatch[1]);
+      const result = await model.removeParticipant(credential, participantId);
+      await this.persist(model);
+      if (result.ok) {
+        for (const socket of this.state.getWebSockets(`participant:${participantId}`)) {
+          this.send(socket, 'participant.removed', { participantId });
+          socket.close(4003, 'removed');
+        }
+        this.hostSnapshot(model);
+      }
+      return resultResponse(result);
+    }
+
+    return json(safeError('SESSION_NOT_FOUND', 'Endpoint sessione non trovato.'), 404);
+  }
+
+  async webSocketMessage(webSocket: WebSocket, message: string | ArrayBuffer): Promise<void> {
+    const model = await this.model(); if (!model) return;
+    const identity = this.socketIdentity(webSocket);
+    if (!identity) { webSocket.close(4001, 'unauthorized'); return; }
+    if (typeof message !== 'string' || message.length > 64 * 1024) {
+      this.send(webSocket, 'request.rejected', { error: { code: 'PAYLOAD_INVALID', message: 'Messaggio non valido.' } });
+      return;
+    }
+    let value: unknown;
+    try { value = JSON.parse(message); } catch { value = undefined; }
+    if (!value || typeof value !== 'object') {
+      this.send(webSocket, 'request.rejected', { error: { code: 'PAYLOAD_INVALID', message: 'Messaggio non valido.' } });
+      return;
+    }
+    // V03-1 has no realtime mutating commands. The socket exists for presence/waiting;
+    // board and token commands are introduced by later V0.3 goals.
+    this.send(webSocket, 'request.rejected', { error: { code: 'PERMISSION_DENIED', message: 'Comando non disponibile in questa versione.' } });
+  }
+
+  async webSocketClose(webSocket: WebSocket): Promise<void> {
+    const model = await this.model(); if (!model) return;
+    const identity = this.socketIdentity(webSocket); if (!identity) return;
+    model.disconnect(identity);
+    await this.persist(model);
+    this.hostSnapshot(model);
+    this.playersLifecycle(model);
+  }
+
+  async webSocketError(webSocket: WebSocket): Promise<void> {
+    await this.webSocketClose(webSocket);
+  }
+}
+
+async function forwardSession(env: Env, liveSessionId: string, path: string, request: Request, body?: unknown): Promise<Response> {
+  const headers = new Headers();
+  const authorization = request.headers.get('authorization');
+  if (authorization) headers.set('authorization', authorization);
+  if (body !== undefined) headers.set('content-type', 'application/json');
+  return sessionStub(env, liveSessionId).fetch(`https://session.internal${path}`, {
+    method: request.method,
+    headers,
+    ...(body === undefined ? {} : { body: JSON.stringify(body) })
+  });
+}
+
+export default {
+  async fetch(request: Request, env: Env): Promise<Response> {
+    const url = new URL(request.url);
+
+    if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
+
+    if (request.method === 'POST' && url.pathname === '/api/sessions') {
+      let created = await LiveSessionModel.create();
+      const joinCode = await reserveCode(env, created.model.record.liveSessionId);
+      created.model.record.joinCode = joinCode;
+      const stub = sessionStub(env, created.model.record.liveSessionId);
+      const init = await stub.fetch('https://session.internal/internal/init', {
+        method: 'POST',
+        headers: { 'content-type': 'application/json' },
+        body: JSON.stringify({ record: created.model.record })
+      });
+      if (!init.ok) {
+        await directoryCall(env, '/remove', { joinCode, liveSessionId: created.model.record.liveSessionId });
+        return json(safeError('INTERNAL_ERROR', 'Non è stato possibile creare la sessione.'), 500);
+      }
+      return json(createResponse(created.model, created.hostCredential, created.ticket, `${url.origin}/`), 201);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/join') {
+      const input = validateJoinRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Codice o nome non valido.'), 400);
+      const directory = await directoryStub(env).fetch(`https://directory.internal/resolve?code=${encodeURIComponent(input.joinCode)}`);
+      if (!directory.ok) return json(safeError('CODE_INVALID', 'Codice sessione non valido.'), 400);
+      const { liveSessionId } = await directory.json() as { liveSessionId: string };
+      return forwardSession(env, liveSessionId, '/join', new Request(request.url, { method: 'POST' }), input);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/resume') {
+      const input = validateResumeRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Dati di resume non validi.'), 400);
+      return forwardSession(env, input.liveSessionId, '/resume', new Request(request.url, { method: 'POST' }), input);
+    }
+
+    const sessionMatch = url.pathname.match(/^\/api\/sessions\/([^/]+)(.*)$/u);
+    if (!sessionMatch) return json(safeError('SESSION_NOT_FOUND', 'Endpoint non trovato.'), 404);
+    const liveSessionId = decodeURIComponent(sessionMatch[1]);
+    const tail = sessionMatch[2] || '';
+
+    if (tail === '/ws' && request.headers.get('upgrade')?.toLowerCase() === 'websocket') {
+      return sessionStub(env, liveSessionId).fetch(request);
+    }
+
+    if (request.method === 'GET' && !tail) return forwardSession(env, liveSessionId, '/summary', request);
+    if (request.method === 'POST' && tail === '/host-ticket') return forwardSession(env, liveSessionId, '/host-ticket', request);
+    if (request.method === 'POST' && tail === '/join-policy') return forwardSession(env, liveSessionId, '/join-policy', request, await requestJson(request));
+
+    if (request.method === 'POST' && tail === '/rotate-code') {
+      const authorization = bearer(request);
+      if (!authorization) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      const currentResponse = await forwardSession(env, liveSessionId, '/summary', request);
+      if (!currentResponse.ok) return currentResponse;
+      const current = await currentResponse.json() as SessionSummary;
+      const nextCode = await reserveCode(env, liveSessionId);
+      const rotated = await forwardSession(env, liveSessionId, '/rotate-code', request, { joinCode: nextCode });
+      if (!rotated.ok) {
+        await directoryCall(env, '/remove', { joinCode: nextCode, liveSessionId });
+        return rotated;
+      }
+      await directoryCall(env, '/remove', { joinCode: current.joinCode, liveSessionId });
+      return json({ joinCode: nextCode });
+    }
+
+    const removeMatch = tail.match(/^\/participants\/([^/]+)\/remove$/u);
+    if (request.method === 'POST' && removeMatch) {
+      return forwardSession(env, liveSessionId, `/participants/${encodeURIComponent(decodeURIComponent(removeMatch[1]))}/remove`, request);
+    }
+
+    return json(safeError('SESSION_NOT_FOUND', 'Endpoint non trovato.'), 404);
+  }
+};
