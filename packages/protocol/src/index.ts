@@ -176,6 +176,26 @@ export interface JoinPolicyRequest { acceptingJoins: boolean }
 
 export interface JoinCodeResponse { joinCode: string }
 
+export interface ActivityPairingResponse {
+  pairingCode: string;
+  expiresAt: number;
+}
+
+export interface ActivityPairRequest {
+  instanceId: string;
+  pairingCode: string;
+}
+
+export interface ActivityBindingStatus {
+  bound: boolean;
+  instanceId?: string;
+  pairedAt?: number;
+}
+
+export interface ActivityConfig {
+  clientId?: string;
+}
+
 export interface PublishBoardRequest { board: LiveBoardPayload }
 export interface RevealElementRequest { boardId: string; element: LiveBoardElement }
 export interface HideElementRequest { boardId: string; elementId: string }
@@ -202,6 +222,8 @@ const cleanString = (value: unknown, max: number): value is string => typeof val
 const opaqueId = (value: unknown): value is string => cleanString(value, 128) && /^[A-Za-z0-9_-]+$/u.test(value);
 const displayName = (value: unknown): value is string => cleanString(value, 80) && [...value].every(character => { const code = character.charCodeAt(0); return code > 31 && code !== 127; });
 const joinCode = (value: unknown): value is string => cleanString(value, 32) && /^[A-Z2-9]{4}(?:-[A-Z2-9]{4})?$/u.test(value);
+const activityPairingCode = (value: unknown): value is string => cleanString(value, 16) && /^[A-Z2-9]{3}-[A-Z2-9]{3}$/u.test(value);
+const activityInstanceId = (value: unknown): value is string => cleanString(value, 512) && /^[A-Za-z0-9._:-]+$/u.test(value);
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 10_000_000;
 const positive = (value: unknown): value is number => finite(value) && value > 0 && value <= 1_000_000;
 
@@ -210,6 +232,36 @@ function validateEndpoint(value: unknown): LiveBoardEndpoint | undefined {
   if (value.kind === 'point' && finite(value.x) && finite(value.y)) return { kind: 'point', x: value.x, y: value.y };
   if (value.kind === 'element' && opaqueId(value.elementId)) return { kind: 'element', elementId: value.elementId };
   return undefined;
+}
+
+export function validateActivityInstanceId(value: unknown): string | undefined {
+  return activityInstanceId(value) ? value : undefined;
+}
+
+export function validateActivityPairingCode(value: unknown): string | undefined {
+  return activityPairingCode(value) ? value : undefined;
+}
+
+export function validateActivityPairRequest(value: unknown): ActivityPairRequest | undefined {
+  if (!object(value) || !activityInstanceId(value.instanceId) || !activityPairingCode(value.pairingCode)) return undefined;
+  return { instanceId: value.instanceId, pairingCode: value.pairingCode };
+}
+
+export function validateActivityPairingResponse(value: unknown): ActivityPairingResponse | undefined {
+  if (!object(value) || !activityPairingCode(value.pairingCode) || !Number.isSafeInteger(value.expiresAt) || (value.expiresAt as number) <= 0) return undefined;
+  return { pairingCode: value.pairingCode, expiresAt: value.expiresAt as number };
+}
+
+export function validateActivityBindingStatus(value: unknown): ActivityBindingStatus | undefined {
+  if (!object(value) || typeof value.bound !== 'boolean') return undefined;
+  if (!value.bound) return { bound: false };
+  if (value.instanceId !== undefined && !activityInstanceId(value.instanceId)) return undefined;
+  if (value.pairedAt !== undefined && (!Number.isSafeInteger(value.pairedAt) || (value.pairedAt as number) <= 0)) return undefined;
+  return {
+    bound: true,
+    ...(typeof value.instanceId === 'string' ? { instanceId: value.instanceId } : {}),
+    ...(typeof value.pairedAt === 'number' ? { pairedAt: value.pairedAt } : {})
+  };
 }
 
 export function validateLiveBoardElement(value: unknown): LiveBoardElement | undefined {

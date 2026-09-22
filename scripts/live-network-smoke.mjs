@@ -122,6 +122,44 @@ try {
   sockets.push(host.socket);
   await waitMessage(host, value => value.type === 'connection.ready');
 
+  const unbound = await jsonRequest('/api/activity/instances/instance_unbound_smoke', { method: 'GET' });
+  assert.deepEqual(unbound, { bound: false });
+  const proxyUnbound = await jsonRequest('/.proxy/api/activity/instances/instance_proxy_smoke', { method: 'GET' });
+  assert.deepEqual(proxyUnbound, { bound: false });
+
+  await assert.rejects(
+    () => jsonRequest(`/api/sessions/${created.liveSessionId}/activity-pairing`, { body: {} }),
+    /401/
+  );
+
+  const pairing = await jsonRequest(`/api/sessions/${created.liveSessionId}/activity-pairing`, {
+    credential: created.hostCredential,
+    body: {}
+  });
+  assert.match(pairing.pairingCode, /^[A-Z2-9]{3}-[A-Z2-9]{3}$/u);
+  assert.ok(pairing.expiresAt > Date.now());
+
+  const activityPaired = await jsonRequest('/api/activity/pair', {
+    body: { instanceId: 'instance_network_smoke', pairingCode: pairing.pairingCode }
+  });
+  assert.deepEqual(activityPaired, { bound: true });
+  assert.equal(activityPaired.liveSessionId, undefined);
+  assert.equal(activityPaired.hostCredential, undefined);
+  assert.equal(activityPaired.ticket, undefined);
+
+  const boundStatus = await jsonRequest('/api/activity/instances/instance_network_smoke', { method: 'GET' });
+  assert.equal(boundStatus.bound, true);
+  assert.equal(typeof boundStatus.pairedAt, 'number');
+  assert.equal(boundStatus.liveSessionId, undefined);
+
+  await assert.rejects(
+    () => jsonRequest('/api/activity/pair', {
+      body: { instanceId: 'instance_reuse_smoke', pairingCode: pairing.pairingCode }
+    }),
+    /400/
+  );
+  await assert.rejects(() => jsonRequest(`/api/sessions/${created.liveSessionId}`, { method: 'GET' }), /401/);
+
   const players = [];
   for (let index = 0; index < 8; index++) {
     const joined = await jsonRequest('/api/join', { body: { joinCode: created.joinCode, displayName: `Smoke ${index + 1}` } });

@@ -113,6 +113,14 @@ else {
               clipboard.writeText(liveService.state.joinCode);
               return { ok: true, data: liveService.state };
             }
+            case 'live:createDiscordPairing': {
+              const result = await liveService.createActivityPairing();
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:discordBinding': {
+              const result = await liveService.activityBinding();
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
             case 'live:boards': {
               boardService.bind(service.state.campaign);
               const listed = await boardService.list();

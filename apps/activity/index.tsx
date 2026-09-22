@@ -2,12 +2,15 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { createRoot } from 'react-dom/client';
 import {
   envelope,
+  validateActivityBindingStatus,
+  validateActivityPairingCode,
   validateCameraFocusPayload,
   validateEnvelope,
   validateLiveBoardElement,
   validateLiveBoardSnapshot,
   validatePingPayload,
   validateTokenMovePayload,
+  type ActivityConfig,
   type JoinSessionResponse,
   type LiveApiError,
   type LiveBoardElement,
@@ -15,6 +18,7 @@ import {
   type LiveBoardSnapshot,
   type SessionLifecycle
 } from '../../packages/protocol/src/index';
+import { activityApiPath, discordActivityContext, readyDiscordActivity, type DiscordActivityContext } from './discord-adapter';
 import './style.css';
 
 interface StoredResume {
@@ -499,4 +503,108 @@ function App() {
   </main>;
 }
 
-createRoot(document.getElementById('root')!).render(<App />);
+
+function formatPairingCode(value: string): string {
+  const compact = value.toUpperCase().replace(/[^A-Z2-9]/gu, '').slice(0, 6);
+  return compact.length > 3 ? `${compact.slice(0, 3)}-${compact.slice(3)}` : compact;
+}
+
+async function activityFetch<T>(path: string, init: RequestInit = {}): Promise<{ ok: true; value: T } | { ok: false; error: ApiFailure }> {
+  try {
+    const headers = new Headers(init.headers);
+    headers.set('accept', 'application/json');
+    if (init.body !== undefined && !headers.has('content-type')) headers.set('content-type', 'application/json');
+    const response = await fetch(activityApiPath(path, true), { ...init, headers });
+    const value = await response.json() as T | LiveApiError;
+    if (!response.ok) return { ok: false, error: (value as LiveApiError).error ?? { code: 'INTERNAL_ERROR', message: 'Discord Activity non raggiungibile.' } };
+    return { ok: true, value: value as T };
+  } catch {
+    return { ok: false, error: { code: 'INTERNAL_ERROR', message: 'Discord Activity non raggiungibile.' } };
+  }
+}
+
+function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivityContext }) {
+  const [status, setStatus] = useState<'booting' | 'unbound' | 'bound' | 'error'>('booting');
+  const [pairingCode, setPairingCode] = useState('');
+  const [error, setError] = useState<string>();
+  const [pairing, setPairing] = useState(false);
+  const instanceId = useRef(initialContext.instanceId);
+
+  const readBinding = useCallback(async () => {
+    const result = await activityFetch<unknown>(`/api/activity/instances/${encodeURIComponent(instanceId.current)}`, { method: 'GET' });
+    if (!result.ok) { setError(result.error.message); setStatus('error'); return; }
+    const binding = validateActivityBindingStatus(result.value);
+    if (!binding) { setError('Il relay ha restituito uno stato Activity non valido.'); setStatus('error'); return; }
+    setError(undefined);
+    setStatus(binding.bound ? 'bound' : 'unbound');
+  }, []);
+
+  useEffect(() => {
+    let cancelled = false;
+    void (async () => {
+      const configResult = await activityFetch<ActivityConfig>('/api/activity/config', { method: 'GET' });
+      if (cancelled) return;
+      if (!configResult.ok || !configResult.value.clientId) {
+        setError(configResult.ok ? 'Discord Client ID non configurato sul relay.' : configResult.error.message);
+        setStatus('error');
+        return;
+      }
+      try {
+        const ready = await readyDiscordActivity(configResult.value.clientId, initialContext);
+        if (cancelled) return;
+        instanceId.current = ready.instanceId;
+        await readBinding();
+      } catch (failure) {
+        if (cancelled) return;
+        setError(failure instanceof Error ? failure.message : 'Discord Activity non disponibile.');
+        setStatus('error');
+      }
+    })();
+    return () => { cancelled = true; };
+  }, [initialContext, readBinding]);
+
+  async function submitPairing(event: React.FormEvent) {
+    event.preventDefault();
+    const code = validateActivityPairingCode(formatPairingCode(pairingCode));
+    if (!code) return;
+    setPairing(true); setError(undefined);
+    try {
+      const result = await activityFetch<unknown>('/api/activity/pair', {
+        method: 'POST',
+        body: JSON.stringify({ instanceId: instanceId.current, pairingCode: code })
+      });
+      if (!result.ok) { setError(result.error.message); return; }
+      const binding = validateActivityBindingStatus(result.value);
+      if (!binding?.bound) { setError('Il pairing non è stato confermato dal relay.'); return; }
+      setPairingCode('');
+      setStatus('bound');
+    } finally { setPairing(false); }
+  }
+
+  return <main className="player-shell discord-shell">
+    <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>Discord Activity</small></span></div>
+    {status === 'booting' && <section className="waiting-card"><span className="spinner" /><h1>Avvio Activity…</h1><p>Sto leggendo il contesto dell’istanza Discord.</p></section>}
+    {status === 'unbound' && <section className="join-card discord-pair-card">
+      <span className="eyebrow">COLLEGA QUESTA ACTIVITY</span>
+      <h1>Inserisci il pairing del master.</h1>
+      <p>Il codice si genera dal pannello Live di Campaign Manager Desktop. È monouso e collega soltanto questa istanza Discord.</p>
+      <form onSubmit={submitPairing}>
+        <label>Pairing<input autoComplete="off" spellCheck={false} maxLength={7} placeholder="ABC-DEF" value={pairingCode} onChange={event => setPairingCode(formatPairingCode(event.target.value))} /></label>
+        <button type="submit" disabled={pairing || !validateActivityPairingCode(pairingCode)}>{pairing ? 'Collego…' : 'Collega Activity'}</button>
+      </form>
+      {error && <div className="player-error inline-error" role="alert">{error}</div>}
+    </section>}
+    {status === 'bound' && <section className="waiting-card discord-bound-card">
+      <span className="connection-dot online" />
+      <span className="eyebrow">ACTIVITY COLLEGATA</span>
+      <h1>Questa istanza è pronta.</h1>
+      <p>Il pairing è completato. Campaign Manager Desktop resta l’unico host autorevole della sessione.</p>
+      <small>L’ingresso automatico dei giocatori arriva nel prossimo blocco V0.4.</small>
+    </section>}
+    {status === 'error' && <section className="waiting-card"><h1>Activity non disponibile.</h1><p>{error ?? 'Non riesco a inizializzare Discord.'}</p><button onClick={() => void readBinding()}>Riprova stato</button></section>}
+  </main>;
+}
+
+const discordContext = discordActivityContext();
+createRoot(document.getElementById('root')!).render(discordContext ? <DiscordPairingApp initialContext={discordContext} /> : <App />);
+
