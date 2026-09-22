@@ -43,6 +43,13 @@ export interface GraphEdge {
   target: string;
   occurrences: number;
 }
+export interface AiReadableNote {
+  noteId: string;
+  title: string;
+  relativePath: string;
+  markdown: string;
+  revision: string;
+}
 
 const normalizeSearchText = (value: string): string => value.normalize('NFKD').replace(/[\p{Diacritic}]/gu, '').toLowerCase();
 const normalizeMarkdownText = (markdown: string): string => markdown
@@ -438,6 +445,28 @@ export class CampaignService {
     await repo.saveNote(id, '', null); await this.refresh(); await this.openNote(id);
   }
   async readImage(noteId: string, source: string): Promise<string> { return this.requiredRepo().readImage(noteId, source); }
+  async readNoteForAi(noteId: string, includeOpenBuffer = false): Promise<AiReadableNote> {
+    if (!this.state.entries.some(entry => entry.kind === 'note' && entry.id === noteId)) throw new CampaignError('not_found', 'Nota non trovata.');
+    const opened = includeOpenBuffer ? this.state.tabs.find(tab => tab.document && !tab.document.draft && tab.document.noteId === noteId)?.document : undefined;
+    if (opened) {
+      return {
+        noteId,
+        title: noteId.split('/').at(-1)?.replace(/\.md$/iu, '') ?? noteId,
+        relativePath: noteId,
+        markdown: opened.markdown,
+        revision: opened.baseRevision,
+      };
+    }
+    const note = await this.requiredRepo().readNote(noteId);
+    return {
+      noteId,
+      title: noteId.split('/').at(-1)?.replace(/\.md$/iu, '') ?? noteId,
+      relativePath: noteId,
+      markdown: note.markdown,
+      revision: note.revision,
+    };
+  }
+
   async rebuildSearch(): Promise<SearchDocument[]> {
     const repo = this.requiredRepo();
     const documents: SearchDocument[] = [];
