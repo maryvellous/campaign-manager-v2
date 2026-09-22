@@ -46,7 +46,7 @@ export class LocalStore {
       const value = JSON.parse(await fs.readFile(path.join(this.recoveryDirectory(campaignId), '..', 'ui.json'), 'utf8'));
       if (!value || !value.ui || !value.workspace || !Array.isArray(value.workspace.tabs)) throw new Error('Invalid UI');
       for (const key of ['favorites', 'recentNotes', 'expandedFolders'] as const) if (Array.isArray(value.ui[key]) && value.ui[key].every((v: unknown) => typeof v === 'string')) result.ui[key] = value.ui[key];
-      if (['notes', 'search', 'graph', 'boards', 'live', 'compendium', 'recent', 'favorites', 'settings'].includes(value.ui.view)) result.ui.view = value.ui.view;
+      if (['notes', 'search', 'graph', 'boards', 'live', 'assistant', 'compendium', 'recent', 'favorites', 'settings'].includes(value.ui.view)) result.ui.view = value.ui.view;
       if (typeof value.ui.selectedFolder === 'string') result.ui.selectedFolder = value.ui.selectedFolder;
       for (const key of ['sidebarCollapsed', 'inspectorCollapsed'] as const) if (typeof value.ui[key] === 'boolean') result.ui[key] = value.ui[key];
       for (const key of ['sidebarWidth', 'inspectorWidth'] as const) if (typeof value.ui[key] === 'number' && Number.isFinite(value.ui[key])) result.ui[key] = Math.max(key === 'sidebarWidth' ? 200 : 240, Math.min(360, value.ui[key]));
