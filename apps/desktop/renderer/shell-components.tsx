@@ -1,9 +1,10 @@
 import { useEffect, useRef, useState } from 'react';
-export type IconName = 'note' | 'search' | 'graph' | 'book' | 'clock' | 'star' | 'settings' | 'folder' | 'plus' | 'back' | 'forward' | 'close' | 'chevron' | 'panel' | 'more' | 'trash' | 'move' | 'rename' | 'refresh';
+export type IconName = 'note' | 'search' | 'graph' | 'board' | 'book' | 'clock' | 'star' | 'settings' | 'folder' | 'plus' | 'back' | 'forward' | 'close' | 'chevron' | 'panel' | 'more' | 'trash' | 'move' | 'rename' | 'refresh';
 const paths: Record<IconName, string> = {
   note: 'M5 3h10l4 4v14H5z M14 3v5h5 M8 12h8 M8 16h6',
   search: 'M16 16l5 5 M18 10a8 8 0 1 1-16 0a8 8 0 1 1 16 0',
   graph: 'M7 6l10 3 M7 6l3 12 M17 9l-7 9 M8 5a2 2 0 1 1-4 0a2 2 0 1 1 4 0 M20 9a2 2 0 1 1-4 0a2 2 0 1 1 4 0 M12 19a2 2 0 1 1-4 0a2 2 0 1 1 4 0',
+  board: 'M3 4h18v16H3z M7 8h4v3H7z M14 7h4v6h-4z M7 14h6v3H7z',
   book: 'M12 5v16 M12 5C9 2 5 2 2 4v15c4-2 7-1 10 2c3-3 6-4 10-2V4c-3-2-7-2-10 1',
   clock: 'M12 7v6l4 2 M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0',
   star: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z',
