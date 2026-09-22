@@ -31,6 +31,8 @@ import {
   randomJoinCode,
   randomOpaque,
   SessionDirectoryModel,
+  type ActivityBindingRecord,
+  type ActivityPairingRecord,
   type LiveSessionRecord,
   type TicketIdentity
 } from './session-model';
@@ -210,8 +212,8 @@ export class SessionDirectory {
   private async model(): Promise<SessionDirectoryModel> {
     return new SessionDirectoryModel(
       await this.state.storage.get<Record<string, string>>('codes') ?? {},
-      await this.state.storage.get('pairings') ?? {},
-      await this.state.storage.get('activityBindings') ?? {}
+      await this.state.storage.get<Record<string, ActivityPairingRecord>>('pairings') ?? {},
+      await this.state.storage.get<Record<string, ActivityBindingRecord>>('activityBindings') ?? {}
     );
   }
 
