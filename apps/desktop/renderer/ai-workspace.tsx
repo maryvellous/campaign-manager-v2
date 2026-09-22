@@ -1,6 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { AiState } from '../application/ai-service';
-import { OPENAI_MODELS, type OpenAiModel } from '../../../packages/ai/src/index';
+import { OPENAI_MODELS, type AiContextSelection, type OpenAiModel } from '../../../packages/ai/src/index';
 
 type Reply = { ok: boolean; data?: unknown; error?: { code: string; message: string } };
 type Command = (input: Record<string, unknown>) => Promise<Reply>;
@@ -73,10 +73,31 @@ const statusText: Partial<Record<AiState['status'], string>> = {
   'auth/provider_key_invalid': 'La chiave API non è valida o non è autorizzata.',
   rate_limited: 'Limite del provider raggiunto. Riprova più tardi.',
   provider_error: 'Il provider ha restituito un errore.',
-  context_too_large: 'La richiesta è troppo grande per il provider.',
+  context_too_large: 'Il contesto scelto è troppo grande per una singola richiesta.',
+  source_missing: 'Una delle fonti scelte non è più disponibile.',
 };
 
-export function AiWorkspace({ state, command, onOpenSettings }: { state: AiState; command: Command; onOpenSettings: () => void }) {
+function contextLabel(context: AiContextSelection): string {
+  if (context.kind === 'campaign') return 'Campagna intera';
+  const title = context.noteId.split('/').at(-1)?.replace(/\.md$/iu, '') ?? context.noteId;
+  return context.kind === 'note' ? `Nota · ${title}` : `Selezione · ${title}`;
+}
+
+export function AiWorkspace({
+  state,
+  command,
+  context,
+  onContextChange,
+  onOpenSettings,
+  onOpenNote,
+}: {
+  state: AiState;
+  command: Command;
+  context: AiContextSelection;
+  onContextChange: (context: AiContextSelection) => void;
+  onOpenSettings: () => void;
+  onOpenNote: (noteId: string) => void;
+}) {
   const [prompt, setPrompt] = useState('');
   const [localError, setLocalError] = useState<string>();
 
@@ -91,7 +112,7 @@ export function AiWorkspace({ state, command, onOpenSettings }: { state: AiState
     if (!value || state.status === 'thinking') return;
     setLocalError(undefined);
     setPrompt('');
-    const reply = await command({ action: 'ai:send', prompt: value });
+    const reply = await command({ action: 'ai:send', prompt: value, context });
     if (!reply.ok) { setPrompt(value); setLocalError(reply.error?.message ?? 'Richiesta non riuscita.'); }
   }
 
@@ -109,16 +130,23 @@ export function AiWorkspace({ state, command, onOpenSettings }: { state: AiState
       <button disabled={state.status === 'thinking' || state.messages.length === 0} onClick={() => void command({ action: 'ai:newConversation' })}>Nuova conversazione</button>
     </header>
 
+    <div className="ai-context-bar" aria-label="Contesto della richiesta">
+      <span>Contesto</span>
+      <strong>{contextLabel(context)}</strong>
+      {context.kind !== 'campaign' && <button onClick={() => onContextChange({ kind: 'campaign' })}>Usa campagna intera</button>}
+    </div>
+
     {!state.privacyAccepted && <section className="ai-privacy" role="note">
       <strong>Prima del primo invio</strong>
-      <p>Il testo necessario alla richiesta verrà inviato a OpenAI. Campaign Manager non invia automaticamente l’intero vault, asset, recovery o credenziali.</p>
+      <p>Il testo necessario alla richiesta e le sole note recuperate o scelte verranno inviati a OpenAI. Campaign Manager non invia automaticamente l’intero vault, asset, recovery o credenziali.</p>
       <button className="primary" onClick={() => void acceptPrivacy()}>Ho capito, continua</button>
     </section>}
 
     <div className="ai-thread" aria-live="polite">
-      {state.messages.length === 0 ? <div className="ai-thread-empty"><span aria-hidden="true">✦</span><h2>Da dove cominciamo?</h2><p>Per ora puoi fare domande generali. Il contesto automatico della campagna verrà aggiunto nel prossimo passaggio della V0.5.</p></div> : state.messages.map(message => <article className={'ai-message ' + message.role} key={message.id}>
+      {state.messages.length === 0 ? <div className="ai-thread-empty"><span aria-hidden="true">✦</span><h2>Da dove cominciamo?</h2><p>Fai una domanda sulla campagna, oppure apri una nota e usa “Chiedi all’IA” per limitarne il contesto.</p></div> : state.messages.map(message => <article className={'ai-message ' + message.role} key={message.id}>
         <span>{message.role === 'user' ? 'Tu' : 'Assistente'}</span>
         <div>{message.content}</div>
+        {!!message.sources?.length && <div className="ai-sources"><small>Fonti usate</small>{message.sources.map(source => <button type="button" key={source.noteId} onClick={() => onOpenNote(source.noteId)}><strong>{source.title}</strong><span>{source.relativePath}</span></button>)}</div>}
       </article>)}
       {(state.error || localError || statusText[state.status]) && state.status !== 'ready' && <div className={'ai-status ' + state.status} role="status">{localError ?? state.error ?? statusText[state.status]}</div>}
     </div>
