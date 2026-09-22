@@ -210,7 +210,8 @@ export class BoardRepository {
       const bytes = Buffer.from(base64, 'base64');
       if (!bytes.length || bytes.length > 20 * 1024 * 1024 || !validImage(bytes, mime)) throw new CampaignError('invalid_path', 'Immagine non valida o troppo grande (massimo 20 MB).');
       const directory = await this.ensureDirectory('Assets/Board');
-      const rawStem = path.basename(originalName, extension).trim().replace(/[<>:"/\\|?*\u0000-\u001f]/gu, '-').replace(/[. ]+$/u, '') || 'immagine';
+      const fileStem = path.basename(originalName, extension).trim().replace(/[<>:"/\\|?*]/gu, '-');
+      const rawStem = [...fileStem].map(character => character.charCodeAt(0) < 32 ? '-' : character).join('').replace(/[. ]+$/u, '') || 'immagine';
       const stem = rawStem.slice(0, 100);
       const occupied = new Set((await fs.readdir(directory)).map(name => name.toLowerCase()));
       let suffix = 1;
