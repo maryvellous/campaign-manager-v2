@@ -8,7 +8,12 @@ export const liveErrorCodes = [
   'JOIN_LOCKED',
   'CODE_INVALID',
   'PERMISSION_DENIED',
+  'TOKEN_NOT_CONTROLLABLE',
+  'BOARD_NOT_ACTIVE',
+  'ASSET_UNAVAILABLE',
   'PAYLOAD_INVALID',
+  'RATE_LIMITED',
+  'STALE_STATE',
   'PROTOCOL_VERSION_UNSUPPORTED',
   'INTERNAL_ERROR'
 ] as const;
@@ -25,12 +30,54 @@ export interface LiveParticipant {
   tokenIds: string[];
 }
 
+export interface LiveBoardPointEndpoint { kind: 'point'; x: number; y: number }
+export interface LiveBoardElementEndpoint { kind: 'element'; elementId: string }
+export type LiveBoardEndpoint = LiveBoardPointEndpoint | LiveBoardElementEndpoint;
+
+interface LiveBoardBoxBase {
+  elementId: string;
+  x: number;
+  y: number;
+  width: number;
+  height: number;
+  z: number;
+}
+
+export type LiveBoardElement =
+  | (LiveBoardBoxBase & { type: 'text'; text: string })
+  | (LiveBoardBoxBase & { type: 'image'; publishedAssetId: string })
+  | (LiveBoardBoxBase & { type: 'token'; name: string; publishedAssetId?: string })
+  | (LiveBoardBoxBase & { type: 'card'; cardKind: 'note' | 'excerpt'; sourceTitle: string; excerpt?: string })
+  | { elementId: string; type: 'link'; z: number; from: LiveBoardEndpoint; to: LiveBoardEndpoint; arrow: 'none' | 'end' };
+
+export interface LiveBoardPayload {
+  boardId: string;
+  title: string;
+  elements: LiveBoardElement[];
+}
+
+export interface LiveBoardSnapshot extends LiveBoardPayload {
+  stateSeq: number;
+}
+
+export interface LiveBoardSummary {
+  boardId: string;
+  title: string;
+}
+
 export interface WaitingSnapshot {
   lifecycle: SessionLifecycle;
   presentation: 'waiting';
   stateSeq: number;
   acceptingJoins: boolean;
   participants?: LiveParticipant[];
+}
+
+export interface PlayerBoardState {
+  lifecycle: SessionLifecycle;
+  presentation: 'board';
+  stateSeq: number;
+  board: LiveBoardSnapshot;
 }
 
 export interface ConnectionReadyPayload {
@@ -83,6 +130,10 @@ export interface JoinPolicyRequest { acceptingJoins: boolean }
 
 export interface JoinCodeResponse { joinCode: string }
 
+export interface PublishBoardRequest { board: LiveBoardPayload }
+export interface RevealElementRequest { boardId: string; element: LiveBoardElement }
+export interface HideElementRequest { boardId: string; elementId: string }
+
 export interface SessionSummary {
   liveSessionId: string;
   joinCode: string;
@@ -90,6 +141,9 @@ export interface SessionSummary {
   acceptingJoins: boolean;
   participants: LiveParticipant[];
   stateSeq: number;
+  presentation: PlayerPresentation;
+  activeBoardId?: string;
+  liveBoards: LiveBoardSummary[];
 }
 
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
@@ -97,6 +151,67 @@ const cleanString = (value: unknown, max: number): value is string => typeof val
 const opaqueId = (value: unknown): value is string => cleanString(value, 128) && /^[A-Za-z0-9_-]+$/u.test(value);
 const displayName = (value: unknown): value is string => cleanString(value, 80) && [...value].every(character => { const code = character.charCodeAt(0); return code > 31 && code !== 127; });
 const joinCode = (value: unknown): value is string => cleanString(value, 32) && /^[A-Z2-9]{4}(?:-[A-Z2-9]{4})?$/u.test(value);
+const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value) && Math.abs(value) <= 10_000_000;
+const positive = (value: unknown): value is number => finite(value) && value > 0 && value <= 1_000_000;
+
+function validateEndpoint(value: unknown): LiveBoardEndpoint | undefined {
+  if (!object(value)) return undefined;
+  if (value.kind === 'point' && finite(value.x) && finite(value.y)) return { kind: 'point', x: value.x, y: value.y };
+  if (value.kind === 'element' && opaqueId(value.elementId)) return { kind: 'element', elementId: value.elementId };
+  return undefined;
+}
+
+export function validateLiveBoardElement(value: unknown): LiveBoardElement | undefined {
+  if (!object(value) || !opaqueId(value.elementId) || !finite(value.z) || typeof value.type !== 'string') return undefined;
+
+  if (value.type === 'link') {
+    const from = validateEndpoint(value.from); const to = validateEndpoint(value.to);
+    if (!from || !to || (value.arrow !== 'none' && value.arrow !== 'end')) return undefined;
+    return { elementId: value.elementId, type: 'link', z: value.z, from, to, arrow: value.arrow };
+  }
+
+  if (!finite(value.x) || !finite(value.y) || !positive(value.width) || !positive(value.height)) return undefined;
+  const base = { elementId: value.elementId, x: value.x, y: value.y, width: value.width, height: value.height, z: value.z };
+
+  if (value.type === 'text') {
+    if (typeof value.text !== 'string' || value.text.length > 100_000) return undefined;
+    return { ...base, type: 'text', text: value.text };
+  }
+  if (value.type === 'image') {
+    if (!opaqueId(value.publishedAssetId)) return undefined;
+    return { ...base, type: 'image', publishedAssetId: value.publishedAssetId };
+  }
+  if (value.type === 'token') {
+    if (!cleanString(value.name, 250) || (value.publishedAssetId !== undefined && !opaqueId(value.publishedAssetId))) return undefined;
+    return { ...base, type: 'token', name: value.name, ...(value.publishedAssetId ? { publishedAssetId: value.publishedAssetId } : {}) };
+  }
+  if (value.type === 'card') {
+    if ((value.cardKind !== 'note' && value.cardKind !== 'excerpt') || !cleanString(value.sourceTitle, 500)) return undefined;
+    if (value.cardKind === 'note') {
+      if (value.excerpt !== undefined) return undefined;
+      return { ...base, type: 'card', cardKind: 'note', sourceTitle: value.sourceTitle };
+    }
+    if (typeof value.excerpt !== 'string' || !value.excerpt.trim() || value.excerpt.length > 100_000) return undefined;
+    return { ...base, type: 'card', cardKind: 'excerpt', sourceTitle: value.sourceTitle, excerpt: value.excerpt };
+  }
+  return undefined;
+}
+
+export function validateLiveBoardPayload(value: unknown): LiveBoardPayload | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !cleanString(value.title, 500) || !Array.isArray(value.elements) || value.elements.length > 5000) return undefined;
+  const elements: LiveBoardElement[] = [];
+  const ids = new Set<string>();
+  for (const raw of value.elements) {
+    const element = validateLiveBoardElement(raw);
+    if (!element || ids.has(element.elementId)) return undefined;
+    ids.add(element.elementId); elements.push(element);
+  }
+  for (const element of elements) {
+    if (element.type !== 'link') continue;
+    for (const endpoint of [element.from, element.to]) if (endpoint.kind === 'element' && !ids.has(endpoint.elementId)) return undefined;
+  }
+  return { boardId: value.boardId, title: value.title, elements };
+}
 
 export function validateJoinRequest(value: unknown): JoinSessionRequest | undefined {
   if (!object(value) || !joinCode(value.joinCode) || !displayName(value.displayName)) return undefined;
@@ -111,6 +226,23 @@ export function validateResumeRequest(value: unknown): ResumeSessionRequest | un
 export function validateJoinPolicy(value: unknown): JoinPolicyRequest | undefined {
   if (!object(value) || typeof value.acceptingJoins !== 'boolean') return undefined;
   return { acceptingJoins: value.acceptingJoins };
+}
+
+export function validatePublishBoardRequest(value: unknown): PublishBoardRequest | undefined {
+  if (!object(value)) return undefined;
+  const board = validateLiveBoardPayload(value.board);
+  return board ? { board } : undefined;
+}
+
+export function validateRevealElementRequest(value: unknown): RevealElementRequest | undefined {
+  if (!object(value) || !opaqueId(value.boardId)) return undefined;
+  const element = validateLiveBoardElement(value.element);
+  return element ? { boardId: value.boardId, element } : undefined;
+}
+
+export function validateHideElementRequest(value: unknown): HideElementRequest | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !opaqueId(value.elementId)) return undefined;
+  return { boardId: value.boardId, elementId: value.elementId };
 }
 
 export function validateEnvelope(value: unknown): ProtocolEnvelope | undefined {
