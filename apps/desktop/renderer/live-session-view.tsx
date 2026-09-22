@@ -14,6 +14,7 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
   const [elementList, setElementList] = useState<ElementList>();
   const [busyAction, setBusyAction] = useState<string>();
   const [message, setMessage] = useState<string>();
+  const [endPrompt, setEndPrompt] = useState(false);
 
   const selectedBoard = useMemo(() => boards.find(board => board.path === selectedPath), [boards, selectedPath]);
   const selectedIsActive = !!selectedBoard && selectedBoard.boardId === live.activeBoardId;
@@ -83,7 +84,7 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
   return <section className="live-view">
     <header className="live-view-header">
       <div><span className="eyebrow">V0.3 · LIVE WEB</span><h1>Sessione live</h1><p>Fai entrare i giocatori dal browser e condividi solo ciò che decidi tu.</p></div>
-      <span className={`live-status ${live.connected ? 'online' : ''}`}>{active ? live.connected ? 'Relay connesso' : 'Riconnessione' : 'Nessuna sessione'}</span>
+      <div className="live-header-status">{active && <button className="danger subtle" onClick={() => setEndPrompt(true)}>Termina sessione</button>}<span className={`live-status ${live.connected ? 'online' : ''}`}>{active ? live.connected ? 'Relay connesso' : 'Riconnessione' : 'Nessuna sessione'}</span></div>
     </header>
 
     {!active ? <div className="live-empty">
@@ -143,6 +144,16 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
         })}</div>
       </section>}
 
+      {endPrompt && <section className="live-card live-end-card" role="dialog" aria-label="Termina sessione">
+        <span className="eyebrow">FINE SESSIONE</span>
+        <h2>Quali posizioni token vuoi mantenere?</h2>
+        <p>La sessione verrà chiusa definitivamente. Puoi copiare nelle board locali soltanto le posizioni finali dei token, oppure lasciare le board preparate esattamente com’erano.</p>
+        <div className="actions">
+          <button onClick={() => setEndPrompt(false)}>Annulla</button>
+          <button disabled={busyAction === 'end'} onClick={() => void run('end', { action: 'live:end', savePositions: false })}>Lascia la board com’era</button>
+          <button className="danger" disabled={busyAction === 'end'} onClick={() => void run('end', { action: 'live:end', savePositions: true })}>Salva sulla board</button>
+        </div>
+      </section>}
       {(message || live.error) && <section className="live-card live-error" role="alert">{message ?? live.error}</section>}
     </div>}
   </section>;
