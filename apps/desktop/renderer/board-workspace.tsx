@@ -92,21 +92,33 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!current) return undefined;
     if (current.state === 'clean') return current;
     if (current.state === 'saving' || current.state === 'conflict') return undefined;
-    const saving: BoardSession = { ...current, state: 'saving', error: undefined };
+    const savingDocument = clone(current.snapshot.document);
+    const saving: BoardSession = { ...current, snapshot: { ...current.snapshot, document: savingDocument }, state: 'saving', error: undefined };
     setSession(saving); sessionRef.current = saving;
-    const reply = await command({ action: 'board:save', path: current.snapshot.path, baseRevision: current.snapshot.revision, document: current.snapshot.document });
+    const reply = await command({ action: 'board:save', path: current.snapshot.path, baseRevision: current.snapshot.revision, document: savingDocument });
     if (!reply.ok) {
-      const failed: BoardSession = { ...current, state: reply.error?.code === 'conflict' ? 'conflict' : 'error', error: reply.error?.message };
+      const latest = sessionRef.current ?? current;
+      const failed: BoardSession = { ...latest, state: reply.error?.code === 'conflict' ? 'conflict' : 'error', error: reply.error?.message };
       setSession(failed); sessionRef.current = failed;
       return undefined;
     }
     const snapshot = (reply.data as { snapshot: BoardSnapshot }).snapshot;
-    const saved: BoardSession = { snapshot, state: 'clean' };
-    setSession(saved); sessionRef.current = saved;
+    const latest = sessionRef.current;
+    const changedWhileSaving = !!latest && JSON.stringify(latest.snapshot.document) !== JSON.stringify(savingDocument);
+    if (changedWhileSaving && latest) {
+      const dirty: BoardSession = { ...latest, snapshot: { ...latest.snapshot, revision: snapshot.revision }, state: 'dirty', error: undefined };
+      setSession(dirty); sessionRef.current = dirty;
+      void protect(dirty);
+      if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+      autosaveTimer.current = setTimeout(() => { void save(sessionRef.current); }, 700);
+    } else {
+      const saved: BoardSession = { snapshot, state: 'clean' };
+      setSession(saved); sessionRef.current = saved;
+    }
     setRecoveries(list => list.filter(item => item.draft.boardPath !== snapshot.path));
     void refreshList();
-    return saved;
-  }, [command, refreshList]);
+    return sessionRef.current;
+  }, [command, protect, refreshList]);
 
   const scheduleSave = useCallback((current: BoardSession) => {
     if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
