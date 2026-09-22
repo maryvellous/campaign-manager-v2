@@ -10,7 +10,6 @@ import {
   validateLiveBoardSnapshot,
   validatePingPayload,
   validateTokenMovePayload,
-  type ActivityBindingStatus,
   type ActivityConfig,
   type JoinSessionResponse,
   type LiveApiError,
