@@ -91,6 +91,16 @@ Un utente Discord verificato viene mappato a un `participantId` runtime della li
 
 Display name/avatar Discord sono presentazione; non determinano permessi.
 
+### Configurazione OAuth operativa
+
+Per l'app Discord V0.4 deve essere registrato almeno un Redirect URI OAuth2. Nel collaudo reale è stato usato:
+
+`https://127.0.0.1`
+
+Questo valore è un placeholder richiesto dalla configurazione OAuth di Discord: l'Embedded App SDK gestisce internamente il ritorno all'Activity dopo `authorize`. Non è l'endpoint da cui viene servita l'Activity, che continua a usare la URL Mapping pubblica configurata verso il Worker.
+
+La mancanza del Redirect URI produce l'errore `Missing "redirect_uri"` durante il flusso OAuth.
+
 ---
 
 # 6. Permessi
