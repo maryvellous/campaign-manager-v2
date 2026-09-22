@@ -48,7 +48,7 @@ function BoardImage({ element, command }: { element: BoardImageElement; command:
       if (!alive) return;
       if (!reply.ok) { setMissing(true); return; }
       setSrc((reply.data as { dataUrl: string }).dataUrl);
-    });
+    }).catch(() => { if (alive) setMissing(true); });
     return () => { alive = false; };
   }, [command, element.assetPath]);
   return missing
@@ -283,7 +283,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const up = () => {
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
       const now = sessionRef.current; if (!now || !moved) return;
-      history.current.past.push(before); history.current.future = []; scheduleSave(now);
+      history.current.past.push(before); history.current.past = history.current.past.slice(-80); history.current.future = []; scheduleSave(now);
     };
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
   };
@@ -312,7 +312,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const up = () => {
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
       const now = sessionRef.current; if (!now || !resized) return;
-      history.current.past.push(before); history.current.future = []; scheduleSave(now);
+      history.current.past.push(before); history.current.past = history.current.past.slice(-80); history.current.future = []; scheduleSave(now);
     };
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
   };
