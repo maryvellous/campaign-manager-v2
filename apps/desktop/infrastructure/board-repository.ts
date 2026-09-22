@@ -234,7 +234,7 @@ export class BoardRepository {
     } catch (error) { throw ioError(error); }
   }
 
-  async remapNoteSources(oldPath: string, newPath: string): Promise<string[]> {
+  async remapNoteSources(oldPath: string, newPath: string): Promise<Array<{ path: string; previousRevision: string; revision: string }>> {
     const boardsDirectory = path.join(this.root, 'Boards');
     try {
       const stat = await fs.lstat(boardsDirectory);
@@ -243,13 +243,13 @@ export class BoardRepository {
       if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
       throw ioError(error);
     }
-    const changed: string[] = [];
+    const changed: Array<{ path: string; previousRevision: string; revision: string }> = [];
     for (const board of await this.discover()) {
       const snapshot = await this.readBoard(board.path);
       const document = remapBoardNoteSources(snapshot.document, oldPath, newPath);
       if (document === snapshot.document) continue;
-      await this.saveBoard(snapshot.path, document, snapshot.revision);
-      changed.push(snapshot.path);
+      const saved = await this.saveBoard(snapshot.path, document, snapshot.revision);
+      changed.push({ path: snapshot.path, previousRevision: snapshot.revision, revision: saved.revision });
     }
     return changed;
   }
