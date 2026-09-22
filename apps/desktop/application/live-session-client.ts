@@ -297,9 +297,15 @@ export class LiveSessionClient {
   }
 
   async publishBoard(title: string, board: PublicPreparedBoard, loadAsset: AssetLoader, reset = false): Promise<ApiResult<DesktopLiveState>> {
-    const materialized = await this.materializeBoard(title, board, loadAsset);
+    let materialized = await this.materializeBoard(title, board, loadAsset);
     if (!materialized.ok) return materialized;
-    const response = await this.postBoardAction<LiveBoardSnapshot>(reset ? '/reset-board' : '/publish-board', { board: materialized.value });
+    let response = await this.postBoardAction<LiveBoardSnapshot>(reset ? '/reset-board' : '/publish-board', { board: materialized.value });
+    if (!response.ok && response.error.code === 'ASSET_UNAVAILABLE') {
+      this.publishedAssets.clear();
+      materialized = await this.materializeBoard(title, board, loadAsset);
+      if (!materialized.ok) return materialized;
+      response = await this.postBoardAction<LiveBoardSnapshot>(reset ? '/reset-board' : '/publish-board', { board: materialized.value });
+    }
     if (!response.ok) return response;
     await this.refresh();
     return { ok: true, value: this.state };
@@ -320,9 +326,15 @@ export class LiveSessionClient {
   }
 
   async revealElement(boardId: string, element: PublicBoardElement, loadAsset: AssetLoader): Promise<ApiResult<DesktopLiveState>> {
-    const materialized = await this.materializeElement(element, loadAsset);
+    let materialized = await this.materializeElement(element, loadAsset);
     if (!materialized.ok) return materialized;
-    const response = await this.postBoardAction<LiveBoardSnapshot>('/reveal', { boardId, element: materialized.value });
+    let response = await this.postBoardAction<LiveBoardSnapshot>('/reveal', { boardId, element: materialized.value });
+    if (!response.ok && response.error.code === 'ASSET_UNAVAILABLE') {
+      this.publishedAssets.clear();
+      materialized = await this.materializeElement(element, loadAsset);
+      if (!materialized.ok) return materialized;
+      response = await this.postBoardAction<LiveBoardSnapshot>('/reveal', { boardId, element: materialized.value });
+    }
     if (!response.ok) return response;
     await this.refresh();
     return { ok: true, value: this.state };
