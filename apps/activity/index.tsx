@@ -1,11 +1,10 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import {
   envelope,
-  validateElementHiddenEvent,
-  validateElementRevealedEvent,
   validateEnvelope,
-  validateLiveBoardSnapshot,
+  validateLiveBoardElement,
+  validateLiveBoardPayload,
   type JoinSessionResponse,
   type LiveApiError,
   type LiveBoardElement,
@@ -27,6 +26,7 @@ type ApiFailure = LiveApiError['error'];
 type Camera = { x: number; y: number; zoom: number };
 
 const storageKey = 'cmv2-live-resume-v1';
+const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 function storedResume(): StoredResume | undefined {
   try {
@@ -46,6 +46,10 @@ function websocketUrl(liveSessionId: string): string {
   return `${protocol}//${location.host}/api/sessions/${encodeURIComponent(liveSessionId)}/ws`;
 }
 
+function assetUrl(liveSessionId: string, publishedAssetId: string): string {
+  return `/api/sessions/${encodeURIComponent(liveSessionId)}/assets/${encodeURIComponent(publishedAssetId)}`;
+}
+
 async function api<T>(path: string, body: unknown): Promise<{ ok: true; value: T } | { ok: false; error: ApiFailure }> {
   try {
     const response = await fetch(path, {
@@ -61,121 +65,82 @@ async function api<T>(path: string, body: unknown): Promise<{ ok: true; value: T
   }
 }
 
+function validSnapshot(value: unknown): LiveBoardSnapshot | undefined {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
+  const record = value as Record<string, unknown>;
+  if (typeof record.stateSeq !== 'number' || !Number.isSafeInteger(record.stateSeq) || record.stateSeq < 0) return undefined;
+  const board = validateLiveBoardPayload({ boardId: record.boardId, title: record.title, elements: record.elements });
+  return board ? { ...board, stateSeq: record.stateSeq } : undefined;
+}
+
 function endpointPoint(board: LiveBoardSnapshot, endpoint: LiveBoardEndpoint): { x: number; y: number } {
-  if (endpoint.kind === 'point') return endpoint;
-  const element = board.elements.find(item => item.elementId === endpoint.elementId);
-  if (!element || element.type === 'link') return { x: 0, y: 0 };
-  return { x: element.x + element.width / 2, y: element.y + element.height / 2 };
+  if (endpoint.kind === 'point') return { x: endpoint.x, y: endpoint.y };
+  const target = board.elements.find(element => element.elementId === endpoint.elementId);
+  if (!target || target.type === 'link') return { x: 0, y: 0 };
+  return { x: target.x + target.width / 2, y: target.y + target.height / 2 };
 }
 
-function boardBounds(board: LiveBoardSnapshot) {
-  const boxes = board.elements.filter(element => element.type !== 'link');
-  if (!boxes.length) return { left: -200, top: -120, right: 200, bottom: 120 };
-  return {
-    left: Math.min(...boxes.map(element => element.x)),
-    top: Math.min(...boxes.map(element => element.y)),
-    right: Math.max(...boxes.map(element => element.x + element.width)),
-    bottom: Math.max(...boxes.map(element => element.y + element.height))
-  };
+function BoardElementView({ element, sessionId }: { element: Exclude<LiveBoardElement, { type: 'link' }>; sessionId: string }) {
+  if (element.type === 'text') return <div className="player-board-text">{element.text}</div>;
+  if (element.type === 'image') return <img className="player-board-image" draggable={false} src={assetUrl(sessionId, element.publishedAssetId)} alt="" />;
+  if (element.type === 'token') {
+    const initials = element.name.trim().split(/\s+/u).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '•';
+    return <div className="player-board-token">{element.publishedAssetId ? <img draggable={false} src={assetUrl(sessionId, element.publishedAssetId)} alt="" /> : <span>{initials}</span>}<small>{element.name}</small></div>;
+  }
+  return <div className="player-board-card"><span>{element.cardKind === 'excerpt' ? 'Estratto' : 'Nota'}</span><strong>{element.sourceTitle}</strong>{element.cardKind === 'excerpt' && <p>{element.excerpt}</p>}</div>;
 }
 
-function LiveAssetImage({ resume, publishedAssetId }: { resume: StoredResume; publishedAssetId: string }) {
-  const [src, setSrc] = useState<string>();
-  const [failed, setFailed] = useState(false);
-  useEffect(() => {
-    let alive = true;
-    let objectUrl: string | undefined;
-    setSrc(undefined); setFailed(false);
-    void fetch(`/api/sessions/${encodeURIComponent(resume.liveSessionId)}/assets/${encodeURIComponent(publishedAssetId)}`, {
-      headers: { authorization: `Bearer ${resume.resumeCredential}` }
-    }).then(async response => {
-      if (!response.ok) throw new Error('asset unavailable');
-      const blob = await response.blob();
-      if (!alive) return;
-      objectUrl = URL.createObjectURL(blob);
-      setSrc(objectUrl);
-    }).catch(() => { if (alive) setFailed(true); });
-    return () => {
-      alive = false;
-      if (objectUrl) URL.revokeObjectURL(objectUrl);
-    };
-  }, [publishedAssetId, resume.liveSessionId, resume.resumeCredential]);
-  if (failed) return <div className="live-board-asset-missing">Immagine non disponibile</div>;
-  if (!src) return <div className="live-board-asset-loading">Caricamento…</div>;
-  return <img draggable={false} src={src} alt="" />;
-}
-
-function BoardCanvas({ board, resume }: { board: LiveBoardSnapshot; resume: StoredResume }) {
+function PlayerBoard({ board, sessionId, connected }: { board: LiveBoardSnapshot; sessionId: string; connected: boolean }) {
   const viewport = useRef<HTMLDivElement>(null);
-  const [camera, setCamera] = useState<Camera>({ x: 0, y: 0, zoom: 1 });
+  const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 1 });
 
-  const center = useCallback(() => {
+  const fit = useCallback(() => {
     const rect = viewport.current?.getBoundingClientRect(); if (!rect) return;
-    const bounds = boardBounds(board);
-    const width = Math.max(1, bounds.right - bounds.left);
-    const height = Math.max(1, bounds.bottom - bounds.top);
-    const zoom = Math.min(2, Math.max(.2, Math.min((rect.width - 90) / width, (rect.height - 90) / height)));
-    const cx = (bounds.left + bounds.right) / 2; const cy = (bounds.top + bounds.bottom) / 2;
-    setCamera({ x: rect.width / 2 - cx * zoom, y: rect.height / 2 - cy * zoom, zoom });
+    const boxes = board.elements.filter((element): element is Exclude<LiveBoardElement, { type: 'link' }> => element.type !== 'link');
+    if (!boxes.length) { setCamera({ x: rect.width / 2, y: rect.height / 2, zoom: 1 }); return; }
+    const left = Math.min(...boxes.map(element => element.x));
+    const top = Math.min(...boxes.map(element => element.y));
+    const right = Math.max(...boxes.map(element => element.x + element.width));
+    const bottom = Math.max(...boxes.map(element => element.y + element.height));
+    const width = Math.max(1, right - left); const height = Math.max(1, bottom - top);
+    const zoom = clamp(Math.min((rect.width - 80) / width, (rect.height - 80) / height), 0.2, 2);
+    setCamera({ x: rect.width / 2 - (left + width / 2) * zoom, y: rect.height / 2 - (top + height / 2) * zoom, zoom });
   }, [board]);
 
-  useEffect(() => {
-    const id = requestAnimationFrame(center);
-    return () => cancelAnimationFrame(id);
-  }, [board.boardId, center]);
+  useEffect(() => { requestAnimationFrame(fit); }, [board.boardId, fit]);
 
-  const pan = (event: ReactPointerEvent<HTMLDivElement>) => {
+  function pan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 && event.button !== 1) return;
+    event.preventDefault();
+    const target = event.currentTarget; target.setPointerCapture(event.pointerId);
     const start = { x: event.clientX, y: event.clientY, camera };
-    const target = event.currentTarget;
-    target.setPointerCapture(event.pointerId);
     const move = (nativeEvent: PointerEvent) => setCamera({ ...start.camera, x: start.camera.x + nativeEvent.clientX - start.x, y: start.camera.y + nativeEvent.clientY - start.y });
     const up = () => {
-      target.removeEventListener('pointermove', move);
-      target.removeEventListener('pointerup', up);
-      target.removeEventListener('pointercancel', up);
+      target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
     };
-    target.addEventListener('pointermove', move);
-    target.addEventListener('pointerup', up);
-    target.addEventListener('pointercancel', up);
-  };
+    target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
+  }
 
-  const zoom = (event: ReactWheelEvent<HTMLDivElement>) => {
+  function zoom(event: ReactWheelEvent<HTMLDivElement>) {
     event.preventDefault();
     const rect = viewport.current?.getBoundingClientRect(); if (!rect) return;
-    const nextZoom = Math.min(4, Math.max(.2, camera.zoom * (event.deltaY > 0 ? .9 : 1.1)));
+    const nextZoom = clamp(camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1), 0.2, 4);
     const px = event.clientX - rect.left; const py = event.clientY - rect.top;
-    const wx = (px - camera.x) / camera.zoom; const wy = (py - camera.y) / camera.zoom;
-    setCamera({ x: px - wx * nextZoom, y: py - wy * nextZoom, zoom: nextZoom });
-  };
+    const worldX = (px - camera.x) / camera.zoom; const worldY = (py - camera.y) / camera.zoom;
+    setCamera({ x: px - worldX * nextZoom, y: py - worldY * nextZoom, zoom: nextZoom });
+  }
 
-  return <section className="live-board-shell">
-    <header className="live-board-header">
-      <div><span className="eyebrow">SCENA CONDIVISA</span><strong>{board.title}</strong></div>
-      <div><span>{Math.round(camera.zoom * 100)}%</span><button onClick={center}>Centra scena</button></div>
-    </header>
-    <div ref={viewport} className="live-board-viewport" onPointerDown={pan} onWheel={zoom}>
-      <div className="live-board-stage" style={{ transform: `translate(${camera.x}px,${camera.y}px) scale(${camera.zoom})` }}>
+  return <section className="player-board-shell">
+    <header className="player-board-header"><div><span className="eyebrow">SCENA CONDIVISA</span><strong>{board.title}</strong></div><div><span className={`connection-dot ${connected ? 'online' : ''}`} /><button onClick={fit}>Centra</button><small>{Math.round(camera.zoom * 100)}%</small></div></header>
+    <div ref={viewport} className="player-board-viewport" onPointerDown={pan} onWheel={zoom}>
+      <div className="player-board-stage" style={{ transform: `translate(${camera.x}px,${camera.y}px) scale(${camera.zoom})` }}>
         {board.elements.slice().sort((a, b) => a.z - b.z).map(element => {
           if (element.type === 'link') {
             const from = endpointPoint(board, element.from); const to = endpointPoint(board, element.to);
-            const marker = `player-arrow-${element.elementId}`;
-            return <svg key={element.elementId} className="live-board-link" style={{ zIndex: element.z }} aria-hidden="true">
-              <defs><marker id={marker} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto" markerUnits="strokeWidth"><path d="M0,0 L9,4.5 L0,9 z" /></marker></defs>
-              <line x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd={element.arrow === 'end' ? `url(#${marker})` : undefined} />
-            </svg>;
+            const markerId = `activity-arrow-${element.elementId}`;
+            return <svg key={element.elementId} className="player-link-layer" style={{ zIndex: element.z }} aria-hidden="true"><defs><marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" /></marker></defs><line x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd={element.arrow === 'end' ? `url(#${markerId})` : undefined} /></svg>;
           }
-          return <div key={element.elementId} className={`live-board-element live-board-${element.type}`} style={{ left: element.x, top: element.y, width: element.width, height: element.height, zIndex: element.z }}>
-            {element.type === 'text' && <div className="live-board-text">{element.text}</div>}
-            {element.type === 'image' && <LiveAssetImage resume={resume} publishedAssetId={element.publishedAssetId} />}
-            {element.type === 'token' && <div className="live-board-token-content">
-              <div className="live-board-token-avatar">{element.publishedAssetId ? <LiveAssetImage resume={resume} publishedAssetId={element.publishedAssetId} /> : <span>{element.name.split(/\s+/u).slice(0, 2).map(part => part[0]?.toUpperCase()).join('')}</span>}</div>
-              <span>{element.name}</span>
-            </div>}
-            {element.type === 'card' && <div className="live-board-card-content">
-              <small>{element.cardKind === 'excerpt' ? 'Estratto' : 'Nota'}</small><strong>{element.sourceTitle}</strong>{element.cardKind === 'excerpt' && <p>{element.excerpt}</p>}
-            </div>}
-          </div>;
+          return <div key={element.elementId} className={`player-board-element type-${element.type}`} style={{ left: element.x, top: element.y, width: element.width, height: element.height, zIndex: element.z }}><BoardElementView element={element} sessionId={sessionId} /></div>;
         })}
       </div>
     </div>
@@ -193,16 +158,11 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [board, setBoard] = useState<LiveBoardSnapshot>();
   const boardRef = useRef<LiveBoardSnapshot | undefined>(undefined);
-  const stateSeq = useRef(0);
+  const seqRef = useRef(0);
   const socketRef = useRef<WebSocket | undefined>(undefined);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const retryCount = useRef(0);
   const stopped = useRef(false);
-
-  const setBoardState = useCallback((value: LiveBoardSnapshot | undefined) => {
-    boardRef.current = value; setBoard(value);
-    if (value) stateSeq.current = value.stateSeq;
-  }, []);
 
   const setResumeState = useCallback((value: StoredResume | undefined) => {
     resumeRef.current = value; setResume(value);
@@ -214,6 +174,18 @@ function App() {
     const socket = socketRef.current;
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(envelope('snapshot.request', {})));
   }, []);
+
+  const applySnapshot = useCallback((snapshot: LiveBoardSnapshot) => {
+    boardRef.current = snapshot; setBoard(snapshot); seqRef.current = snapshot.stateSeq; setScreen('board');
+  }, []);
+
+  const applyIncrement = useCallback((seq: number, mutate: (current: LiveBoardSnapshot) => LiveBoardSnapshot | undefined) => {
+    if (!Number.isSafeInteger(seq) || seq <= seqRef.current) return;
+    if (seq !== seqRef.current + 1 || !boardRef.current) { requestSnapshot(); return; }
+    const next = mutate(boardRef.current);
+    if (!next) { requestSnapshot(); return; }
+    next.stateSeq = seq; boardRef.current = next; setBoard(next); seqRef.current = seq;
+  }, [requestSnapshot]);
 
   const connect = useCallback((liveSessionId: string, ticket: string) => {
     const previous = socketRef.current;
@@ -234,42 +206,39 @@ function App() {
       const message = validateEnvelope(parsed); if (!message) return;
 
       if (message.type === 'connection.ready' && message.payload && typeof message.payload === 'object') {
-        const payload = message.payload as { lifecycle?: SessionLifecycle; presentation?: 'waiting' | 'board'; stateSeq?: number };
+        const payload = message.payload as { lifecycle?: SessionLifecycle; presentation?: string; stateSeq?: number };
         if (payload.lifecycle) setLifecycle(payload.lifecycle);
-        if (typeof payload.stateSeq === 'number') stateSeq.current = payload.stateSeq;
-        if (payload.presentation === 'waiting') { setBoardState(undefined); setScreen('waiting'); }
-      } else if (message.type === 'presentation.waiting' && message.payload && typeof message.payload === 'object') {
-        const payload = message.payload as { stateSeq?: unknown };
-        if (typeof payload.stateSeq === 'number' && Number.isSafeInteger(payload.stateSeq)) stateSeq.current = payload.stateSeq;
-        setBoardState(undefined); setScreen('waiting');
+        if (payload.presentation === 'waiting') setScreen('waiting');
       } else if (message.type === 'board.snapshot') {
-        const snapshot = validateLiveBoardSnapshot(message.payload);
-        if (!snapshot) { requestSnapshot(); return; }
-        setBoardState(snapshot); setScreen('board');
-      } else if (message.type === 'element.revealed') {
-        const update = validateElementRevealedEvent(message.payload);
-        const current = boardRef.current;
-        if (!update || !current || update.boardId !== current.boardId || update.stateSeq !== stateSeq.current + 1) { requestSnapshot(); return; }
-        const index = current.elements.findIndex(element => element.elementId === update.element.elementId);
-        const elements = [...current.elements];
-        if (index >= 0) elements[index] = update.element; else elements.push(update.element);
-        setBoardState({ ...current, elements, stateSeq: update.stateSeq });
-      } else if (message.type === 'element.hidden') {
-        const update = validateElementHiddenEvent(message.payload);
-        const current = boardRef.current;
-        if (!update || !current || update.boardId !== current.boardId || update.stateSeq !== stateSeq.current + 1) { requestSnapshot(); return; }
-        const hidden = new Set(update.elementIds);
-        setBoardState({ ...current, elements: current.elements.filter(element => !hidden.has(element.elementId)), stateSeq: update.stateSeq });
+        const snapshot = validSnapshot(message.payload);
+        if (snapshot) applySnapshot(snapshot); else requestSnapshot();
+      } else if (message.type === 'presentation.waiting' && message.payload && typeof message.payload === 'object') {
+        const payload = message.payload as { stateSeq?: number; lifecycle?: SessionLifecycle };
+        if (payload.lifecycle) setLifecycle(payload.lifecycle);
+        if (typeof payload.stateSeq === 'number') seqRef.current = payload.stateSeq;
+        boardRef.current = undefined; setBoard(undefined); setScreen('waiting');
+      } else if (message.type === 'element.revealed' && message.payload && typeof message.payload === 'object') {
+        const payload = message.payload as { boardId?: unknown; element?: unknown; stateSeq?: unknown };
+        const element = validateLiveBoardElement(payload.element);
+        if (typeof payload.boardId !== 'string' || !element || typeof payload.stateSeq !== 'number') { requestSnapshot(); return; }
+        applyIncrement(payload.stateSeq, current => {
+          if (current.boardId !== payload.boardId) return undefined;
+          const elements = current.elements.filter(item => item.elementId !== element.elementId);
+          return { ...current, elements: [...elements, element] };
+        });
+      } else if (message.type === 'element.hidden' && message.payload && typeof message.payload === 'object') {
+        const payload = message.payload as { boardId?: unknown; elementIds?: unknown; stateSeq?: unknown };
+        if (typeof payload.boardId !== 'string' || !Array.isArray(payload.elementIds) || !payload.elementIds.every(value => typeof value === 'string') || typeof payload.stateSeq !== 'number') { requestSnapshot(); return; }
+        applyIncrement(payload.stateSeq, current => current.boardId === payload.boardId ? { ...current, elements: current.elements.filter(item => !payload.elementIds!.includes(item.elementId)) } : undefined);
       } else if (message.type === 'session.state' && message.payload && typeof message.payload === 'object') {
-        const payload = message.payload as { lifecycle?: SessionLifecycle; presentation?: 'waiting' | 'board'; stateSeq?: unknown };
+        const payload = message.payload as { lifecycle?: SessionLifecycle; stateSeq?: number; presentation?: string };
         if (payload.lifecycle) {
           setLifecycle(payload.lifecycle);
-          if (payload.lifecycle === 'ended') setScreen('ended');
+          if (payload.lifecycle === 'ended') { setScreen('ended'); return; }
         }
-        if (typeof payload.stateSeq === 'number' && Number.isSafeInteger(payload.stateSeq) && payload.stateSeq > stateSeq.current + 1) requestSnapshot();
-        if (payload.presentation === 'waiting') { setBoardState(undefined); setScreen('waiting'); }
+        if (typeof payload.stateSeq === 'number' && payload.stateSeq > seqRef.current) requestSnapshot();
       } else if (message.type === 'participant.removed') {
-        stopped.current = true; setResumeState(undefined); setBoardState(undefined); setScreen('ended');
+        stopped.current = true; setResumeState(undefined); setScreen('ended');
         setError({ code: 'PERMISSION_DENIED', message: 'Il master ti ha rimosso dalla sessione.' });
         socket.close();
       }
@@ -289,7 +258,7 @@ function App() {
             if (stopped.current) return;
             if (!result.ok) {
               if (result.error.code === 'SESSION_ENDED' || result.error.code === 'AUTH_FAILED') {
-                stopped.current = true; setResumeState(undefined); setBoardState(undefined); setScreen('ended'); setError(result.error);
+                stopped.current = true; setResumeState(undefined); setScreen('ended'); setError(result.error);
               } else {
                 setError({ ...result.error, message: 'Connessione persa. Riprovo automaticamente.' });
                 retry();
@@ -302,7 +271,7 @@ function App() {
       };
       retry();
     });
-  }, [requestSnapshot, setBoardState, setResumeState]);
+  }, [applyIncrement, applySnapshot, requestSnapshot, setResumeState]);
 
   useEffect(() => {
     const prior = storedResume();
@@ -341,12 +310,11 @@ function App() {
   }
 
   function leaveLocalResume() {
-    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setBoardState(undefined); setScreen('join'); setError(undefined); setJoinCode('');
+    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setScreen('join'); setError(undefined); setJoinCode(''); setBoard(undefined); boardRef.current = undefined; seqRef.current = 0;
   }
 
-  const playerName = resume?.displayName ?? displayName;
-  return <main className={`player-shell ${screen === 'board' ? 'showing-board' : ''}`}>
-    <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>{screen === 'board' ? playerName : 'Sessione giocatore'}</small></span></div>
+  return <main className={`player-shell ${screen === 'board' ? 'has-board' : ''}`}>
+    <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>Sessione giocatore</small></span></div>
     {screen === 'join' && <section className="join-card">
       <span className="eyebrow">UNISCITI ALLA SESSIONE</span>
       <h1>Entra al tavolo.</h1>
@@ -361,13 +329,12 @@ function App() {
     {screen === 'waiting' && <section className="waiting-card">
       <span className={`connection-dot ${connected ? 'online' : ''}`} />
       <span className="eyebrow">{connected ? 'CONNESSO' : 'RICONNESSIONE'}</span>
-      <h1>Sei al tavolo, {playerName}.</h1>
+      <h1>Sei al tavolo, {resume?.displayName ?? displayName}.</h1>
       <p>{lifecycle === 'host_reconnecting' ? 'Il master si sta riconnettendo. La sessione riprenderà quando torna online.' : 'Il master non sta condividendo una board in questo momento.'}</p>
       <small>Puoi lasciare aperta questa pagina.</small>
     </section>}
-    {screen === 'board' && board && resume && <BoardCanvas board={board} resume={resume} />}
+    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} connected={connected} />}
     {screen === 'ended' && <section className="waiting-card"><h1>Sessione non disponibile.</h1><p>{error?.message ?? 'Questa sessione è terminata.'}</p><button onClick={leaveLocalResume}>Inserisci un altro codice</button></section>}
-    {!connected && screen === 'board' && <div className="player-error" role="status">Connessione persa. La scena resta visibile mentre provo a riconnettermi.</div>}
     {error && screen === 'join' && <div className="player-error" role="alert">{error.message}</div>}
   </main>;
 }
