@@ -415,7 +415,7 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
     for (const element of originals) if (element.groupId && !groupMap.has(element.groupId)) groupMap.set(element.groupId, crypto.randomUUID());
     let z = nextZ(current.snapshot.document);
     const copies = originals.map((element): BoardElement => {
-      const base = { ...element, elementId: idMap.get(element.elementId)!, z: z++, groupId: element.groupId ? groupMap.get(element.groupId) : undefined };
+      const base = { ...element, elementId: idMap.get(element.elementId)!, z: z++, groupId: element.groupId ? groupMap.get(element.groupId) : undefined, visibleByDefault: false };
       if (isBoardBoxElement(base)) return { ...base, x: base.x + 24, y: base.y + 24 };
       const endpoint = (value: BoardLinkEndpoint): BoardLinkEndpoint => value.kind === 'point'
         ? { ...value, x: value.x + 24, y: value.y + 24 }
