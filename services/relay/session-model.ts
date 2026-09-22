@@ -483,7 +483,7 @@ export class LiveSessionModel {
     const token = this.visibleToken(board, move.tokenId);
     if (!token) return fail('TOKEN_NOT_CONTROLLABLE', 'Il token non è pubblicato nella scena attiva.');
     if (token.x !== move.x || token.y !== move.y) {
-      token.x = move.x; token.y = move.y; this.bump();
+      token.x = move.x; token.y = move.y; board.tokenPositions[move.tokenId] = { x: move.x, y: move.y }; this.bump();
     }
     return ok({ ...move, stateSeq: this.record.stateSeq });
   }
