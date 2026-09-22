@@ -315,6 +315,19 @@ export function BoardWorkspace({
     return true;
   }, [command, save, setSelection]);
 
+  useEffect(() => {
+    let alive = true;
+    if (!characterTokenRequest) return () => { alive = false; };
+    void openBoard(characterTokenRequest.boardPath).then(opened => {
+      if (!alive) return;
+      if (!opened) { onCharacterTokenRequestHandled?.(); return; }
+      setCharacterTokenPlacement(characterTokenRequest);
+      setTool('select');
+      setMessage(`Clicca sulla board per posizionare il token di ${characterTokenRequest.name}. Esc per annullare.`);
+    });
+    return () => { alive = false; };
+  }, [characterTokenRequest?.requestId, openBoard, onCharacterTokenRequestHandled]);
+
   const createBoard = async () => {
     if (!newTitle.trim()) return;
     const current = sessionRef.current;
@@ -403,6 +416,13 @@ export function BoardWorkspace({
   const changeElement = (elementId: string, updater: (element: BoardElement) => BoardElement, remember = true) => {
     const current = sessionRef.current; if (!current) return;
     applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => element.elementId === elementId ? updater(element) : element) }, remember);
+  };
+
+  const setCharacterNoteLink = (elementId: string, noteId?: string) => {
+    changeElement(elementId, element => element.type === 'token'
+      ? { ...element, ...(noteId ? { characterNoteId: noteId } : { characterNoteId: undefined }) }
+      : element);
+    setCharacterNoteQuery('');
   };
 
   const toggleLock = useCallback(() => {
@@ -680,6 +700,28 @@ export function BoardWorkspace({
   const viewportPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const current = sessionRef.current; if (!current) return;
     const point = worldPoint(event.clientX, event.clientY);
+    if (characterTokenPlacement && current.snapshot.path === characterTokenPlacement.boardPath) {
+      const element: BoardTokenElement = {
+        type: 'token',
+        elementId: crypto.randomUUID(),
+        name: characterTokenPlacement.name,
+        characterNoteId: characterTokenPlacement.noteId,
+        x: point.x,
+        y: point.y,
+        width: 84,
+        height: 84,
+        z: nextZ(current.snapshot.document),
+        locked: false,
+        visibleByDefault: false
+      };
+      applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
+      setSelection([element.elementId]);
+      setCharacterTokenPlacement(undefined);
+      setMessage(undefined);
+      setTool('select');
+      onCharacterTokenRequestHandled?.();
+      return;
+    }
     if (tool === 'text') { setTextDraft({ ...point, text: '' }); setSelection([]); return; }
     if (tool === 'token') { setTokenDraft({ ...point, name: '' }); setSelection([]); return; }
     if (tool === 'link') { linkEndpoint({ kind: 'point', ...point }); return; }
@@ -748,16 +790,20 @@ export function BoardWorkspace({
         return;
       }
       if (event.key === 'Escape') {
+        if (characterTokenPlacement) { setCharacterTokenPlacement(undefined); onCharacterTokenRequestHandled?.(); }
         setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMarquee(undefined); setMessage(undefined); setTool('select');
       }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
-  }, [deleteSelection, duplicateSelection, groupSelection, nudgeSelection, save, setSelection, undo]);
+  }, [characterTokenPlacement, deleteSelection, duplicateSelection, groupSelection, nudgeSelection, onCharacterTokenRequestHandled, save, setSelection, undo]);
 
   const current = session?.snapshot.document;
   const primaryId = selectedIds.at(-1);
   const currentElement = current?.elements.find(element => element.elementId === primaryId);
   const selection = selectedElements();
+  const linkedCharacterNoteId = currentElement?.type === 'token' ? currentElement.characterNoteId : undefined;
+  const linkedCharacterMissing = !!linkedCharacterNoteId && !noteIds.includes(linkedCharacterNoteId);
+  const characterNoteMatch = noteIds.find(noteId => noteId.toLocaleLowerCase() === characterNoteQuery.trim().toLocaleLowerCase());
   const sameGroup = selection.length > 0 && !!selection[0].groupId && selection.every(element => element.groupId === selection[0].groupId);
   const allLocked = selection.length > 0 && selection.every(element => element.locked);
   const allVisible = selection.length > 0 && selection.every(element => element.visibleByDefault === true);
@@ -768,7 +814,7 @@ export function BoardWorkspace({
     <aside className="boards-list">
       <div className="boards-list-heading"><div><span className="eyebrow">V0.2</span><h2>Board</h2></div><button title="Aggiorna elenco" onClick={() => void refreshList()}>↻</button></div>
       <form className="board-new" onSubmit={event => { event.preventDefault(); void createBoard(); }}><input aria-label="Nome nuova board" placeholder="Nuova board…" value={newTitle} onChange={event => setNewTitle(event.target.value)} /><button type="submit" disabled={!newTitle.trim()}>+</button></form>
-      <nav>{boards.map(board => <button key={board.boardId} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => void openBoard(board.path)}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
+      <nav>{boards.map(board => <button key={board.boardId} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => { if (characterTokenPlacement) { setCharacterTokenPlacement(undefined); onCharacterTokenRequestHandled?.(); } void openBoard(board.path); }}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
     </aside>
     <section className="board-main">
       {!session ? <div className="board-empty"><span>◇</span><h1>Prepara una scena</h1><p>Le board restano nella cartella della campagna e funzionano offline.</p></div> : <>
@@ -799,6 +845,21 @@ export function BoardWorkspace({
           </div>
           <span className="board-zoom">{selectedIds.length > 1 ? `${selectedIds.length} selezionati · ` : ''}{Math.round(session.snapshot.document.camera.zoom * 100)}%</span>
         </div>
+        {currentElement?.type === 'token' && selectedIds.length === 1 && <section className="board-character-link" aria-label="Nota personaggio del token">
+          <div className="board-character-link-status">
+            <span>Nota personaggio</span>
+            {linkedCharacterNoteId
+              ? <><strong>{linkedCharacterNoteId}</strong>{linkedCharacterMissing && <em>Nota personaggio mancante</em>}</>
+              : <small>Nessuna nota collegata</small>}
+          </div>
+          <div className="board-character-link-actions">
+            <input list="board-character-note-options" aria-label="Cerca nota personaggio" placeholder="Cerca o incolla il percorso di una nota…" value={characterNoteQuery} onChange={event => setCharacterNoteQuery(event.target.value)} />
+            <datalist id="board-character-note-options">{noteIds.map(noteId => <option key={noteId} value={noteId}>{noteId.split('/').at(-1)?.replace(/\.md$/iu, '')}</option>)}</datalist>
+            <button disabled={currentElement.locked || !characterNoteMatch} onClick={() => characterNoteMatch && setCharacterNoteLink(currentElement.elementId, characterNoteMatch)}>{linkedCharacterNoteId ? 'Sostituisci' : 'Collega'}</button>
+            {linkedCharacterNoteId && !linkedCharacterMissing && <button onClick={() => void command({ action: 'note', noteId: linkedCharacterNoteId })}>Apri nota personaggio</button>}
+            {linkedCharacterNoteId && <button disabled={currentElement.locked} onClick={() => setCharacterNoteLink(currentElement.elementId)}>Scollega</button>}
+          </div>
+        </section>}
         <input ref={imageInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importImageElement(file); event.currentTarget.value = ''; }} />
         <input ref={tokenAvatarInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importTokenAvatar(file); event.currentTarget.value = ''; }} />
         <div ref={viewport} className={`board-viewport tool-${tool}`} onPointerDown={viewportPointerDown} onWheel={zoom}
