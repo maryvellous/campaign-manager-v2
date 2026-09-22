@@ -49,6 +49,31 @@ test('board save refuses stale revision and preserves external change', async ()
   } finally { await fixture.cleanup(); }
 });
 
+test('stale recovery is detectable against a newer disk revision', async () => {
+  const fixture = await campaignFixture();
+  const localRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-board-stale-'));
+  try {
+    const store = new LocalStore(localRoot);
+    const service = new BoardService(store);
+    service.bind({ root: fixture.root, campaignId: fixture.campaignId });
+    const created = await service.create('Stale');
+    const recoveredDocument = { ...created.snapshot.document, camera: { x: 15, y: 0, zoom: 1 } };
+    await service.protect(created.snapshot.path, created.snapshot.revision, recoveredDocument);
+
+    const repo = new BoardRepository(fixture.root, fixture.campaignId);
+    await repo.saveBoard(created.snapshot.path, { ...created.snapshot.document, camera: { x: 80, y: 0, zoom: 1 } }, created.snapshot.revision);
+
+    const opened = await service.open(created.snapshot.path);
+    assert.ok(opened.recovery);
+    assert.notEqual(opened.recovery.draft.baseRevision, opened.snapshot.revision);
+    assert.equal(opened.recovery.draft.document.camera.x, 15);
+    assert.equal(opened.snapshot.document.camera.x, 80);
+  } finally {
+    await fixture.cleanup();
+    await fs.rm(localRoot, { recursive: true, force: true });
+  }
+});
+
 test('board image import stays inside Assets/Board and never overwrites a collision', async () => {
   const fixture = await campaignFixture();
   try {
