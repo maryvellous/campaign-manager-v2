@@ -13,17 +13,17 @@ npm start
 
 L'installazione scarica il runtime Electron. L'uso della campagna non richiede rete o account.
 
-## Stato: V0.5 — Assistente IA completato
+## Stato: V0.6 — Personaggi collegati alle note
 
-La V0.5 aggiunge un Assistente IA opzionale senza rendere la campagna dipendente dalla rete. Il provider attualmente supportato è OpenAI; la API key viene conservata tramite storage sicuro di Electron nel profilo locale dell'app e non entra nel vault, nelle board o nella live.
+La V0.6 permette di usare una normale nota Markdown come riferimento di un personaggio senza introdurre un database o un formato scheda proprietario. Un token può avere un collegamento opzionale `characterNoteId`; dal token il DM può collegare, sostituire, scollegare o aprire la nota associata. Se la nota viene rinominata o spostata tramite Campaign Manager, il riferimento viene aggiornato anche nelle recovery delle board senza modificare automaticamente il nome personalizzato del token.
 
-L'Assistente ha un workspace centrale con conversazione locale per campagna, cancel/error states e selezione esplicita del contesto. Può rispondere usando la campagna intera tramite retrieval lessicale controllato, una singola nota o una selezione testuale. Solo le note effettivamente lette vengono mostrate come fonti cliccabili; l'intero vault non viene inviato automaticamente e recovery/dirty buffer non entrano nel retrieval di campagna senza una selezione esplicita.
+Da una nota è disponibile anche `Crea token da questa nota…`: si sceglie la board, poi un click sulla scena posiziona un token con nome iniziale derivato dal titolo e link già impostato; `Esc` annulla. Aprire la nota personaggio dalla board non perde la board corrente, che viene ripristinata tornando alla vista Board. Una nota mancante produce soltanto un warning per il DM e il token continua a funzionare.
 
-Le risposte testuali non modificano mai la campagna. Per scrivere, l'Assistente deve creare una proposta esplicita: modifica di una singola nota oppure nuova nota. La proposta resta fuori dal vault, può essere modificata o scartata e richiede un gesto esplicito per Applica/Crea nota. Le modifiche usano i normali salvataggi revision-safe della campagna, quindi una proposta stale non può sovrascrivere una versione più recente.
+Il collegamento resta privato: la proiezione player non contiene `characterNoteId` né Markdown della nota. Il giocatore può vedere soltanto che un token controllato è il proprio token, usando i normali permessi live già esistenti. I token generici senza nota restano invariati.
 
-La V0.4 Discord Activity resta implementata e verificata in CI. Il solo gate esterno ancora aperto è il collaudo end-to-end dentro un vero client Discord, che richiede interazione manuale con Discord/Cloudflare ma non blocca lo sviluppo locale successivo.
+Il Goal V06-2 non aggiunge oggi adapter o UI di integrazione fittizi. La specifica mantiene un confine futuro per provider personaggio reali, ma finché non esiste un contratto API concreto non vengono creati framework plugin, provider EcoGDR/BeFolder simulati o sincronizzazioni implicite.
 
-La V0.3 continua a fornire la sessione live standalone temporanea, con relay Cloudflare Worker, Durable Objects e R2, mentre la V0.2 mantiene le board locali portabili e la V0.1 la base note Markdown/wikilink/search/grafo.
+La V0.5 Assistente IA resta opzionale e local-first: retrieval controllato con fonti verificabili, proposte di modifica/new-note non autorevoli e applicazione soltanto dopo approvazione esplicita. La V0.4 Discord Activity resta implementata e verificata in CI; il collaudo end-to-end dentro un vero client Discord rimane un gate operativo esterno separato.
 
 ## Persistenza e isolamento
 
@@ -57,4 +57,4 @@ Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale este
 - `packages/protocol`: contratto runtime condiviso desktop/relay/player.
 - `tests`: verifiche di dominio, storage, protocollo e lifecycle live.
 
-Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. La V0.5 è implementata e verificata in CI. Il prossimo gradino è la V0.6 Personaggi + ganci integrazione; il collaudo reale della Discord Activity resta un gate operativo esterno separato.
+Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. Le versioni autocontenute previste dalla roadmap fino alla V0.6 sono implementate e verificate in CI. I milestone successivi richiedono contratti esterni reali: backend/dataset cloud per Auth/Compendio oppure API reali per EcoGDR. Il collaudo reale della Discord Activity resta un gate operativo esterno separato.
