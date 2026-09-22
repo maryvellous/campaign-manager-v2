@@ -14,6 +14,8 @@ import {
   type BoardImageElement,
   type BoardLinkElement,
   type BoardLinkEndpoint,
+  type BoardNoteCardElement,
+  type BoardExcerptCardElement,
   type BoardRecoveryDraft,
   type BoardSnapshot,
   type BoardTextElement,
@@ -31,7 +33,11 @@ type BoardOpenReply = { snapshot: BoardSnapshot; recovery?: RecoveryItem };
 type BoardCreateReply = BoardListReply & { snapshot: BoardSnapshot };
 type Point = { x: number; y: number };
 type Bounds = { left: number; top: number; right: number; bottom: number };
+export type BoardIncomingCard =
+  | { kind: 'note'; sourceNoteId: string; title: string }
+  | { kind: 'excerpt'; sourceNoteId: string; sourceTitle: string; excerpt: string };
 
+const noteTitle = (noteId: string) => noteId.split('/').at(-1)?.replace(/\.md$/iu, '') ?? noteId;
 const clone = (document: BoardDocument): BoardDocument => structuredClone(document);
 const byZ = (a: BoardElement, b: BoardElement) => a.z - b.z;
 const nextZ = (document: BoardDocument) => Math.max(0, ...document.elements.map(element => element.z)) + 1;
@@ -155,7 +161,19 @@ function BoardLinkVisual({
   </svg>;
 }
 
-export function BoardWorkspace({ command }: { command: Command }) {
+export function BoardWorkspace({
+  command,
+  noteIds,
+  incomingCard,
+  onIncomingConsumed,
+  onOpenNote
+}: {
+  command: Command;
+  noteIds: string[];
+  incomingCard?: BoardIncomingCard;
+  onIncomingConsumed?: () => void;
+  onOpenNote?: (noteId: string) => void;
+}) {
   const [boards, setBoards] = useState<BoardListItem[]>([]);
   const [recoveries, setRecoveries] = useState<RecoveryItem[]>([]);
   const [session, setSession] = useState<BoardSession>();
@@ -169,6 +187,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
   const [message, setMessage] = useState<string>();
   const [textDraft, setTextDraft] = useState<{ x: number; y: number; text: string }>();
   const [textEditing, setTextEditing] = useState<{ elementId: string; text: string }>();
+  const [excerptEditing, setExcerptEditing] = useState<{ elementId: string; text: string }>();
   const [tokenDraft, setTokenDraft] = useState<{ x: number; y: number; name: string }>();
   const [tokenEditing, setTokenEditing] = useState<{ elementId: string; name: string }>();
   const [linkStart, setLinkStart] = useState<BoardLinkEndpoint>();
@@ -538,7 +557,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const element: BoardImageElement = {
       type: 'image', elementId: crypto.randomUUID(), assetPath: (reply.data as { assetPath: string }).assetPath,
       x: world?.x ?? 160, y: world?.y ?? 140, width: size.width, height: size.height,
-      z: nextZ(current.snapshot.document), locked: false
+      z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false
     };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelection([element.elementId]); setTool('select');
@@ -569,7 +588,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (linkStart.kind === 'element' && endpoint.kind === 'element' && linkStart.elementId === endpoint.elementId) { setMessage('Scegli due estremità diverse.'); return; }
     const element: BoardLinkElement = {
       type: 'link', elementId: crypto.randomUUID(), from: linkStart, to: endpoint, arrow: 'end',
-      z: nextZ(current.snapshot.document), locked: false
+      z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false
     };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setLinkStart(undefined); setMessage(undefined); setSelection([element.elementId]); setTool('select');
@@ -580,7 +599,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!current || !draft) return;
     setTextDraft(undefined);
     if (!draft.text.trim()) { setTool('select'); return; }
-    const element: BoardTextElement = { type: 'text', elementId: crypto.randomUUID(), text: draft.text.trim(), x: draft.x, y: draft.y, width: 260, height: 120, z: nextZ(current.snapshot.document), locked: false };
+    const element: BoardTextElement = { type: 'text', elementId: crypto.randomUUID(), text: draft.text.trim(), x: draft.x, y: draft.y, width: 260, height: 120, z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelection([element.elementId]); setTool('select');
   };
@@ -590,7 +609,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!current || !draft) return;
     setTokenDraft(undefined);
     if (!draft.name.trim()) { setTool('select'); return; }
-    const element: BoardTokenElement = { type: 'token', elementId: crypto.randomUUID(), name: draft.name.trim(), x: draft.x, y: draft.y, width: 84, height: 84, z: nextZ(current.snapshot.document), locked: false };
+    const element: BoardTokenElement = { type: 'token', elementId: crypto.randomUUID(), name: draft.name.trim(), x: draft.x, y: draft.y, width: 84, height: 84, z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelection([element.elementId]); setTool('select');
   };
