@@ -63,13 +63,17 @@ function formatJoinCode(value: string): string {
   return compact.length > 4 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
 }
 
+function playerApiPath(path: string): string {
+  return discordActivityContext() ? activityApiPath(path, true) : path;
+}
+
 function websocketUrl(liveSessionId: string): string {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${location.host}/api/sessions/${encodeURIComponent(liveSessionId)}/ws`;
+  return `${protocol}//${location.host}${playerApiPath(`/api/sessions/${encodeURIComponent(liveSessionId)}/ws`)}`;
 }
 
 function assetUrl(liveSessionId: string, publishedAssetId: string): string {
-  return `/api/sessions/${encodeURIComponent(liveSessionId)}/assets/${encodeURIComponent(publishedAssetId)}`;
+  return playerApiPath(`/api/sessions/${encodeURIComponent(liveSessionId)}/assets/${encodeURIComponent(publishedAssetId)}`);
 }
 
 function useAuthorizedAsset(liveSessionId: string, publishedAssetId: string | undefined, credential: string) {
