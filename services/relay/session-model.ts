@@ -125,7 +125,7 @@ export class LiveSessionModel {
       joinCode: this.record.joinCode,
       lifecycle: this.record.lifecycle,
       acceptingJoins: this.record.acceptingJoins,
-      participants: this.record.participants.map(({ resumeCredentialHash: _secret, ...participant }) => structuredClone(participant)),
+      participants: this.record.participants.map(participant => ({ participantId: participant.participantId, displayName: participant.displayName, connected: participant.connected, tokenIds: [...participant.tokenIds] })),
       stateSeq: this.record.stateSeq
     };
   }
