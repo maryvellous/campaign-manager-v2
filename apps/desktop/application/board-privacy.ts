@@ -46,7 +46,7 @@ function linkEndpointVisible(endpoint: BoardLinkEndpoint, visibleIds: Set<string
   return endpoint.kind === 'point' || visibleIds.has(endpoint.elementId);
 }
 
-function sanitize(element: BoardElement): PublicBoardElement {
+export function projectBoardElementForPlayers(element: BoardElement): PublicBoardElement {
   if (element.type === 'link') {
     return { elementId: element.elementId, type: 'link', z: element.z, from: element.from, to: element.to, arrow: element.arrow };
   }
@@ -77,6 +77,6 @@ export function projectPreparedBoardForPlayers(document: BoardDocument): PublicP
     boardId: document.boardId,
     elements: visible
       .filter(element => element.type !== 'link' || (linkEndpointVisible(element.from, visibleIds) && linkEndpointVisible(element.to, visibleIds)))
-      .map(sanitize)
+      .map(projectBoardElementForPlayers)
   };
 }
