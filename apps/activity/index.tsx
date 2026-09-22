@@ -11,6 +11,8 @@ import {
   validatePingPayload,
   validateTokenMovePayload,
   type ActivityConfig,
+  type ActivityJoinResponse,
+  type ActivityResumeResponse,
   type JoinSessionResponse,
   type LiveApiError,
   type LiveBoardElement,
@@ -18,15 +20,28 @@ import {
   type LiveBoardSnapshot,
   type SessionLifecycle
 } from '../../packages/protocol/src/index';
-import { activityApiPath, discordActivityContext, readyDiscordActivity, type DiscordActivityContext } from './discord-adapter';
+import { activityApiPath, discordActivityContext, readyDiscordActivity, type DiscordActivityContext, type ReadyDiscordActivity } from './discord-adapter';
 import './style.css';
 
 interface StoredResume {
+  kind: 'standalone';
   liveSessionId: string;
   participantId: string;
   resumeCredential: string;
   displayName: string;
 }
+
+interface ActivityResume {
+  kind: 'activity';
+  liveSessionId: string;
+  participantId: string;
+  activityCredential: string;
+  displayName: string;
+  instanceId: string;
+}
+
+type PlayerResume = StoredResume | ActivityResume;
+type ActivitySessionBootstrap = { resume: ActivityResume; ticket: string };
 
 type Screen = 'join' | 'connecting' | 'waiting' | 'board' | 'ended';
 type ApiFailure = LiveApiError['error'];
@@ -37,9 +52,9 @@ const clamp = (value: number, min: number, max: number) => Math.min(max, Math.ma
 
 function storedResume(): StoredResume | undefined {
   try {
-    const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as StoredResume | null;
+    const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as Partial<StoredResume> | null;
     if (!value || typeof value.liveSessionId !== 'string' || typeof value.participantId !== 'string' || typeof value.resumeCredential !== 'string' || typeof value.displayName !== 'string') return undefined;
-    return value;
+    return { kind: 'standalone', liveSessionId: value.liveSessionId, participantId: value.participantId, resumeCredential: value.resumeCredential, displayName: value.displayName };
   } catch { return undefined; }
 }
 
@@ -238,12 +253,13 @@ function PlayerBoard({
   </section>;
 }
 
-function App() {
+function App({ activitySession }: { activitySession?: ActivitySessionBootstrap } = {}) {
   const [screen, setScreen] = useState<Screen>('join');
   const [joinCode, setJoinCode] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [resume, setResume] = useState<StoredResume>();
-  const resumeRef = useRef<StoredResume | undefined>(undefined);
+  const activityMode = !!activitySession;
+  const [resume, setResume] = useState<PlayerResume>();
+  const resumeRef = useRef<PlayerResume | undefined>(undefined);
   const [lifecycle, setLifecycle] = useState<SessionLifecycle>('open');
   const [error, setError] = useState<ApiFailure>();
   const [connected, setConnected] = useState(false);
@@ -259,11 +275,12 @@ function App() {
   const retryCount = useRef(0);
   const stopped = useRef(false);
 
-  const setResumeState = useCallback((value: StoredResume | undefined) => {
+  const setResumeState = useCallback((value: PlayerResume | undefined) => {
     resumeRef.current = value; setResume(value);
-    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
-    else localStorage.removeItem(storageKey);
-  }, []);
+    if (activityMode) return;
+    if (value?.kind === 'standalone') localStorage.setItem(storageKey, JSON.stringify(value));
+    else if (!value) localStorage.removeItem(storageKey);
+  }, [activityMode]);
 
   const requestSnapshot = useCallback(() => {
     const socket = socketRef.current;
@@ -418,10 +435,20 @@ function App() {
         if (stopped.current || resumeRef.current?.participantId !== current.participantId) return;
         const delay = Math.min(5000, 700 * 2 ** Math.min(retryCount.current++, 3));
         retryTimer.current = setTimeout(() => {
-          void api<{ ticket: string }>('/api/resume', current).then(result => {
+          const resumeRequest = current.kind === 'activity'
+            ? activityFetch<ActivityResumeResponse>('/api/activity/resume', {
+                method: 'POST',
+                body: JSON.stringify({
+                  instanceId: current.instanceId,
+                  participantId: current.participantId,
+                  activityCredential: current.activityCredential
+                })
+              })
+            : api<{ ticket: string }>('/api/resume', current);
+          void resumeRequest.then(result => {
             if (stopped.current) return;
             if (!result.ok) {
-              if (result.error.code === 'SESSION_ENDED' || result.error.code === 'AUTH_FAILED') {
+              if (result.error.code === 'SESSION_ENDED' || result.error.code === 'AUTH_FAILED' || result.error.code === 'SESSION_NOT_FOUND') {
                 stopped.current = true; setResumeState(undefined); setScreen('ended'); setError(result.error);
               } else {
                 setError({ ...result.error, message: 'Connessione persa. Riprovo automaticamente.' });
@@ -438,22 +465,30 @@ function App() {
   }, [applyIncrement, applySnapshot, requestSnapshot, setResumeState, showPing]);
 
   useEffect(() => {
-    const prior = storedResume();
-    if (!prior) return;
-    setResumeState(prior); setDisplayName(prior.displayName); setScreen('connecting');
-    void api<{ ticket: string }>('/api/resume', prior).then(result => {
-      if (!result.ok) {
-        setResumeState(undefined); setScreen(result.error.code === 'SESSION_ENDED' ? 'ended' : 'join'); setError(result.error);
-        return;
-      }
-      connect(prior.liveSessionId, result.value.ticket);
-    });
+    if (activitySession) {
+      stopped.current = false;
+      setResumeState(activitySession.resume);
+      setDisplayName(activitySession.resume.displayName);
+      setScreen('connecting');
+      connect(activitySession.resume.liveSessionId, activitySession.ticket);
+    } else {
+      const prior = storedResume();
+      if (!prior) return;
+      setResumeState(prior); setDisplayName(prior.displayName); setScreen('connecting');
+      void api<{ ticket: string }>('/api/resume', prior).then(result => {
+        if (!result.ok) {
+          setResumeState(undefined); setScreen(result.error.code === 'SESSION_ENDED' ? 'ended' : 'join'); setError(result.error);
+          return;
+        }
+        connect(prior.liveSessionId, result.value.ticket);
+      });
+    }
     return () => {
       stopped.current = true;
       if (retryTimer.current) clearTimeout(retryTimer.current);
       socketRef.current?.close();
     };
-  }, [connect, setResumeState]);
+  }, [activitySession, connect, setResumeState]);
 
   async function join(event: React.FormEvent) {
     event.preventDefault();
@@ -464,6 +499,7 @@ function App() {
     const result = await api<JoinSessionResponse>('/api/join', { joinCode: code, displayName: name });
     if (!result.ok) { setScreen('join'); setError(result.error); return; }
     const next: StoredResume = {
+      kind: 'standalone',
       liveSessionId: result.value.liveSessionId,
       participantId: result.value.participantId,
       resumeCredential: result.value.resumeCredential,
@@ -474,12 +510,14 @@ function App() {
   }
 
   function leaveLocalResume() {
-    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setScreen('join'); setError(undefined); setJoinCode(''); setBoard(undefined); boardRef.current = undefined; setPreviewPositions({}); setPings([]); seqRef.current = 0;
+    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setError(undefined); setJoinCode(''); setBoard(undefined); boardRef.current = undefined; setPreviewPositions({}); setPings([]); seqRef.current = 0;
+    if (activityMode) { globalThis.location.reload(); return; }
+    setScreen('join');
   }
 
   return <main className={`player-shell ${screen === 'board' ? 'has-board' : ''}`}>
-    <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>Sessione giocatore</small></span></div>
-    {screen === 'join' && <section className="join-card">
+    <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>{activityMode ? 'Discord Activity' : 'Sessione giocatore'}</small></span></div>
+    {screen === 'join' && !activityMode && <section className="join-card">
       <span className="eyebrow">UNISCITI ALLA SESSIONE</span>
       <h1>Entra al tavolo.</h1>
       <p>Chiedi al master il codice della sessione. Non serve un account.</p>
@@ -497,8 +535,8 @@ function App() {
       <p>{lifecycle === 'host_reconnecting' ? 'Il master si sta riconnettendo. La sessione riprenderà quando torna online.' : 'Il master non sta condividendo una board in questo momento.'}</p>
       <small>Puoi lasciare aperta questa pagina.</small>
     </section>}
-    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} credential={resume.resumeCredential} interactive={connected && lifecycle === 'open'} previewPositions={previewPositions} pings={pings} focusNonce={focusNonce} onPreview={(tokenId, x, y) => { setPreviewPositions(current => ({ ...current, [tokenId]: { x, y } })); sendPreview('token.move.preview', { boardId: board.boardId, tokenId, x, y }); }} onCommit={(tokenId, x, y) => sendMutation('token.move.commit', { boardId: board.boardId, tokenId, x, y })} onPing={(x, y) => sendMutation('ping.create', { boardId: board.boardId, x, y })} />}
-    {screen === 'ended' && <section className="waiting-card"><h1>Sessione non disponibile.</h1><p>{error?.message ?? 'Questa sessione è terminata.'}</p><button onClick={leaveLocalResume}>Inserisci un altro codice</button></section>}
+    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} credential={resume.kind === 'activity' ? resume.activityCredential : resume.resumeCredential} interactive={connected && lifecycle === 'open'} previewPositions={previewPositions} pings={pings} focusNonce={focusNonce} onPreview={(tokenId, x, y) => { setPreviewPositions(current => ({ ...current, [tokenId]: { x, y } })); sendPreview('token.move.preview', { boardId: board.boardId, tokenId, x, y }); }} onCommit={(tokenId, x, y) => sendMutation('token.move.commit', { boardId: board.boardId, tokenId, x, y })} onPing={(x, y) => sendMutation('ping.create', { boardId: board.boardId, x, y })} />}
+    {screen === 'ended' && <section className="waiting-card"><h1>Sessione non disponibile.</h1><p>{error?.message ?? 'Questa sessione è terminata.'}</p><button onClick={leaveLocalResume}>{activityMode ? 'Ricollega Discord' : 'Inserisci un altro codice'}</button></section>}
     {error && (screen === 'join' || screen === 'board') && <div className="player-error" role="alert">{error.message}</div>}
   </main>;
 }
