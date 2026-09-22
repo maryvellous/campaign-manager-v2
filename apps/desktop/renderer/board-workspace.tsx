@@ -248,43 +248,147 @@ export function BoardWorkspace({ command }: { command: Command }) {
     applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => element.elementId === elementId ? updater(element) : element) }, remember);
   };
 
-  const deleteSelected = () => {
-    const current = sessionRef.current; if (!current || !selected) return;
-    const element = current.snapshot.document.elements.find(item => item.elementId === selected);
-    if (!element || element.locked) return;
-    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.filter(item => item.elementId !== selected) });
-    setSelected(undefined);
+  const changeConnector = (connectorId: string, updater: (connector: BoardConnector) => BoardConnector) => {
+    const current = sessionRef.current; if (!current) return;
+    applyDocument({ ...current.snapshot.document, connectors: current.snapshot.document.connectors.map(connector => connector.connectorId === connectorId ? updater(connector) : connector) });
   };
 
-  const zOrder = (direction: 'front' | 'back' | 'forward' | 'backward') => {
-    const current = sessionRef.current; if (!current || !selected) return;
-    const ordered = [...current.snapshot.document.elements].sort(byZ);
-    const index = ordered.findIndex(element => element.elementId === selected); if (index < 0) return;
-    const targetIndex = direction === 'front' ? ordered.length - 1 : direction === 'back' ? 0 : clamp(index + (direction === 'forward' ? 1 : -1), 0, ordered.length - 1);
-    if (targetIndex === index) return;
-    const [item] = ordered.splice(index, 1); ordered.splice(targetIndex, 0, item);
-    const z = new Map(ordered.map((element, order) => [element.elementId, order + 1]));
-    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => ({ ...element, z: z.get(element.elementId)! })) });
+  const selectionForElement = (element: BoardElement): string[] =>
+    element.groupId
+      ? sessionRef.current?.snapshot.document.elements.filter(candidate => candidate.groupId === element.groupId).map(candidate => candidate.elementId) ?? [element.elementId]
+      : [element.elementId];
+
+  const selectElement = (element: BoardElement, additive: boolean) => {
+    const targets = selectionForElement(element);
+    if (!additive) {
+      setSelectedIds(targets); setSelectedConnector(undefined);
+      return targets;
+    }
+    const next = new Set(selectedIds);
+    const remove = targets.every(id => next.has(id));
+    for (const id of targets) remove ? next.delete(id) : next.add(id);
+    const expanded = expandGroupedSelection(sessionRef.current?.snapshot.document.elements ?? [], next);
+    setSelectedIds(expanded); setSelectedConnector(undefined);
+    return expanded;
+  };
+
+  const deleteSelected = () => {
+    const current = sessionRef.current; if (!current) return;
+    if (selectedConnector) {
+      const connector = current.snapshot.document.connectors.find(item => item.connectorId === selectedConnector);
+      if (!connector || connector.locked) return;
+      applyDocument({ ...current.snapshot.document, connectors: current.snapshot.document.connectors.filter(item => item.connectorId !== selectedConnector) });
+      setSelectedConnector(undefined); return;
+    }
+    if (!selectedIds.length) return;
+    const chosen = current.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId));
+    if (chosen.some(element => element.locked)) { setMessage('Sblocca la selezione prima di eliminarla.'); return; }
+    applyDocument({
+      ...current.snapshot.document,
+      elements: current.snapshot.document.elements.filter(element => !selectedIds.includes(element.elementId)),
+      connectors: connectorsWithoutElements(current.snapshot.document, selectedIds)
+    });
+    setSelectedIds([]);
+  };
+
+  const duplicateSelected = () => {
+    const current = sessionRef.current; if (!current || !selectedIds.length) return;
+    const chosen = current.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId));
+    if (!chosen.length) return;
+    const idMap = new Map<string, string>();
+    const groupMap = new Map<string, string>();
+    for (const element of chosen) {
+      idMap.set(element.elementId, crypto.randomUUID());
+      if (element.groupId && !groupMap.has(element.groupId)) groupMap.set(element.groupId, crypto.randomUUID());
+    }
+    const copies = chosen.map(element => ({
+      ...element,
+      elementId: idMap.get(element.elementId)!,
+      x: element.x + 24,
+      y: element.y + 24,
+      z: nextZ(current.snapshot.document) + chosen.indexOf(element),
+      ...(element.groupId ? { groupId: groupMap.get(element.groupId)! } : {})
+    } as BoardElement));
+    const connectors = current.snapshot.document.connectors.flatMap(connector => {
+      if (connector.from.kind !== 'element' || connector.to.kind !== 'element') return [];
+      const from = idMap.get(connector.from.elementId), to = idMap.get(connector.to.elementId);
+      if (!from || !to) return [];
+      return [{ ...connector, connectorId: crypto.randomUUID(), from: { kind: 'element' as const, elementId: from }, to: { kind: 'element' as const, elementId: to } }];
+    });
+    applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, ...copies], connectors: [...current.snapshot.document.connectors, ...connectors] });
+    setSelectedIds(copies.map(element => element.elementId)); setSelectedConnector(undefined);
+  };
+
+  const groupSelected = () => {
+    const current = sessionRef.current; if (!current || selectedIds.length < 2) return;
+    const groupId = crypto.randomUUID();
+    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => selectedIds.includes(element.elementId) ? { ...element, groupId } : element) });
+  };
+
+  const ungroupSelected = () => {
+    const current = sessionRef.current; if (!current || !selectedIds.length) return;
+    const groupIds = new Set(current.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId) && element.groupId).map(element => element.groupId!));
+    if (!groupIds.size) return;
+    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => element.groupId && groupIds.has(element.groupId) ? { ...element, groupId: undefined } : element) });
+  };
+
+  const toggleLock = () => {
+    const current = sessionRef.current; if (!current) return;
+    if (selectedConnector) {
+      changeConnector(selectedConnector, connector => ({ ...connector, locked: !connector.locked }));
+      return;
+    }
+    if (!selectedIds.length) return;
+    const chosen = current.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId));
+    const lock = chosen.some(element => !element.locked);
+    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => selectedIds.includes(element.elementId) ? { ...element, locked: lock } : element) });
+  };
+
+  const zOrder = (direction: BoardOrderDirection) => {
+    const current = sessionRef.current; if (!current || !selectedIds.length) return;
+    applyDocument({ ...current.snapshot.document, elements: reorderElements(current.snapshot.document.elements, selectedIds, direction) });
+  };
+
+  const chooseConnectionEndpoint = (endpoint: BoardConnectionEndpoint) => {
+    const current = sessionRef.current; if (!current) return;
+    if (!connectionStart) {
+      setConnectionStart(endpoint); setSelectedIds([]); setSelectedConnector(undefined); return;
+    }
+    if (connectionStart.kind === 'element' && endpoint.kind === 'element' && connectionStart.elementId === endpoint.elementId) {
+      setConnectionStart(undefined); return;
+    }
+    const connector: BoardConnector = { connectorId: crypto.randomUUID(), style: linkStyle, from: connectionStart, to: endpoint, locked: false };
+    applyDocument({ ...current.snapshot.document, connectors: [...current.snapshot.document.connectors, connector] });
+    setConnectionStart(undefined); setSelectedIds([]); setSelectedConnector(connector.connectorId);
   };
 
   const beginMove = (event: ReactPointerEvent, element: BoardElement) => {
-    if (tool !== 'select' || element.locked) return;
-    event.stopPropagation(); setSelected(element.elementId);
+    if (tool === 'link') {
+      event.stopPropagation(); chooseConnectionEndpoint({ kind: 'element', elementId: element.elementId }); return;
+    }
+    if (tool !== 'select') return;
+    event.stopPropagation();
+    if (event.shiftKey) { selectElement(element, true); return; }
     const current = sessionRef.current; if (!current) return;
+    const activeIds = selectedIds.includes(element.elementId) ? expandGroupedSelection(current.snapshot.document.elements, selectedIds) : selectionForElement(element);
+    setSelectedIds(activeIds); setSelectedConnector(undefined);
+    if (element.locked || event.button !== 0) return;
     const before = clone(current.snapshot.document);
     const start = { x: event.clientX, y: event.clientY };
-    const base = { x: element.x, y: element.y };
     const zoom = current.snapshot.document.camera.zoom;
+    const bases = new Map(current.snapshot.document.elements.filter(item => activeIds.includes(item.elementId) && !item.locked).map(item => [item.elementId, { x: item.x, y: item.y }]));
     let moved = false;
     const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const now = sessionRef.current; if (!now) return;
-      const nextX = base.x + (pointer.clientX - start.x) / zoom;
-      const nextY = base.y + (pointer.clientY - start.y) / zoom;
-      if (nextX === base.x && nextY === base.y) return;
+      const dx = (pointer.clientX - start.x) / zoom, dy = (pointer.clientY - start.y) / zoom;
+      if (!dx && !dy) return;
       moved = true;
-      const elements = now.snapshot.document.elements.map(item => item.elementId === element.elementId ? { ...item, x: nextX, y: nextY } : item);
+      const elements = now.snapshot.document.elements.map(item => {
+        const base = bases.get(item.elementId);
+        return base ? { ...item, x: base.x + dx, y: base.y + dy } : item;
+      });
       const next = { ...now, snapshot: { ...now.snapshot, document: { ...now.snapshot.document, elements } }, state: 'dirty' as const };
       setSession(next); sessionRef.current = next;
     };
@@ -298,7 +402,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
 
   const beginResize = (event: ReactPointerEvent, element: BoardElement) => {
     event.stopPropagation();
-    if (element.locked) return;
+    if (element.locked || selectedIds.length !== 1) return;
     const current = sessionRef.current; if (!current) return;
     const before = clone(current.snapshot.document);
     const start = { x: event.clientX, y: event.clientY };
@@ -308,8 +412,8 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const target = event.currentTarget as HTMLElement; target.setPointerCapture(event.pointerId);
     const move = (pointer: PointerEvent) => {
       const dx = (pointer.clientX - start.x) / zoom;
-      const width = Math.max(60, element.width + dx);
-      const height = element.type === 'image' ? width / ratio : Math.max(48, element.height + (pointer.clientY - start.y) / zoom);
+      const width = Math.max(element.type === 'token' ? 48 : 60, element.width + dx);
+      const height = element.type === 'image' ? width / ratio : element.type === 'token' ? width : Math.max(48, element.height + (pointer.clientY - start.y) / zoom);
       if (width === element.width && height === element.height) return;
       resized = true;
       const now = sessionRef.current; if (!now) return;
@@ -333,6 +437,15 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const existing = sessionRef.current?.snapshot.document.elements.find(element => element.elementId === edit.elementId);
     if (!existing || existing.type !== 'text' || existing.text === edit.text) return;
     changeElement(edit.elementId, element => element.type === 'text' ? { ...element, text: edit.text } : element);
+  };
+
+  const commitTokenEdit = () => {
+    const edit = tokenEditing;
+    if (!edit) return;
+    setTokenEditing(undefined);
+    const existing = sessionRef.current?.snapshot.document.elements.find(element => element.elementId === edit.elementId);
+    if (!existing || existing.type !== 'token' || existing.name === edit.name) return;
+    changeElement(edit.elementId, element => element.type === 'token' ? { ...element, name: edit.name } : element);
   };
 
   const importFile = async (file: File, world?: { x: number; y: number }) => {
