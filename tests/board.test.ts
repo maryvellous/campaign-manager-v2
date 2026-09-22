@@ -7,7 +7,8 @@ import { randomUUID } from 'node:crypto';
 import { BoardRepository } from '../apps/desktop/infrastructure/board-repository';
 import { BoardService } from '../apps/desktop/application/board-service';
 import { LocalStore } from '../apps/desktop/infrastructure/local-store';
-import type { BoardTextElement } from '../apps/desktop/application/board-types';
+import { parseBoardDocument, type BoardConnector, type BoardTextElement, type BoardTokenElement } from '../apps/desktop/application/board-types';
+import { contentBounds, marqueeSelection, reorderElements } from '../apps/desktop/application/board-operations';
 
 async function campaignFixture() {
   const root = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-board-'));
@@ -15,6 +16,88 @@ async function campaignFixture() {
   await fs.writeFile(path.join(root, 'campaign.json'), JSON.stringify({ schemaVersion: 1, campaignId }, null, 2));
   return { root, campaignId, cleanup: () => fs.rm(root, { recursive: true, force: true }) };
 }
+
+test('schema v1 boards migrate in memory to schema v2 without losing content', () => {
+  const boardId = randomUUID();
+  const elementId = randomUUID();
+  const migrated = parseBoardDocument({
+    schemaVersion: 1,
+    boardId,
+    camera: { x: 2, y: 3, zoom: 1 },
+    elements: [{ type: 'text', elementId, text: 'Vecchia board', x: 10, y: 20, width: 200, height: 90, z: 1, locked: false }]
+  });
+  assert.equal(migrated.schemaVersion, 2);
+  assert.equal(migrated.boardId, boardId);
+  assert.deepEqual(migrated.connectors, []);
+  assert.equal(migrated.elements[0].elementId, elementId);
+});
+
+test('schema v2 persists neutral tokens groups and anchored connectors', async () => {
+  const fixture = await campaignFixture();
+  try {
+    const repo = new BoardRepository(fixture.root, fixture.campaignId);
+    const created = await repo.createBoard('Organizzazione');
+    const groupId = randomUUID();
+    const token: BoardTokenElement = {
+      type: 'token', elementId: randomUUID(), name: 'Guardia', x: 100, y: 100, width: 96, height: 96, z: 1,
+      locked: false, groupId, visibleByDefault: false
+    };
+    const text: BoardTextElement = {
+      type: 'text', elementId: randomUUID(), text: 'Porta nord', x: 260, y: 110, width: 180, height: 80, z: 2,
+      locked: false, groupId
+    };
+    const connector: BoardConnector = {
+      connectorId: randomUUID(), style: 'arrow', from: { kind: 'element', elementId: token.elementId },
+      to: { kind: 'element', elementId: text.elementId }, locked: false
+    };
+    const saved = await repo.saveBoard(created.path, { ...created.document, elements: [token, text], connectors: [connector] }, created.revision);
+    const reopened = await repo.readBoard(saved.path);
+    assert.equal(reopened.document.schemaVersion, 2);
+    assert.equal((reopened.document.elements[0] as BoardTokenElement).avatarPath, undefined);
+    assert.equal((reopened.document.elements[0] as BoardTokenElement).visibleByDefault, false);
+    assert.equal(reopened.document.elements[0].groupId, groupId);
+    assert.deepEqual(reopened.document.connectors, [connector]);
+  } finally { await fixture.cleanup(); }
+});
+
+test('board selection helpers expand groups and preserve block ordering', () => {
+  const groupId = randomUUID();
+  const elements: BoardTextElement[] = [
+    { type: 'text', elementId: randomUUID(), text: 'A', x: 0, y: 0, width: 50, height: 50, z: 1, locked: false, groupId },
+    { type: 'text', elementId: randomUUID(), text: 'B', x: 60, y: 0, width: 50, height: 50, z: 2, locked: false, groupId },
+    { type: 'text', elementId: randomUUID(), text: 'C', x: 300, y: 0, width: 50, height: 50, z: 3, locked: false }
+  ];
+  const selected = marqueeSelection(elements, { x: 0, y: 0, width: 30, height: 30 });
+  assert.deepEqual(new Set(selected), new Set([elements[0].elementId, elements[1].elementId]));
+  const front = reorderElements(elements, selected, 'front').slice().sort((a, b) => a.z - b.z);
+  assert.equal(front[0].elementId, elements[2].elementId);
+  assert.deepEqual(front.slice(1).map(element => element.elementId), [elements[0].elementId, elements[1].elementId]);
+});
+
+test('content bounds include free and anchored connector endpoints', () => {
+  const token: BoardTokenElement = { type: 'token', elementId: randomUUID(), name: '', x: 100, y: 100, width: 80, height: 80, z: 1, locked: false, visibleByDefault: false };
+  const document = parseBoardDocument({
+    schemaVersion: 2,
+    boardId: randomUUID(),
+    camera: { x: 0, y: 0, zoom: 1 },
+    elements: [token],
+    connectors: [{ connectorId: randomUUID(), style: 'line', from: { kind: 'element', elementId: token.elementId }, to: { kind: 'point', x: 500, y: 400 }, locked: false }]
+  });
+  assert.deepEqual(contentBounds(document), { x: 100, y: 100, width: 400, height: 300 });
+});
+
+test('token avatar paths remain campaign-relative', () => {
+  assert.throws(() => parseBoardDocument({
+    schemaVersion: 2,
+    boardId: randomUUID(),
+    camera: { x: 0, y: 0, zoom: 1 },
+    elements: [{ type: 'token', elementId: randomUUID(), name: 'X', avatarPath: '../outside.png', x: 0, y: 0, width: 80, height: 80, z: 1, locked: false, visibleByDefault: false }],
+    connectors: []
+  }), (error: unknown) => {
+    assert.equal((error as { code?: string }).code, 'invalid_path');
+    return true;
+  });
+});
 
 test('board create/save/reopen keeps stable id and content', async () => {
   const fixture = await campaignFixture();
