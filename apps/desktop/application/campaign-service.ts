@@ -378,10 +378,14 @@ export class CampaignService {
   private async remap(oldId: string, newId: string): Promise<void> {
     const repo = this.requiredRepo();
     const boardRepo = new BoardRepository(repo.root, repo.metadata.campaignId);
-    await boardRepo.remapNoteSources(oldId, newId);
+    const boardChanges = await boardRepo.remapNoteSources(oldId, newId);
+    const boardChange = new Map(boardChanges.map(change => [change.path, change]));
     for (const item of await this.store.listBoardRecovery(repo.metadata.campaignId)) {
       const document = remapBoardNoteSources(item.draft.document, oldId, newId);
-      if (document !== item.draft.document) await this.store.putBoardRecovery({ ...item.draft, document });
+      if (document === item.draft.document) continue;
+      const change = boardChange.get(item.draft.boardPath);
+      const baseRevision = change && item.draft.baseRevision === change.previousRevision ? change.revision : item.draft.baseRevision;
+      await this.store.putBoardRecovery({ ...item.draft, baseRevision, document });
     }
     const map = (id: string) => remapPath(id, oldId, newId);
     for (const tab of this.state.tabs) { if (tab.document && !tab.document.draft) tab.document.noteId = map(tab.document.noteId); if (tab.document?.draft) tab.document.draft.parentFolder = map(tab.document.draft.parentFolder); tab.history = tab.history.map(map); }
