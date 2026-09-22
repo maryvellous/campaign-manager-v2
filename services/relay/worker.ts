@@ -659,11 +659,18 @@ export class LiveSession {
   async webSocketClose(webSocket: WebSocket): Promise<void> {
     const model = await this.model(); if (!model) return;
     const identity = this.socketIdentity(webSocket); if (!identity) return;
-    model.disconnect(identity);
-    await this.persist(model);
+
     if (identity.role === 'host') {
+      if (this.state.getWebSockets('host').length > 0) return;
+      model.disconnect(identity);
+      await this.persist(model);
       const deadline = model.hostGraceDeadline();
       if (deadline) await this.state.storage.setAlarm(deadline);
+    } else {
+      const participantId = identity.participantId;
+      if (!participantId || this.state.getWebSockets(`participant:${participantId}`).length > 0) return;
+      model.disconnect(identity);
+      await this.persist(model);
     }
     this.hostSnapshot(model);
     this.playersLifecycle(model);
