@@ -29,8 +29,31 @@ export interface AiMessage {
   sources?: AiSource[];
 }
 
+export interface AiEditProposal {
+  id: string;
+  kind: 'edit';
+  noteId: string;
+  title: string;
+  baseRevision: string;
+  originalMarkdown: string;
+  proposedMarkdown: string;
+  createdAt: string;
+}
+
+export interface AiNewNoteProposal {
+  id: string;
+  kind: 'new';
+  parentFolder: string;
+  title: string;
+  markdown: string;
+  createdAt: string;
+}
+
+export type AiProposal = AiEditProposal | AiNewNoteProposal;
+
 export interface AiThread {
   messages: AiMessage[];
+  proposal?: AiProposal;
 }
 
 export type AiProviderErrorCode =

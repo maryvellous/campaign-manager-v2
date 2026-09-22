@@ -445,6 +445,35 @@ export class CampaignService {
     await repo.saveNote(id, '', null); await this.refresh(); await this.openNote(id);
   }
   async readImage(noteId: string, source: string): Promise<string> { return this.requiredRepo().readImage(noteId, source); }
+  aiFolderIds(): string[] {
+    return this.state.entries.filter(entry => entry.kind === 'folder').map(entry => entry.id);
+  }
+
+  async applyAiEditProposal(noteId: string, baseRevision: string, markdown: string): Promise<NoteSnapshot> {
+    if (!this.state.entries.some(entry => entry.kind === 'note' && entry.id === noteId)) throw new CampaignError('not_found', 'Nota non trovata.');
+    const recoveries = await this.store.listRecovery(this.requiredRepo().metadata.campaignId);
+    if (recoveries.some(item => item.draft.target.kind === 'existing' && item.draft.target.noteId === noteId)) {
+      throw new CampaignError('conflict', 'La nota ha una bozza locale da recuperare: la proposta non può essere applicata.');
+    }
+    const saved = await this.requiredRepo().saveNote(noteId, markdown, baseRevision);
+    await this.refresh();
+    return saved;
+  }
+
+  async createAiNote(parentFolder: string, title: string, markdown: string): Promise<NoteSnapshot> {
+    validateRelativePath(parentFolder, true);
+    const cleanTitle = title.trim().replace(/\.md$/iu, '');
+    validateRelativePath(cleanTitle);
+    if (cleanTitle.includes('/')) throw new CampaignError('invalid_path', 'Il titolo non può contenere un percorso.');
+    if (parentFolder && !this.state.entries.some(entry => entry.kind === 'folder' && entry.id === parentFolder)) throw new CampaignError('not_found', 'Cartella di destinazione non trovata.');
+    const noteId = [parentFolder, cleanTitle + '.md'].filter(Boolean).join('/');
+    const recoveries = await this.store.listRecovery(this.requiredRepo().metadata.campaignId);
+    if (recoveries.some(item => item.draft.target.kind === 'existing' && item.draft.target.noteId === noteId)) throw new CampaignError('conflict', 'La destinazione ha già una bozza locale da recuperare.');
+    const saved = await this.requiredRepo().saveNote(noteId, markdown, null);
+    await this.refresh();
+    return saved;
+  }
+
   async readNoteForAi(noteId: string, includeOpenBuffer = false): Promise<AiReadableNote> {
     if (!this.state.entries.some(entry => entry.kind === 'note' && entry.id === noteId)) throw new CampaignError('not_found', 'Nota non trovata.');
     const opened = includeOpenBuffer ? this.state.tabs.find(tab => tab.document && !tab.document.draft && tab.document.noteId === noteId)?.document : undefined;

@@ -6,7 +6,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { CampaignError, type RecoveryDraft } from '../../../packages/core/src/index';
 import { ioError } from './campaign-repository';
 import { parseBoardDocument, validateBoardPath, type BoardRecoveryDraft } from '../application/board-types';
-import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS, type AiMessage, type AiThread, type OpenAiModel } from '../../../packages/ai/src/index';
+import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS, type AiMessage, type AiProposal, type AiThread, type OpenAiModel } from '../../../packages/ai/src/index';
 export interface RecentCampaign { campaignId: string; path: string; name: string }
 export interface Preferences { recent: RecentCampaign[]; lastPath?: string }
 export interface AiPreferences { provider: 'openai'; model: OpenAiModel; encryptedKey?: string; privacyAccepted: boolean }
@@ -184,13 +184,32 @@ export class LocalStore {
     );
   }
 
+  private validAiProposal(proposal: AiProposal): boolean {
+    if (!proposal || typeof proposal.id !== 'string' || typeof proposal.createdAt !== 'string') return false;
+    if (proposal.kind === 'edit') return Boolean(
+      typeof proposal.noteId === 'string'
+      && typeof proposal.title === 'string'
+      && typeof proposal.baseRevision === 'string'
+      && typeof proposal.originalMarkdown === 'string'
+      && typeof proposal.proposedMarkdown === 'string'
+    );
+    if (proposal.kind === 'new') return Boolean(
+      typeof proposal.parentFolder === 'string'
+      && typeof proposal.title === 'string'
+      && typeof proposal.markdown === 'string'
+    );
+    return false;
+  }
+
   async readAiThread(campaignId: string): Promise<AiThread> {
     try {
       const value: unknown = JSON.parse(await fs.readFile(this.aiThreadFile(campaignId), 'utf8'));
       if (!value || typeof value !== 'object' || !Array.isArray((value as AiThread).messages)) throw new Error('Invalid AI thread');
-      const messages = (value as AiThread).messages;
+      const thread = value as AiThread;
+      const messages = thread.messages;
       if (messages.some(message => !this.validAiMessage(message))) throw new Error('Invalid AI message');
-      return { messages: messages.slice(-100) };
+      if (thread.proposal !== undefined && !this.validAiProposal(thread.proposal)) throw new Error('Invalid AI proposal');
+      return { messages: messages.slice(-100), ...(thread.proposal ? { proposal: thread.proposal } : {}) };
     } catch (error) {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.warning = 'La conversazione IA locale non è leggibile ed è stata ignorata. Le note sono intatte.';
       return { messages: [] };
@@ -199,7 +218,8 @@ export class LocalStore {
 
   async writeAiThread(campaignId: string, thread: AiThread): Promise<void> {
     if (!Array.isArray(thread.messages) || thread.messages.some(message => !this.validAiMessage(message))) throw new CampaignError('invalid_path', 'Conversazione IA non valida.');
-    await this.write(this.aiThreadFile(campaignId), { messages: thread.messages.slice(-100) });
+    if (thread.proposal !== undefined && !this.validAiProposal(thread.proposal)) throw new CampaignError('invalid_path', 'Proposta IA non valida.');
+    await this.write(this.aiThreadFile(campaignId), { messages: thread.messages.slice(-100), ...(thread.proposal ? { proposal: thread.proposal } : {}) });
   }
 
   async clearAiThread(campaignId: string): Promise<void> {
