@@ -2,8 +2,12 @@ import {
   validateEnvelope,
   type CreateSessionResponse,
   type LiveApiError,
+  type LiveBoardElement,
+  type LiveBoardPayload,
+  type LiveBoardSnapshot,
   type SessionSummary
 } from '../../../packages/protocol/src/index';
+import type { PublicBoardElement, PublicPreparedBoard } from './board-privacy';
 
 export interface DesktopLiveState {
   status: 'idle' | 'starting' | 'open' | 'host_reconnecting' | 'error';
@@ -14,23 +18,51 @@ export interface DesktopLiveState {
   acceptingJoins: boolean;
   participants: SessionSummary['participants'];
   stateSeq: number;
+  presentation: SessionSummary['presentation'];
+  activeBoardId?: string;
+  liveBoards: SessionSummary['liveBoards'];
   error?: string;
 }
 
 type ApiResult<T> = { ok: true; value: T } | { ok: false; error: LiveApiError['error'] };
+type AssetLoader = (assetPath: string) => Promise<{ mime: string; bytes: Uint8Array }>;
 
 const initialState = (): DesktopLiveState => ({
   status: 'idle',
   connected: false,
   acceptingJoins: true,
   participants: [],
-  stateSeq: 0
+  stateSeq: 0,
+  presentation: 'waiting',
+  liveBoards: []
 });
 
 function normalizedRelayUrl(value: string): string {
   const url = new URL(value);
   if (!['http:', 'https:'].includes(url.protocol) || url.username || url.password) throw new Error('Relay URL non valido.');
   return url.origin;
+}
+
+function withoutLocalAsset(element: PublicBoardElement, publishedAssetId?: string): LiveBoardElement {
+  if (element.type === 'image') {
+    if (!publishedAssetId) throw new Error('Asset live mancante.');
+    return {
+      elementId: element.elementId, type: 'image', x: element.x, y: element.y, width: element.width, height: element.height, z: element.z,
+      publishedAssetId
+    };
+  }
+  if (element.type === 'token') {
+    return {
+      elementId: element.elementId, type: 'token', x: element.x, y: element.y, width: element.width, height: element.height, z: element.z,
+      name: element.name, ...(publishedAssetId ? { publishedAssetId } : {})
+    };
+  }
+  if (element.type === 'text') return { ...element };
+  if (element.type === 'link') return { ...element };
+  return {
+    elementId: element.elementId, type: 'card', x: element.x, y: element.y, width: element.width, height: element.height, z: element.z,
+    cardKind: element.cardKind, sourceTitle: element.sourceTitle, ...(element.cardKind === 'excerpt' ? { excerpt: element.excerpt } : {})
+  };
 }
 
 export class LiveSessionClient {
@@ -41,6 +73,7 @@ export class LiveSessionClient {
   private retryTimer?: ReturnType<typeof setTimeout>;
   private retryCount = 0;
   private disposed = false;
+  private publishedAssets = new Map<string, string>();
   readonly relayUrl: string;
 
   constructor(relayUrl: string) {
@@ -76,6 +109,9 @@ export class LiveSessionClient {
       acceptingJoins: summary.acceptingJoins,
       participants: summary.participants,
       stateSeq: summary.stateSeq,
+      presentation: summary.presentation,
+      ...(summary.activeBoardId ? { activeBoardId: summary.activeBoardId } : { activeBoardId: undefined }),
+      liveBoards: summary.liveBoards,
       error: undefined
     };
     this.emit();
@@ -110,7 +146,7 @@ export class LiveSessionClient {
       const message = validateEnvelope(parsed); if (!message) return;
       if (message.type === 'session.state' && message.payload && typeof message.payload === 'object') {
         const summary = message.payload as SessionSummary;
-        if (typeof summary.liveSessionId === 'string' && Array.isArray(summary.participants)) this.applySummary(summary);
+        if (typeof summary.liveSessionId === 'string' && Array.isArray(summary.participants) && Array.isArray(summary.liveBoards)) this.applySummary(summary);
       }
     });
 
@@ -145,6 +181,65 @@ export class LiveSessionClient {
     this.connect(ticket.value.ticket);
   }
 
+  private async uploadAsset(assetPath: string, loadAsset: AssetLoader): Promise<ApiResult<string>> {
+    const cached = this.publishedAssets.get(assetPath);
+    if (cached) return { ok: true, value: cached };
+    if (!this.state.liveSessionId || !this.hostCredential) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
+    let asset: { mime: string; bytes: Uint8Array };
+    try { asset = await loadAsset(assetPath); }
+    catch { return { ok: false, error: { code: 'ASSET_UNAVAILABLE', message: `Asset locale non disponibile: ${assetPath}` } }; }
+
+    try {
+      const response = await fetch(`${this.relayUrl}/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/assets`, {
+        method: 'POST',
+        headers: {
+          authorization: `Bearer ${this.hostCredential}`,
+          'content-type': asset.mime
+        },
+        body: asset.bytes
+      });
+      const value = await response.json() as { publishedAssetId?: string } | LiveApiError;
+      if (!response.ok || !('publishedAssetId' in value) || typeof value.publishedAssetId !== 'string') {
+        const error = (value as LiveApiError).error ?? { code: 'ASSET_UNAVAILABLE' as const, message: 'Upload asset live non riuscito.' };
+        return { ok: false, error };
+      }
+      this.publishedAssets.set(assetPath, value.publishedAssetId);
+      return { ok: true, value: value.publishedAssetId };
+    } catch {
+      return { ok: false, error: { code: 'ASSET_UNAVAILABLE', message: 'Upload asset live non riuscito.' } };
+    }
+  }
+
+  private async materializeElement(element: PublicBoardElement, loadAsset: AssetLoader): Promise<ApiResult<LiveBoardElement>> {
+    if (element.type === 'image') {
+      const asset = await this.uploadAsset(element.assetPath, loadAsset);
+      return asset.ok ? { ok: true, value: withoutLocalAsset(element, asset.value) } : asset;
+    }
+    if (element.type === 'token' && element.assetPath) {
+      const asset = await this.uploadAsset(element.assetPath, loadAsset);
+      return asset.ok ? { ok: true, value: withoutLocalAsset(element, asset.value) } : asset;
+    }
+    return { ok: true, value: withoutLocalAsset(element) };
+  }
+
+  private async materializeBoard(title: string, board: PublicPreparedBoard, loadAsset: AssetLoader): Promise<ApiResult<LiveBoardPayload>> {
+    const elements: LiveBoardElement[] = [];
+    for (const element of board.elements) {
+      const materialized = await this.materializeElement(element, loadAsset);
+      if (!materialized.ok) return materialized;
+      elements.push(materialized.value);
+    }
+    return { ok: true, value: { boardId: board.boardId, title, elements } };
+  }
+
+  private async postBoardAction<T>(path: string, body?: unknown): Promise<ApiResult<T>> {
+    if (!this.state.liveSessionId) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
+    return this.api<T>(`/api/sessions/${encodeURIComponent(this.state.liveSessionId)}${path}`, {
+      method: 'POST',
+      ...(body === undefined ? {} : { body: JSON.stringify(body) })
+    });
+  }
+
   async start(): Promise<ApiResult<DesktopLiveState>> {
     if (this.state.liveSessionId) return { ok: true, value: this.state };
     this.state = { ...initialState(), status: 'starting' }; this.emit();
@@ -154,6 +249,7 @@ export class LiveSessionClient {
       return { ok: false, error: created.error };
     }
     this.hostCredential = created.value.hostCredential;
+    this.publishedAssets.clear();
     this.state = {
       ...initialState(),
       status: 'open',
@@ -175,19 +271,14 @@ export class LiveSessionClient {
   }
 
   async setAcceptingJoins(acceptingJoins: boolean): Promise<ApiResult<DesktopLiveState>> {
-    if (!this.state.liveSessionId) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
-    const response = await this.api<SessionSummary>(`/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/join-policy`, {
-      method: 'POST',
-      body: JSON.stringify({ acceptingJoins })
-    });
+    const response = await this.postBoardAction<SessionSummary>('/join-policy', { acceptingJoins });
     if (!response.ok) return response;
     this.applySummary(response.value);
     return { ok: true, value: this.state };
   }
 
   async rotateJoinCode(): Promise<ApiResult<DesktopLiveState>> {
-    if (!this.state.liveSessionId) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
-    const response = await this.api<{ joinCode: string }>(`/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/rotate-code`, { method: 'POST' });
+    const response = await this.postBoardAction<{ joinCode: string }>('/rotate-code');
     if (!response.ok) return response;
     this.state = { ...this.state, joinCode: response.value.joinCode }; this.emit();
     await this.refresh();
@@ -195,10 +286,48 @@ export class LiveSessionClient {
   }
 
   async removeParticipant(participantId: string): Promise<ApiResult<DesktopLiveState>> {
-    if (!this.state.liveSessionId) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
-    const response = await this.api<SessionSummary>(`/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/participants/${encodeURIComponent(participantId)}/remove`, { method: 'POST' });
+    const response = await this.postBoardAction<SessionSummary>(`/participants/${encodeURIComponent(participantId)}/remove`);
     if (!response.ok) return response;
     this.applySummary(response.value);
+    return { ok: true, value: this.state };
+  }
+
+  async publishBoard(title: string, board: PublicPreparedBoard, loadAsset: AssetLoader, reset = false): Promise<ApiResult<DesktopLiveState>> {
+    const materialized = await this.materializeBoard(title, board, loadAsset);
+    if (!materialized.ok) return materialized;
+    const response = await this.postBoardAction<LiveBoardSnapshot>(reset ? '/reset-board' : '/publish-board', { board: materialized.value });
+    if (!response.ok) return response;
+    await this.refresh();
+    return { ok: true, value: this.state };
+  }
+
+  async switchBoard(boardId: string): Promise<ApiResult<DesktopLiveState>> {
+    const response = await this.postBoardAction<LiveBoardSnapshot>('/switch-board', { boardId });
+    if (!response.ok) return response;
+    await this.refresh();
+    return { ok: true, value: this.state };
+  }
+
+  async unpublish(): Promise<ApiResult<DesktopLiveState>> {
+    const response = await this.postBoardAction<unknown>('/unpublish');
+    if (!response.ok) return response;
+    await this.refresh();
+    return { ok: true, value: this.state };
+  }
+
+  async revealElement(boardId: string, element: PublicBoardElement, loadAsset: AssetLoader): Promise<ApiResult<DesktopLiveState>> {
+    const materialized = await this.materializeElement(element, loadAsset);
+    if (!materialized.ok) return materialized;
+    const response = await this.postBoardAction<LiveBoardSnapshot>('/reveal', { boardId, element: materialized.value });
+    if (!response.ok) return response;
+    await this.refresh();
+    return { ok: true, value: this.state };
+  }
+
+  async hideElement(boardId: string, elementId: string): Promise<ApiResult<DesktopLiveState>> {
+    const response = await this.postBoardAction<LiveBoardSnapshot>('/hide', { boardId, elementId });
+    if (!response.ok) return response;
+    await this.refresh();
     return { ok: true, value: this.state };
   }
 
@@ -208,6 +337,7 @@ export class LiveSessionClient {
     this.socket?.close();
     this.socket = undefined;
     this.hostCredential = undefined;
+    this.publishedAssets.clear();
     this.state = initialState();
   }
 }
