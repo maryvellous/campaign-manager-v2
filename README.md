@@ -13,9 +13,15 @@ npm start
 
 L'installazione scarica il runtime Electron. L'uso della campagna non richiede rete o account.
 
-## Stato: V0.3 — Live web standalone completata
+## Stato: V0.4 — Discord Activity implementata
 
-La V0.3 aggiunge una sessione live temporanea sopra la campagna locale, senza trasformare il relay nella fonte autorevole dei file. Il desktop genera un codice sessione, i giocatori entrano da browser senza account e ricevono solo la proiezione pubblica della board attiva.
+La V0.4 aggiunge Discord come adapter della live V0.3 senza cambiare il protocollo player: il master genera un pairing code dalla sessione desktop, collega una Activity instance e i giocatori entrano usando la propria identità Discord verificata server-side, senza digitare il join code standalone. Un'istanza non associata riceve zero dati della campagna; reconnect e sostituzione dell'istanza mantengono il modello di autorità della live V0.3.
+
+Il relay verifica l'identità tramite OAuth `identify` e verifica l'Activity instance corrente con le API Discord lato server. Client Secret e Bot Token restano esclusivamente nel deployment Cloudflare. Il browser non fornisce un `discordUserId` autorevole e non riceve credenziali server-side. La modalità standalone V0.3 resta disponibile e indipendente dall'Embedded App SDK.
+
+Il deployment production usa il Worker `campaign-manager-live`, Durable Objects separati e il bucket R2 `campaign-manager-live-assets`. La configurazione automatizzata e i test CI sono verdi; resta come gate operativo esterno il collaudo end-to-end dentro un vero client Discord, che richiede l'interazione con il portale/client Discord ma non ulteriori modifiche architetturali.
+
+La V0.3 continua a fornire una sessione live temporanea sopra la campagna locale, senza trasformare il relay nella fonte autorevole dei file. Il desktop genera un codice sessione, i giocatori entrano da browser senza account e ricevono solo la proiezione pubblica della board attiva.
 
 Il DM può pubblicare/cambiare board, rivelare o nascondere elementi, assegnare un controller giocatore a ciascun token, spostare qualunque token, fare focus one-shot con `Porta tutti qui` e terminare esplicitamente la sessione. I giocatori mantengono pan/zoom locale, possono fare ping e trascinare soltanto i token assegnati. Preview di drag e ping sono effimeri; il commit finale del token viene validato dal relay e aggiornato con `stateSeq`.
 
@@ -57,4 +63,4 @@ Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale este
 - `packages/protocol`: contratto runtime condiviso desktop/relay/player.
 - `tests`: verifiche di dominio, storage, protocollo e lifecycle live.
 
-Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. La V0.3 standalone è in stato verificato; il prossimo gradino previsto dalla roadmap è la V0.4 Discord Activity.
+Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. La V0.4 è implementata e verificata in CI; il solo gate esterno rimasto è il collaudo nel client Discord. Il prossimo gradino di sviluppo che non dipende da quel test è la V0.5 Assistente IA.
