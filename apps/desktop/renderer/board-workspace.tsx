@@ -459,7 +459,8 @@ export function BoardWorkspace({ command }: { command: Command }) {
     let moved = false;
     const target = event.currentTarget;
     target.setPointerCapture(event.pointerId);
-    const move = (pointer: PointerEvent) => {
+    const move: EventListener = nativeEvent => {
+      const pointer = nativeEvent as PointerEvent;
       const dx = (pointer.clientX - start.x) / zoom;
       const dy = (pointer.clientY - start.y) / zoom;
       if (!dx && !dy) return;
@@ -469,7 +470,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
       const next: BoardSession = { ...now, snapshot: { ...now.snapshot, document: { ...now.snapshot.document, elements } }, state: 'dirty' };
       setSession(next); sessionRef.current = next;
     };
-    const up = () => {
+    const up: EventListener = () => {
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
       const now = sessionRef.current; if (!now || !moved) return;
       history.current.past.push(before); history.current.past = history.current.past.slice(-80); history.current.future = []; scheduleSave(now);
@@ -487,7 +488,8 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const zoom = current.snapshot.document.camera.zoom;
     let resized = false;
     const target = event.currentTarget; target.setPointerCapture(event.pointerId);
-    const move = (pointer: PointerEvent) => {
+    const move: EventListener = nativeEvent => {
+      const pointer = nativeEvent as PointerEvent;
       const dx = (pointer.clientX - start.x) / zoom;
       const width = Math.max(element.type === 'token' ? 52 : 60, element.width + dx);
       const height = element.type === 'image' ? width / ratio : element.type === 'token' ? width : Math.max(48, element.height + (pointer.clientY - start.y) / zoom);
@@ -498,7 +500,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
       const next: BoardSession = { ...now, snapshot: { ...now.snapshot, document: { ...now.snapshot.document, elements } }, state: 'dirty' };
       setSession(next); sessionRef.current = next;
     };
-    const up = () => {
+    const up: EventListener = () => {
       target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
       const now = sessionRef.current; if (!now || !resized) return;
       history.current.past.push(before); history.current.past = history.current.past.slice(-80); history.current.future = []; scheduleSave(now);
