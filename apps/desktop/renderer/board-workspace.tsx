@@ -68,6 +68,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
   const [renameTitle, setRenameTitle] = useState('');
   const [message, setMessage] = useState<string>();
   const [textDraft, setTextDraft] = useState<{ x: number; y: number; text: string }>();
+  const [textEditing, setTextEditing] = useState<{ elementId: string; text: string }>();
   const history = useRef<{ past: BoardDocument[]; future: BoardDocument[] }>({ past: [], future: [] });
   const autosaveTimer = useRef<ReturnType<typeof setTimeout>>();
   const input = useRef<HTMLInputElement>(null);
@@ -126,7 +127,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardOpenReply;
     setSession({ snapshot: data.snapshot, state: 'clean', recovery: data.recovery });
-    setSelected(undefined); setTextDraft(undefined); setMessage(undefined);
+    setSelected(undefined); setTextDraft(undefined); setTextEditing(undefined); setMessage(undefined);
     history.current = { past: [], future: [] };
   }, [command]);
 
@@ -155,8 +156,14 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const current = sessionRef.current;
     if (!current?.recovery) return;
     const recovered = current.recovery.draft;
-    const next: BoardSession = { snapshot: { ...current.snapshot, document: clone(recovered.document) }, state: 'dirty' };
-    setSession(next); sessionRef.current = next; scheduleSave(next);
+    const conflicted = recovered.baseRevision !== current.snapshot.revision;
+    const next: BoardSession = {
+      snapshot: { ...current.snapshot, revision: recovered.baseRevision, document: clone(recovered.document) },
+      state: conflicted ? 'conflict' : 'dirty',
+      error: conflicted ? 'La board su disco è cambiata dopo la recovery. Scegli esplicitamente quale versione mantenere.' : undefined
+    };
+    setSession(next); sessionRef.current = next;
+    if (!conflicted) scheduleSave(next);
   };
 
   const discardRecovery = async () => {
@@ -268,6 +275,15 @@ export function BoardWorkspace({ command }: { command: Command }) {
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
   };
 
+  const commitTextEdit = () => {
+    const edit = textEditing;
+    if (!edit) return;
+    setTextEditing(undefined);
+    const value = edit.text.trim();
+    if (!value) return;
+    changeElement(edit.elementId, element => element.type === 'text' ? { ...element, text: value } : element);
+  };
+
   const importFile = async (file: File, world?: { x: number; y: number }) => {
     if (!/image\/(png|jpeg|webp)/u.test(file.type)) { setMessage('Usa un’immagine PNG, JPG/JPEG o WebP.'); return; }
     const [buffer, size] = await Promise.all([file.arrayBuffer(), imageSize(file)]);
@@ -345,7 +361,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey); }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); undo(true); }
       if (event.key === 'Delete' && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) deleteSelected();
-      if (event.key === 'Escape') { setSelected(undefined); setTextDraft(undefined); setTool('select'); }
+      if (event.key === 'Escape') { setSelected(undefined); setTextDraft(undefined); setTextEditing(undefined); setTool('select'); }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
   }, [save]);
@@ -383,7 +399,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
               className={`board-element ${selected === element.elementId ? 'selected' : ''} ${element.locked ? 'locked' : ''} board-${element.type}`}
               style={{ left: element.x, top: element.y, width: element.width, height: element.height, zIndex: element.z }}
               onPointerDown={event => beginMove(event, element)} onClick={event => { event.stopPropagation(); setSelected(element.elementId); }}>
-              {element.type === 'text' ? <div className="board-text-content">{element.text}</div> : <BoardImage element={element} command={command} />}
+              {element.type === 'text' ? textEditing?.elementId === element.elementId ? <textarea className="board-text-editor" autoFocus value={textEditing.text} onPointerDown={event => event.stopPropagation()} onChange={event => setTextEditing({ elementId: element.elementId, text: event.target.value })} onBlur={commitTextEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTextEditing(undefined); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} /> : <div className="board-text-content" onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTextEditing({ elementId: element.elementId, text: element.text }); }}>{element.text}</div> : <BoardImage element={element} command={command} />}
               {selected === element.elementId && !element.locked && <button className="board-resize" aria-label="Ridimensiona elemento" onPointerDown={event => beginResize(event, element)} />}
               {element.locked && <span className="board-lock-badge">Bloccato</span>}
             </div>)}
