@@ -352,6 +352,75 @@ export class LiveSession {
       return resultResponse(result);
     }
 
+    if (request.method === 'POST' && url.pathname === '/asset-authorize') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      return resultResponse(await model.authorizeAssetUpload(credential));
+    }
+
+    if (request.method === 'POST' && url.pathname === '/publish-board') {
+      const credential = bearer(request); const input = validatePublishBoardRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      const result = await model.publishBoard(credential, input.board);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/reset-board') {
+      const credential = bearer(request); const input = validatePublishBoardRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      const result = await model.resetBoard(credential, input.board);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/switch-board') {
+      const credential = bearer(request); const input = validateBoardIdRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      const result = await model.switchBoard(credential, input.boardId);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/unpublish') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      const result = await model.unpublish(credential);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastPlayerSnapshot(model); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/reveal') {
+      const credential = bearer(request); const input = validateRevealElementRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      const result = await model.revealElement(credential, input.boardId, input.element);
+      await this.persist(model);
+      if (result.ok) {
+        this.hostSnapshot(model);
+        for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.revealed', { boardId: input.boardId, element: input.element, stateSeq: result.value.stateSeq });
+      }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/hide') {
+      const credential = bearer(request); const input = validateHideElementRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      const before = model.boardSnapshot(input.boardId);
+      const result = await model.hideElement(credential, input.boardId, input.elementId);
+      await this.persist(model);
+      if (result.ok) {
+        this.hostSnapshot(model);
+        const afterIds = new Set(result.value.elements.map(element => element.elementId));
+        const removedIds = before?.elements.filter(element => !afterIds.has(element.elementId)).map(element => element.elementId) ?? [input.elementId];
+        for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.hidden', { boardId: input.boardId, elementIds: removedIds, stateSeq: result.value.stateSeq });
+      }
+      return resultResponse(result);
+    }
+
     const removeMatch = url.pathname.match(/^\/participants\/([^/]+)\/remove$/u);
     if (request.method === 'POST' && removeMatch) {
       const credential = bearer(request);
