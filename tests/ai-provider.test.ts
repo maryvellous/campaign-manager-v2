@@ -80,7 +80,7 @@ test('AI service keeps encrypted provider settings and thread outside the campai
   assert.deepEqual(await fs.readdir(vault), []);
 
   await service.acceptPrivacy();
-  await service.send('Dimmi qualcosa');
+  await service.send('Dimmi qualcosa', { label: 'Campagna intera', text: '', sources: [] });
   assert.equal(seenKey, 'sk-example-secret');
   assert.equal(seenRequest?.model, 'gpt-5.6-terra');
   assert.equal(seenRequest?.messages.at(-1)?.content, 'Dimmi qualcosa');
@@ -106,7 +106,25 @@ test('AI service requires privacy acknowledgement before the first remote reques
   await service.initialize();
   await service.bindCampaign('22222222-2222-4222-8222-222222222222');
   await service.configure('key', 'gpt-5.6-luna');
-  await assert.rejects(service.send('test'), { code: 'permission_denied' });
+  await assert.rejects(service.send('test', { label: 'Campagna intera', text: '', sources: [] }), { code: 'permission_denied' });
   assert.equal(calls, 0);
   assert.equal(service.state.messages.length, 0);
+});
+
+
+test('AI service sends prepared retrieval instructions and records only verified sources on the answer', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-ai-context-'));
+  t.after(async () => fs.rm(dir, { recursive: true, force: true }));
+  let request: AiCompletionRequest | undefined;
+  const provider: AiProvider = { async complete(_key, value) { request = value; return 'Da campagna.'; } };
+  const codec: AiSecretCodec = { available: () => true, encrypt: value => value, decrypt: value => value };
+  const service = new AiService(new LocalStore(path.join(dir, 'local')), codec, provider);
+  await service.initialize();
+  await service.bindCampaign('33333333-3333-4333-8333-333333333333');
+  await service.configure('key', 'gpt-5.6-luna');
+  await service.acceptPrivacy();
+  const source = { noteId: 'NPC/Maya.md', title: 'Maya', relativePath: 'NPC/Maya.md' };
+  await service.send('Chi è Maya?', { label: 'Nota · Maya', text: '=== NOTA: NPC/Maya.md ===\nMaya è la regina.', sources: [source] });
+  assert.match(request?.instructions ?? '', /Maya è la regina/u);
+  assert.deepEqual(service.state.messages.at(-1)?.sources, [source]);
 });
