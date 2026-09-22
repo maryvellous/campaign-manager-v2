@@ -77,3 +77,23 @@ test('Activity credential authorizes live assets but never host authority', asyn
   assert.equal(hostTicket.ok, false);
   if (!hostTicket.ok) assert.equal(hostTicket.error.error.code, 'AUTH_FAILED');
 });
+
+
+test('moving live to a new Activity instance revokes old credential but preserves participant identity', async () => {
+  const f = await fixture();
+  const first = await f.model.joinDiscordParticipant('instance_one', '205519959982473217', 'Mary', 2_000);
+  assert.equal(first.ok, true);
+  if (!first.ok) return;
+
+  const revoked = f.model.revokeActivityInstance('instance_one');
+  assert.deepEqual(revoked, [first.value.participantId]);
+
+  const oldResume = await f.model.resumeDiscordParticipant('instance_one', first.value.participantId, first.value.activityCredential, 2_500);
+  assert.equal(oldResume.ok, false);
+
+  const second = await f.model.joinDiscordParticipant('instance_two', '205519959982473217', 'Mary', 3_000);
+  assert.equal(second.ok, true);
+  if (!second.ok) return;
+  assert.equal(second.value.participantId, first.value.participantId);
+  assert.equal(f.model.summary().participants.length, 1);
+});
