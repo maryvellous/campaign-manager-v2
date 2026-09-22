@@ -22,10 +22,15 @@ const storageKey = 'cmv2-live-resume-v1';
 
 function storedResume(): StoredResume | undefined {
   try {
-    const value = JSON.parse(sessionStorage.getItem(storageKey) ?? 'null') as StoredResume | null;
+    const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as StoredResume | null;
     if (!value || typeof value.liveSessionId !== 'string' || typeof value.participantId !== 'string' || typeof value.resumeCredential !== 'string' || typeof value.displayName !== 'string') return undefined;
     return value;
   } catch { return undefined; }
+}
+
+function formatJoinCode(value: string): string {
+  const compact = value.toUpperCase().replace(/[^A-Z2-9]/gu, '').slice(0, 8);
+  return compact.length > 4 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
 }
 
 function websocketUrl(liveSessionId: string): string {
@@ -64,8 +69,8 @@ function App() {
 
   const setResumeState = useCallback((value: StoredResume | undefined) => {
     resumeRef.current = value; setResume(value);
-    if (value) sessionStorage.setItem(storageKey, JSON.stringify(value));
-    else sessionStorage.removeItem(storageKey);
+    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
+    else localStorage.removeItem(storageKey);
   }, []);
 
   const connect = useCallback((liveSessionId: string, ticket: string) => {
@@ -154,7 +159,7 @@ function App() {
 
   async function join(event: React.FormEvent) {
     event.preventDefault();
-    const code = joinCode.trim().toUpperCase();
+    const code = formatJoinCode(joinCode.trim());
     const name = displayName.trim();
     if (!code || !name) return;
     stopped.current = false; setError(undefined); setScreen('connecting');
@@ -181,7 +186,7 @@ function App() {
       <h1>Entra al tavolo.</h1>
       <p>Chiedi al master il codice della sessione. Non serve un account.</p>
       <form onSubmit={join}>
-        <label>Codice<input autoComplete="off" spellCheck={false} maxLength={9} placeholder="ABCD-EFGH" value={joinCode} onChange={event => setJoinCode(event.target.value.toUpperCase())} /></label>
+        <label>Codice<input autoComplete="off" spellCheck={false} maxLength={9} placeholder="ABCD-EFGH" value={joinCode} onChange={event => setJoinCode(formatJoinCode(event.target.value))} /></label>
         <label>Nome visualizzato<input autoComplete="nickname" maxLength={80} placeholder="Come ti vedranno al tavolo" value={displayName} onChange={event => setDisplayName(event.target.value)} /></label>
         <button type="submit" disabled={!joinCode.trim() || !displayName.trim()}>Entra</button>
       </form>
