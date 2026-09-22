@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { clearTimeout as cancelTimer, setTimeout as schedule } from 'node:timers';
 import { setTimeout as sleep } from 'node:timers/promises';
 
 const port = 8791;
@@ -33,6 +34,7 @@ async function jsonRequest(path, { method = 'POST', body, credential } = {}) {
   const response = await globalThis.fetch(origin + path, {
     method,
     headers,
+    signal: globalThis.AbortSignal.timeout(8_000),
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
   });
   const value = await response.json();
@@ -48,11 +50,21 @@ function connectSocket(sessionId, ticket) {
   return new Promise((resolve, reject) => {
     const socket = new globalThis.WebSocket(socketUrl(sessionId), ['cmv2.v1', `cmv2.ticket.${ticket}`]);
     const inbox = [];
+    const timeout = schedule(() => {
+      try { socket.close(); } catch { /* close is best-effort */ }
+      reject(new Error('websocket connection timed out'));
+    }, 8_000);
     socket.addEventListener('message', event => {
-      try { inbox.push({ at: globalThis.performance.now(), value: JSON.parse(String(event.data)) }); } catch { /* readiness/close errors are expected in smoke cleanup */ }
+      try { inbox.push({ at: globalThis.performance.now(), value: JSON.parse(String(event.data)) }); } catch { /* malformed smoke message is ignored */ }
     });
-    socket.addEventListener('open', () => resolve({ socket, inbox }));
-    socket.addEventListener('error', () => reject(new Error('websocket connection failed')));
+    socket.addEventListener('open', () => {
+      cancelTimer(timeout);
+      resolve({ socket, inbox });
+    });
+    socket.addEventListener('error', () => {
+      cancelTimer(timeout);
+      reject(new Error('websocket connection failed'));
+    });
   });
 }
 
