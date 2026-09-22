@@ -267,9 +267,15 @@ export class LiveSession {
   }
 
   private async cleanupEndedSession(model: LiveSessionModel): Promise<void> {
-    await this.state.storage.deleteAlarm();
-    await directoryCall(this.env, '/remove', { joinCode: model.record.joinCode, liveSessionId: model.record.liveSessionId });
-    await deleteSessionAssets(this.env.LIVE_ASSETS, model.record.liveSessionId);
+    model.compactEndedRuntime();
+    await this.persist(model);
+    try {
+      await directoryCall(this.env, '/remove', { joinCode: model.record.joinCode, liveSessionId: model.record.liveSessionId });
+      await deleteSessionAssets(this.env.LIVE_ASSETS, model.record.liveSessionId);
+      await this.state.storage.deleteAlarm();
+    } catch {
+      await this.state.storage.setAlarm(Date.now() + 60_000);
+    }
   }
 
   private closeEndedSockets(reason: string, endedAt: number): void {
@@ -440,8 +446,8 @@ export class LiveSession {
       const result = await model.endSession(credential);
       await this.persist(model);
       if (result.ok) {
-        await this.cleanupEndedSession(model);
         this.closeEndedSockets(result.value.reason, result.value.endedAt);
+        await this.cleanupEndedSession(model);
       }
       return resultResponse(result);
     }
@@ -669,6 +675,10 @@ export class LiveSession {
 
   async alarm(): Promise<void> {
     const model = await this.model(); if (!model) return;
+    if (model.record.lifecycle === 'ended') {
+      await this.cleanupEndedSession(model);
+      return;
+    }
     const ended = model.expireHostGrace();
     if (!ended) {
       const deadline = model.hostGraceDeadline();
@@ -676,8 +686,8 @@ export class LiveSession {
       return;
     }
     await this.persist(model);
-    await this.cleanupEndedSession(model);
     this.closeEndedSockets(ended.reason, ended.endedAt);
+    await this.cleanupEndedSession(model);
   }
 }
 
