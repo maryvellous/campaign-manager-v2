@@ -163,7 +163,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardOpenReply;
     setSession({ snapshot: data.snapshot, state: 'clean', recovery: data.recovery });
-    setSelected(undefined); setTextDraft(undefined); setTextEditing(undefined); setMessage(undefined);
+    setSelectedIds([]); setSelectedConnector(undefined); setConnectionStart(undefined); setTextDraft(undefined); setTextEditing(undefined); setTokenEditing(undefined); setMessage(undefined);
     history.current = { past: [], future: [] };
   }, [command, save]);
 
@@ -448,24 +448,37 @@ export function BoardWorkspace({ command }: { command: Command }) {
     changeElement(edit.elementId, element => element.type === 'token' ? { ...element, name: edit.name } : element);
   };
 
-  const importFile = async (file: File, world?: { x: number; y: number }) => {
-    if (!/image\/(png|jpeg|webp)/u.test(file.type) && !/\.(png|jpe?g|webp)$/iu.test(file.name)) { setMessage('Usa un’immagine PNG, JPG/JPEG o WebP.'); return; }
-    if (file.size > 20 * 1024 * 1024) { setMessage('L’immagine supera il limite di 20 MB.'); return; }
+  const importAsset = async (file: File): Promise<{ assetPath: string; size: { width: number; height: number } } | undefined> => {
+    if (!/image\/(png|jpeg|webp)/u.test(file.type) && !/\.(png|jpe?g|webp)$/iu.test(file.name)) { setMessage('Usa un’immagine PNG, JPG/JPEG o WebP.'); return undefined; }
+    if (file.size > 20 * 1024 * 1024) { setMessage('L’immagine supera il limite di 20 MB.'); return undefined; }
     let buffer: ArrayBuffer;
     let size: { width: number; height: number };
     try { [buffer, size] = await Promise.all([file.arrayBuffer(), imageSize(file)]); }
-    catch { setMessage('L’immagine non è leggibile.'); return; }
+    catch { setMessage('L’immagine non è leggibile.'); return undefined; }
     const reply = await command({ action: 'board:importImage', name: file.name, base64: bytesToBase64(new Uint8Array(buffer)) });
-    if (!reply.ok) { setMessage(reply.error?.message); return; }
+    if (!reply.ok) { setMessage(reply.error?.message); return undefined; }
+    return { assetPath: (reply.data as { assetPath: string }).assetPath, size };
+  };
+
+  const importFile = async (file: File, world?: { x: number; y: number }) => {
+    const imported = await importAsset(file); if (!imported) return;
     const current = sessionRef.current; if (!current) return;
-    const assetPath = (reply.data as { assetPath: string }).assetPath;
     const element: BoardImageElement = {
-      type: 'image', elementId: crypto.randomUUID(), assetPath,
-      x: world?.x ?? 160, y: world?.y ?? 140, width: size.width, height: size.height,
+      type: 'image', elementId: crypto.randomUUID(), assetPath: imported.assetPath,
+      x: world?.x ?? 160, y: world?.y ?? 140, width: imported.size.width, height: imported.size.height,
       z: nextZ(current.snapshot.document), locked: false
     };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
-    setSelected(element.elementId); setTool('select');
+    setSelectedIds([element.elementId]); setSelectedConnector(undefined); setTool('select');
+  };
+
+  const importTokenAvatar = async (file: File) => {
+    const current = sessionRef.current;
+    if (!current || selectedIds.length !== 1) return;
+    const token = current.snapshot.document.elements.find(element => element.elementId === selectedIds[0]);
+    if (!token || token.type !== 'token') return;
+    const imported = await importAsset(file); if (!imported) return;
+    changeElement(token.elementId, element => element.type === 'token' ? { ...element, avatarPath: imported.assetPath } : element);
   };
 
   const worldPoint = (clientX: number, clientY: number) => {
