@@ -128,8 +128,8 @@ function assetIdsFromBoard(board: LiveBoardPayload): string[] {
   return [...new Set(board.elements.flatMap(assetIdsFromElement))];
 }
 
-async function assetsAvailable(env: Env, liveSessionId: string, assetIds: string[]): Promise<boolean> {
-  for (const assetId of assetIds) if (!await env.LIVE_ASSETS.head(`${liveSessionId}/${assetId}`)) return false;
+export async function assetsAvailable(bucket: R2BucketLike, liveSessionId: string, assetIds: string[]): Promise<boolean> {
+  for (const assetId of assetIds) if (!await bucket.head(`${liveSessionId}/${assetId}`)) return false;
   return true;
 }
 
@@ -589,7 +589,7 @@ export default {
     if (request.method === 'POST' && (tail === '/publish-board' || tail === '/reset-board')) {
       const input = validatePublishBoardRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
-      if (!await assetsAvailable(env, liveSessionId, assetIdsFromBoard(input.board))) return json(safeError('ASSET_UNAVAILABLE', 'Uno o più asset della board non sono disponibili.'), 409);
+      if (!await assetsAvailable(env.LIVE_ASSETS, liveSessionId, assetIdsFromBoard(input.board))) return json(safeError('ASSET_UNAVAILABLE', 'Uno o più asset della board non sono disponibili.'), 409);
       return forwardSession(env, liveSessionId, tail, request, input);
     }
 
@@ -604,7 +604,7 @@ export default {
     if (request.method === 'POST' && tail === '/reveal') {
       const input = validateRevealElementRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
-      if (!await assetsAvailable(env, liveSessionId, assetIdsFromElement(input.element))) return json(safeError('ASSET_UNAVAILABLE', 'Asset dell’elemento non disponibile.'), 409);
+      if (!await assetsAvailable(env.LIVE_ASSETS, liveSessionId, assetIdsFromElement(input.element))) return json(safeError('ASSET_UNAVAILABLE', 'Asset dell’elemento non disponibile.'), 409);
       return forwardSession(env, liveSessionId, '/reveal', request, input);
     }
 
