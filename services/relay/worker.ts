@@ -1,18 +1,25 @@
 import {
   envelope,
   safeError,
+  validateBoardIdRequest,
   validateEnvelope,
+  validateHideElementRequest,
   validateJoinPolicy,
   validateJoinRequest,
+  validatePublishBoardRequest,
   validateResumeRequest,
+  validateRevealElementRequest,
   type ConnectionReadyPayload,
   type LiveApiError,
+  type LiveBoardElement,
+  type LiveBoardPayload,
   type SessionSummary
 } from '../../packages/protocol/src/index';
 import {
   createResponse,
   LiveSessionModel,
   randomJoinCode,
+  randomOpaque,
   SessionDirectoryModel,
   type LiveSessionRecord,
   type TicketIdentity
@@ -37,10 +44,20 @@ interface DurableObjectNamespaceLike {
 }
 
 interface AssetBinding { fetch(request: Request): Promise<Response> }
+interface R2ObjectLike {
+  body: ReadableStream<Uint8Array> | null;
+  httpMetadata?: { contentType?: string };
+}
+interface R2BucketLike {
+  put(key: string, value: ArrayBuffer | Uint8Array | ReadableStream, options?: { httpMetadata?: { contentType?: string } }): Promise<unknown>;
+  get(key: string): Promise<R2ObjectLike | null>;
+  head(key: string): Promise<unknown | null>;
+}
 
 export interface Env {
   LIVE_SESSIONS: DurableObjectNamespaceLike;
   SESSION_DIRECTORY: DurableObjectNamespaceLike;
+  LIVE_ASSETS: R2BucketLike;
   ASSETS: AssetBinding;
 }
 
@@ -94,6 +111,28 @@ function ticketFromProtocols(request: Request): string | undefined {
   const protocols = (request.headers.get('sec-websocket-protocol') ?? '').split(',').map(value => value.trim());
   const ticketProtocol = protocols.find(value => value.startsWith('cmv2.ticket.'));
   return ticketProtocol?.slice('cmv2.ticket.'.length);
+}
+
+function assetIdsFromElement(element: LiveBoardElement): string[] {
+  if (element.type === 'image') return [element.publishedAssetId];
+  if (element.type === 'token' && element.publishedAssetId) return [element.publishedAssetId];
+  return [];
+}
+
+function assetIdsFromBoard(board: LiveBoardPayload): string[] {
+  return [...new Set(board.elements.flatMap(assetIdsFromElement))];
+}
+
+async function assetsAvailable(env: Env, liveSessionId: string, assetIds: string[]): Promise<boolean> {
+  for (const assetId of assetIds) if (!await env.LIVE_ASSETS.head(`${liveSessionId}/${assetId}`)) return false;
+  return true;
+}
+
+function imageMime(bytes: Uint8Array, declared: string): string | undefined {
+  if (declared === 'image/png' && bytes.length >= 8 && [137,80,78,71,13,10,26,10].every((value, index) => bytes[index] === value)) return declared;
+  if (declared === 'image/jpeg' && bytes.length >= 3 && bytes[0] === 255 && bytes[1] === 216 && bytes[2] === 255) return declared;
+  if (declared === 'image/webp' && bytes.length >= 12 && new TextDecoder().decode(bytes.slice(0,4)) === 'RIFF' && new TextDecoder().decode(bytes.slice(8,12)) === 'WEBP') return declared;
+  return undefined;
 }
 
 function sessionStub(env: Env, liveSessionId: string): DurableObjectStubLike {
