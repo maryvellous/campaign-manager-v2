@@ -88,3 +88,49 @@ test('duplicate display names remain separate identities', async () => {
   assert.equal(one.ok, true); assert.equal(two.ok, true);
   if (one.ok && two.ok) assert.notEqual(one.value.participantId, two.value.participantId);
 });
+
+
+test('one host can admit eight players and summary never exposes resume secrets', async () => {
+  const { model, ticket } = await LiveSessionModel.create('ABCD-EFGH', 1000);
+  const host = await model.consumeTicket(ticket, 1001);
+  assert.equal(host.ok, true);
+  if (host.ok) model.connect(host.value);
+
+  const joined = [];
+  for (let index = 0; index < 8; index++) {
+    const result = await model.join('ABCD-EFGH', `Player ${index + 1}`, 1010 + index);
+    assert.equal(result.ok, true);
+    if (result.ok) joined.push(result.value);
+  }
+
+  assert.equal(model.summary().participants.length, 8);
+  const serialized = JSON.stringify(model.summary());
+  for (const participant of joined) {
+    assert.equal(serialized.includes(participant.resumeCredential), false);
+    assert.equal(serialized.includes(participant.participantId), true);
+  }
+  assert.equal(serialized.includes('resumeCredentialHash'), false);
+  assert.equal(serialized.includes('hostCredential'), false);
+});
+
+test('host disconnect freezes new joins but existing participant can still obtain resume ticket', async () => {
+  const { model, ticket } = await LiveSessionModel.create('ABCD-EFGH', 1000);
+  const host = await model.consumeTicket(ticket, 1001);
+  assert.equal(host.ok, true);
+  if (!host.ok) return;
+  model.connect(host.value);
+
+  const joined = await model.join('ABCD-EFGH', 'Player', 1002);
+  assert.equal(joined.ok, true);
+  if (!joined.ok) return;
+
+  model.disconnect(host.value);
+  assert.equal(model.summary().lifecycle, 'host_reconnecting');
+
+  const blocked = await model.join('ABCD-EFGH', 'Late player', 1003);
+  assert.equal(blocked.ok, false);
+  if (!blocked.ok) assert.equal(blocked.error.error.code, 'HOST_OFFLINE');
+
+  const resumed = await model.resume(joined.value.participantId, joined.value.resumeCredential, 1004);
+  assert.equal(resumed.ok, true);
+});
