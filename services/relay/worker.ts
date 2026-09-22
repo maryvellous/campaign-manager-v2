@@ -543,6 +543,25 @@ export class LiveSession {
       return resultResponse(await model.authorizeActivityPairing(credential));
     }
 
+    if (request.method === 'POST' && url.pathname === '/activity-join') {
+      const body = await requestJson(request) as { instanceId?: unknown; discordUserId?: unknown; displayName?: unknown } | undefined;
+      if (!body || typeof body.instanceId !== 'string' || typeof body.discordUserId !== 'string' || !/^\d{5,32}$/u.test(body.discordUserId) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 80) {
+        return json(safeError('PAYLOAD_INVALID', 'Identità Discord verificata non valida.'), 400);
+      }
+      const result = await model.joinDiscordParticipant(body.instanceId, body.discordUserId, body.displayName);
+      await this.persist(model);
+      if (result.ok) this.hostSnapshot(model);
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/activity-resume') {
+      const input = validateActivityResumeRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Resume Activity non valido.'), 400);
+      const result = await model.resumeDiscordParticipant(input.instanceId, input.participantId, input.activityCredential);
+      await this.persist(model);
+      return resultResponse(result);
+    }
+
     if (request.method === 'POST' && url.pathname === '/join') {
       const input = validateJoinRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Codice o nome non valido.'), 400);
@@ -882,7 +901,10 @@ export default {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/activity/config') {
-      return json({ ...(env.DISCORD_CLIENT_ID ? { clientId: env.DISCORD_CLIENT_ID } : {}) });
+      return json({
+        ...(env.DISCORD_CLIENT_ID ? { clientId: env.DISCORD_CLIENT_ID } : {}),
+        identityReady: discordIdentityConfigured(env)
+      });
     }
 
     const activityInstanceMatch = url.pathname.match(/^\/api\/activity\/instances\/([^/]+)$/u);
@@ -896,6 +918,60 @@ export default {
       const input = validateActivityPairRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Pairing Activity non valido.'), 400);
       return directoryCall(env, '/pairing-consume', input);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/activity/join') {
+      const input = validateActivityJoinRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Ingresso Activity non valido.'), 400);
+      if (!discordIdentityConfigured(env)) return json(safeError('INTERNAL_ERROR', 'Identity Discord non configurata sul relay.'), 500);
+
+      const resolved = await directoryStub(env).fetch(`https://directory.internal/activity-resolve?instanceId=${encodeURIComponent(input.instanceId)}`);
+      if (!resolved.ok) return json(safeError('SESSION_NOT_FOUND', 'Questa Activity non è associata a una sessione.'), 404);
+      const { liveSessionId } = await resolved.json() as { liveSessionId?: unknown };
+      if (typeof liveSessionId !== 'string') return json(safeError('INTERNAL_ERROR', 'Binding Activity non valido.'), 500);
+
+      const verified = await verifyDiscordActivityUser(env, input.code, input.instanceId);
+      if (!verified) return json(safeError('AUTH_FAILED', 'Discord non ha confermato identità e appartenenza a questa Activity.'), 401);
+
+      const joinedResponse = await forwardSession(env, liveSessionId, '/activity-join', new Request(request.url, { method: 'POST' }), {
+        instanceId: input.instanceId,
+        discordUserId: verified.userId,
+        displayName: verified.displayName
+      });
+      if (!joinedResponse.ok) return joinedResponse;
+      const joined = await joinedResponse.json() as { participantId?: unknown; activityCredential?: unknown; ticket?: unknown; displayName?: unknown };
+      if (typeof joined.participantId !== 'string' || typeof joined.activityCredential !== 'string' || typeof joined.ticket !== 'string' || typeof joined.displayName !== 'string') {
+        return json(safeError('INTERNAL_ERROR', 'Sessione Activity non valida.'), 500);
+      }
+      const response: ActivityJoinResponse = {
+        liveSessionId,
+        participantId: joined.participantId,
+        activityCredential: joined.activityCredential,
+        ticket: joined.ticket,
+        accessToken: verified.accessToken,
+        displayName: joined.displayName
+      };
+      return json(response);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/activity/resume') {
+      const input = validateActivityResumeRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Resume Activity non valido.'), 400);
+      const resolved = await directoryStub(env).fetch(`https://directory.internal/activity-resolve?instanceId=${encodeURIComponent(input.instanceId)}`);
+      if (!resolved.ok) return json(safeError('SESSION_NOT_FOUND', 'Questa Activity non è più associata a una sessione.'), 404);
+      const { liveSessionId } = await resolved.json() as { liveSessionId?: unknown };
+      if (typeof liveSessionId !== 'string') return json(safeError('INTERNAL_ERROR', 'Binding Activity non valido.'), 500);
+      const resumedResponse = await forwardSession(env, liveSessionId, '/activity-resume', new Request(request.url, { method: 'POST' }), input);
+      if (!resumedResponse.ok) return resumedResponse;
+      const resumed = await resumedResponse.json() as { ticket?: unknown; displayName?: unknown };
+      if (typeof resumed.ticket !== 'string' || typeof resumed.displayName !== 'string') return json(safeError('INTERNAL_ERROR', 'Resume Activity non valido.'), 500);
+      const response: ActivityResumeResponse = {
+        liveSessionId,
+        participantId: input.participantId,
+        ticket: resumed.ticket,
+        displayName: resumed.displayName
+      };
+      return json(response);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/join') {
