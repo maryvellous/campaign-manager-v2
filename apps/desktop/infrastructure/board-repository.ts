@@ -48,14 +48,27 @@ export class BoardRepository {
 
   private async ensureDirectory(relative: 'Boards' | 'Assets/Board'): Promise<string> {
     await this.checkRoot();
-    const target = path.join(this.root, ...relative.split('/'));
-    await fs.mkdir(target, { recursive: true });
-    const stat = await fs.lstat(target);
-    if (!stat.isDirectory() || stat.isSymbolicLink()) throw new CampaignError('outside_campaign_root', 'La cartella board non può essere un collegamento simbolico.');
-    const real = await fs.realpath(target);
-    const rel = path.relative(this.root, real);
-    if (rel.startsWith('..') || path.isAbsolute(rel)) throw new CampaignError('outside_campaign_root', 'Percorso board esterno alla campagna.');
-    return target;
+    let cursor = this.root;
+    for (const segment of relative.split('/')) {
+      cursor = path.join(cursor, segment);
+      try {
+        const stat = await fs.lstat(cursor);
+        if (stat.isSymbolicLink()) throw new CampaignError('outside_campaign_root', 'Le cartelle board non possono attraversare collegamenti simbolici.');
+        if (!stat.isDirectory()) throw new CampaignError('invalid_path', 'Il percorso board deve essere una cartella.');
+      } catch (error) {
+        if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+        try { await fs.mkdir(cursor); }
+        catch (mkdirError) {
+          if ((mkdirError as NodeJS.ErrnoException).code !== 'EEXIST') throw mkdirError;
+        }
+        const stat = await fs.lstat(cursor);
+        if (stat.isSymbolicLink() || !stat.isDirectory()) throw new CampaignError('outside_campaign_root', 'La cartella board non è sicura.');
+      }
+      const real = await fs.realpath(cursor);
+      const rel = path.relative(this.root, real);
+      if (rel.startsWith('..') || path.isAbsolute(rel)) throw new CampaignError('outside_campaign_root', 'Percorso board esterno alla campagna.');
+    }
+    return cursor;
   }
 
   private async target(relative: string, missingLeaf = false): Promise<string> {
