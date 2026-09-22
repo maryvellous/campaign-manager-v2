@@ -1,6 +1,10 @@
 import {
+  validateActivityBindingStatus,
+  validateActivityPairingResponse,
   validateEnvelope,
   validateFinalTokenPositionsResponse,
+  type ActivityBindingStatus,
+  type ActivityPairingResponse,
   type CreateSessionResponse,
   type LiveApiError,
   type LiveBoardElement,
@@ -394,6 +398,22 @@ export class LiveSessionClient {
     if (!response.ok) return response;
     await this.refresh();
     return { ok: true, value: this.state };
+  }
+
+  async createActivityPairing(): Promise<ApiResult<ActivityPairingResponse>> {
+    if (!this.state.liveSessionId) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
+    const response = await this.postBoardAction<unknown>('/activity-pairing');
+    if (!response.ok) return response;
+    const valid = validateActivityPairingResponse(response.value);
+    return valid ? { ok: true, value: valid } : { ok: false, error: { code: 'PAYLOAD_INVALID', message: 'Il relay ha restituito un pairing Discord non valido.' } };
+  }
+
+  async activityBinding(): Promise<ApiResult<ActivityBindingStatus>> {
+    if (!this.state.liveSessionId) return { ok: true, value: { bound: false } };
+    const response = await this.api<unknown>(`/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/activity-binding`, { method: 'GET' });
+    if (!response.ok) return response;
+    const valid = validateActivityBindingStatus(response.value);
+    return valid ? { ok: true, value: valid } : { ok: false, error: { code: 'PAYLOAD_INVALID', message: 'Il relay ha restituito uno stato Activity non valido.' } };
   }
 
   async finalTokenPositions(): Promise<ApiResult<FinalTokenPositionsResponse>> {
