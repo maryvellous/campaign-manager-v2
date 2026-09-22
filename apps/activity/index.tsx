@@ -390,6 +390,11 @@ function App() {
           if (payload.lifecycle === 'ended') { setScreen('ended'); return; }
         }
         if (typeof payload.stateSeq === 'number' && payload.stateSeq > seqRef.current) requestSnapshot();
+      } else if (message.type === 'session.ended' && message.payload && typeof message.payload === 'object') {
+        const payload = message.payload as { reason?: string };
+        stopped.current = true; setResumeState(undefined); setBoard(undefined); boardRef.current = undefined; setPreviewPositions({}); setPings([]); setScreen('ended');
+        setError({ code: 'SESSION_ENDED', message: payload.reason === 'host_timeout' ? 'La sessione è terminata perché il master è rimasto offline troppo a lungo.' : 'Il master ha terminato la sessione.' });
+        socket.close();
       } else if (message.type === 'participant.removed') {
         stopped.current = true; setResumeState(undefined); setScreen('ended');
         setError({ code: 'PERMISSION_DENIED', message: 'Il master ti ha rimosso dalla sessione.' });
