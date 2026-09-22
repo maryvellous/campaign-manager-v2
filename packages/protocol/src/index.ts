@@ -65,7 +65,7 @@ export interface TokenControllerRequest { boardId: string; tokenId: string; part
 export interface TokenControllerClearRequest { boardId: string; tokenId: string }
 export interface TokenMovePayload { boardId: string; tokenId: string; x: number; y: number }
 export interface TokenPositionEvent extends TokenMovePayload { stateSeq: number }
-export interface TokenPreviewEvent extends TokenMovePayload {}
+export type TokenPreviewEvent = TokenMovePayload;
 export interface TokenControllerEvent { boardId: string; tokenId: string; controlled: boolean; stateSeq: number }
 export interface PingPayload { boardId: string; x: number; y: number }
 export interface PingEvent extends PingPayload { participantId: string }
@@ -158,8 +158,8 @@ export interface PublishBoardRequest { board: LiveBoardPayload }
 export interface RevealElementRequest { boardId: string; element: LiveBoardElement }
 export interface HideElementRequest { boardId: string; elementId: string }
 export interface BoardIdRequest { boardId: string }
-export interface TokenAssignRequest extends TokenControllerRequest {}
-export interface TokenClearRequest extends TokenControllerClearRequest {}
+export type TokenAssignRequest = TokenControllerRequest;
+export type TokenClearRequest = TokenControllerClearRequest;
 
 export interface SessionSummary {
   liveSessionId: string;
