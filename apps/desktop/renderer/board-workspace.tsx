@@ -597,22 +597,62 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!draft.text.trim()) return;
     const element: BoardTextElement = { type: 'text', elementId: crypto.randomUUID(), text: draft.text, x: draft.x, y: draft.y, width: 260, height: 120, z: nextZ(current.snapshot.document), locked: false };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
-    setSelected(element.elementId); setTool('select');
+    setSelectedIds([element.elementId]); setSelectedConnector(undefined); setTool('select');
+  };
+
+  const centerContent = () => {
+    const current = sessionRef.current;
+    const node = viewport.current;
+    if (!current || !node) return;
+    const bounds = contentBounds(current.snapshot.document);
+    if (!bounds) {
+      applyDocument({ ...current.snapshot.document, camera: { x: 0, y: 0, zoom: 1 } }, false);
+      return;
+    }
+    const padding = 80;
+    const zoom = clamp(Math.min(node.clientWidth / (bounds.width + padding * 2), node.clientHeight / (bounds.height + padding * 2)), 0.2, 4);
+    const camera = {
+      x: node.clientWidth / 2 - (bounds.x + bounds.width / 2) * zoom,
+      y: node.clientHeight / 2 - (bounds.y + bounds.height / 2) * zoom,
+      zoom
+    };
+    applyDocument({ ...current.snapshot.document, camera }, false);
+  };
+
+  const moveSelectionBy = (dx: number, dy: number) => {
+    const current = sessionRef.current; if (!current || !selectedIds.length) return;
+    const movable = new Set(current.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId) && !element.locked).map(element => element.elementId));
+    if (!movable.size) return;
+    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => movable.has(element.elementId) ? { ...element, x: element.x + dx, y: element.y + dy } : element) });
   };
 
   useEffect(() => {
     const handler = (event: KeyboardEvent) => {
       if (!sessionRef.current) return;
+      const editing = event.target instanceof HTMLInputElement || event.target instanceof HTMLTextAreaElement;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 's') { event.preventDefault(); void save(); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey); }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); undo(true); }
-      if (event.key === 'Delete' && !(event.target instanceof HTMLInputElement) && !(event.target instanceof HTMLTextAreaElement)) deleteSelected();
-      if (event.key === 'Escape') { setSelected(undefined); setTextDraft(undefined); setTextEditing(undefined); setTool('select'); }
+      if (editing) return;
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); undo(true); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g') { event.preventDefault(); event.shiftKey ? ungroupSelected() : groupSelected(); return; }
+      if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelected(); return; }
+      if (event.key === 'Escape') {
+        setSelectedIds([]); setSelectedConnector(undefined); setConnectionStart(undefined); setMarquee(undefined); setTextDraft(undefined); setTextEditing(undefined); setTokenEditing(undefined); setTool('select'); return;
+      }
+      const step = event.shiftKey ? 10 : 1;
+      if (event.key === 'ArrowLeft') { event.preventDefault(); moveSelectionBy(-step, 0); }
+      if (event.key === 'ArrowRight') { event.preventDefault(); moveSelectionBy(step, 0); }
+      if (event.key === 'ArrowUp') { event.preventDefault(); moveSelectionBy(0, -step); }
+      if (event.key === 'ArrowDown') { event.preventDefault(); moveSelectionBy(0, step); }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
-  }, [save]);
+  });
 
-  const currentElement = session && selected ? session.snapshot.document.elements.find(element => element.elementId === selected) : undefined;
+  const currentElement = session && selectedIds.length === 1 ? session.snapshot.document.elements.find(element => element.elementId === selectedIds[0]) : undefined;
+  const currentConnector = session && selectedConnector ? session.snapshot.document.connectors.find(connector => connector.connectorId === selectedConnector) : undefined;
+  const selectionLocked = session ? session.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId)).some(element => element.locked) : false;
+  const groupedSelection = session ? session.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId)).some(element => !!element.groupId) : false;
   const saveLabel = session?.state === 'clean' ? 'Salvata' : session?.state === 'saving' ? 'Salvataggio…' : session?.state === 'conflict' ? 'Conflitto' : session?.state === 'error' ? 'Errore' : 'Da salvare';
 
   return <div className="boards-workspace">
