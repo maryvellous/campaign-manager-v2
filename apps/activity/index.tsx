@@ -57,8 +57,8 @@ function App() {
   const [lifecycle, setLifecycle] = useState<SessionLifecycle>('open');
   const [error, setError] = useState<ApiFailure>();
   const [connected, setConnected] = useState(false);
-  const socketRef = useRef<WebSocket>();
-  const retryTimer = useRef<ReturnType<typeof setTimeout>>();
+  const socketRef = useRef<WebSocket | undefined>(undefined);
+  const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const retryCount = useRef(0);
   const stopped = useRef(false);
 
