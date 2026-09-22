@@ -33,6 +33,13 @@ type BoardCreateReply = BoardListReply & { snapshot: BoardSnapshot };
 type Point = { x: number; y: number };
 type Bounds = { left: number; top: number; right: number; bottom: number };
 
+export interface CharacterTokenRequest {
+  requestId: string;
+  boardPath: string;
+  noteId: string;
+  name: string;
+}
+
 const clone = (document: BoardDocument): BoardDocument => structuredClone(document);
 const byZ = (a: BoardElement, b: BoardElement) => a.z - b.z;
 const nextZ = (document: BoardDocument) => Math.max(0, ...document.elements.map(element => element.z)) + 1;
@@ -165,7 +172,17 @@ function BoardLinkVisual({
   </svg>;
 }
 
-export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds: string[] }) {
+export function BoardWorkspace({
+  command,
+  noteIds,
+  characterTokenRequest,
+  onCharacterTokenRequestHandled,
+}: {
+  command: Command;
+  noteIds: string[];
+  characterTokenRequest?: CharacterTokenRequest;
+  onCharacterTokenRequestHandled?: () => void;
+}) {
   const [boards, setBoards] = useState<BoardListItem[]>([]);
   const [recoveries, setRecoveries] = useState<RecoveryItem[]>([]);
   const [session, setSession] = useState<BoardSession>();
@@ -181,6 +198,8 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
   const [textEditing, setTextEditing] = useState<{ elementId: string; text: string }>();
   const [tokenDraft, setTokenDraft] = useState<{ x: number; y: number; name: string }>();
   const [tokenEditing, setTokenEditing] = useState<{ elementId: string; name: string }>();
+  const [characterNoteQuery, setCharacterNoteQuery] = useState('');
+  const [characterTokenPlacement, setCharacterTokenPlacement] = useState<CharacterTokenRequest>();
   const [linkStart, setLinkStart] = useState<BoardLinkEndpoint>();
   const [marquee, setMarquee] = useState<{ start: Point; end: Point }>();
   const history = useRef<{ past: BoardDocument[]; future: BoardDocument[] }>({ past: [], future: [] });
@@ -279,19 +298,21 @@ export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds
     setSelection([...existing]);
   }, [setSelection]);
 
-  const openBoard = useCallback(async (boardPath: string, force = false) => {
+  const openBoard = useCallback(async (boardPath: string, force = false): Promise<boolean> => {
     const current = sessionRef.current;
-    if (current?.snapshot.path === boardPath && !force) return;
+    if (current?.snapshot.path === boardPath && !force) return true;
     if (current && current.snapshot.path !== boardPath && current.state !== 'clean') {
       const saved = await save(current);
-      if (!saved || saved.state !== 'clean') return;
+      if (!saved || saved.state !== 'clean') return false;
     }
     const reply = await command({ action: 'board:open', path: boardPath });
-    if (!reply.ok) { setMessage(reply.error?.message); return; }
+    if (!reply.ok) { setMessage(reply.error?.message); return false; }
     const data = reply.data as BoardOpenReply;
-    setSession({ snapshot: data.snapshot, state: 'clean', recovery: data.recovery });
+    const next: BoardSession = { snapshot: data.snapshot, state: 'clean', recovery: data.recovery };
+    setSession(next); sessionRef.current = next;
     setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMessage(undefined);
     history.current = { past: [], future: [] };
+    return true;
   }, [command, save, setSelection]);
 
   const createBoard = async () => {
