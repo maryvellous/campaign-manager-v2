@@ -57,8 +57,20 @@ Desktop host
 
 Un'istanza non associata riceve zero stato campagna. Una nuova istanza richiede un nuovo pairing e revoca credenziali/socket della precedente senza trasformare l'Activity in host.
 
-## Test reale ancora necessario
+## Deployment production
 
-CI copre dominio, protocollo, OAuth/instance verification con risposte Discord simulate, Worker/Durable Objects, browser standalone e network smoke.
+Il deployment production corrente usa:
 
-La verifica finale dentro un vero client Discord richiede le tre credenziali sopra e una Discord Application configurata.
+- Worker Cloudflare: `campaign-manager-live`;
+- URL pubblico Activity/relay: `https://campaign-manager-live.mary-dembech.workers.dev/`;
+- R2: `campaign-manager-live-assets` tramite binding `LIVE_ASSETS`;
+- `DISCORD_CLIENT_ID=1551919866074628228` nel manifest;
+- `DISCORD_CLIENT_SECRET` e `DISCORD_BOT_TOKEN` come secret Cloudflare Production.
+
+`GET /api/activity/config` e `GET /.proxy/api/activity/config` devono restituire lo stesso `clientId` e `identityReady: true` prima del test Discord.
+
+## Gate operativo ancora necessario
+
+CI copre dominio, protocollo, OAuth/instance verification con risposte Discord simulate, Worker/Durable Objects, browser standalone e network smoke. Il deployment production è configurato e risponde con `identityReady: true`.
+
+Resta un solo gate esterno: il collaudo end-to-end dentro un vero client Discord, inclusi Root Mapping, apertura Activity, pairing master e join di almeno due player nella stessa instance. Questo test richiede interazione con il client/Developer Portal e non deve bloccare lo sviluppo delle aree successive che non dipendono da Discord.
