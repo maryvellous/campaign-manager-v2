@@ -193,13 +193,14 @@ export class LiveSessionClient {
     catch { return { ok: false, error: { code: 'ASSET_UNAVAILABLE', message: `Asset locale non disponibile: ${assetPath}` } }; }
 
     try {
+      const payload = new Uint8Array(asset.bytes).buffer;
       const response = await fetch(`${this.relayUrl}/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/assets`, {
         method: 'POST',
         headers: {
           authorization: `Bearer ${this.hostCredential}`,
           'content-type': asset.mime
         },
-        body: asset.bytes
+        body: payload
       });
       const value = await response.json() as { publishedAssetId?: string } | LiveApiError;
       if (!response.ok || !('publishedAssetId' in value) || typeof value.publishedAssetId !== 'string') {
