@@ -13,29 +13,17 @@ npm start
 
 L'installazione scarica il runtime Electron. L'uso della campagna non richiede rete o account.
 
-## Stato: V0.2 — Board locale completata
+## Stato: V0.3 — Live web standalone completata
 
-La V0.2 aggiunge board locali portabili in `Boards/*.board.json`: canvas pan/zoom, testo, immagini importate in `Assets/Board/`, token, linee/frecce, multi-selezione, gruppi semplici, lock, z-order e undo/redo. Save, recovery e conflitti usano gli stessi principi local-first della campagna e non conservano path assoluti esterni.
+La V0.3 aggiunge una sessione live temporanea sopra la campagna locale, senza trasformare il relay nella fonte autorevole dei file. Il desktop genera un codice sessione, i giocatori entrano da browser senza account e ricevono solo la proiezione pubblica della board attiva.
 
-Le note possono essere trascinate sulla board o aggiunte con `Porta sulla board…`. Una card nota conserva soltanto titolo e riferimento alla nota; una card estratto conserva esclusivamente il testo selezionato come snapshot. Rename e move eseguiti da Campaign Manager aggiornano i riferimenti delle card anche nelle recovery; una sorgente eliminata lascia la card intatta e viene segnalata come mancante.
+Il DM può pubblicare/cambiare board, rivelare o nascondere elementi, assegnare un controller giocatore a ciascun token, spostare qualunque token, fare focus one-shot con `Porta tutti qui` e terminare esplicitamente la sessione. I giocatori mantengono pan/zoom locale, possono fare ping e trascinare soltanto i token assegnati. Preview di drag e ping sono effimeri; il commit finale del token viene validato dal relay e aggiornato con `stateSeq`.
 
-Ogni nuovo elemento nasce privato rispetto alla futura vista giocatore. `visibleByDefault` è una proprietà preparata esplicita e la proiezione player testata esclude gli elementi privati, rimuove `NoteId`, metadata master e collegamenti che richiederebbero endpoint privati. La V0.2 non introduce rete, relay, permessi giocatore o reveal realtime.
+Le board preparate restano distinte dallo stato live. Reveal/hide, partecipanti, permessi, camera e ping non vengono scritti nei file locali. Alla fine della sessione il DM può scegliere se copiare nelle board preparate esclusivamente le posizioni finali dei token oppure lasciare tutto com'era.
 
-La V0.1 locale resta la base stabile su cui vive la board.
+La live usa un relay Cloudflare Worker con Durable Objects e R2 per gli asset pubblicati. Se il master perde la connessione, la sessione entra in `host_reconnecting` per 10 minuti: lo stato pubblico resta visibile ma nuove mutazioni e join vengono congelati. Se il desktop torna con la credenziale runtime valida, riprende la stessa sessione; allo scadere la sessione termina senza scrivere automaticamente sulle board locali. Una chiusura volontaria dell'app richiede invece di terminare la live.
 
-La shell comprende topbar, rail, albero delle note, area centrale con tab e inspector. I pannelli si possono ridimensionare e chiudere. Note, Recenti, Preferiti, Ricerca e Grafo sono tutti attivi in modo locale e coerente con la roadmap V0.1.
-
-La campagna locale è operativa in pieno: apertura e chiusura, filesystem guardrail, save/recovery, conflitti, rinnovo di tab e preferenze, draft, move/rename/trash, wikilink risolti e backup. La UI tiene conto dei placeholder onesti per Compendio e Account, senza introdurre rete o account artificiali.
-
-Una nuova nota resta una bozza senza file finché non contiene testo significativo. Il titolo deriva dalle prime tre parole visibili: con tre parole il normale autosalvataggio la materializza dopo una breve pausa; con una o due parole bastano Salva, navigazione o chiusura. Una collisione richiede la correzione esplicita del titolo. Le bozze vuote o composte soltanto da marcatori non producono file o recovery.
-
-L'albero consente filtro per nome, creazione cartelle, rinomina, spostamento tramite trascinamento o comando e cestino con conferma. Rinomine e spostamenti aggiornano i wikilink risolti, preservando riferimenti ambigui, mancanti e codice. Le operazioni interrotte hanno un record locale e un'azione di riparazione che preserva le modifiche esterne.
-
-La navigazione ordinaria riusa la tab corrente; Ctrl+clic apre una nota in una nuova tab, attivando quella esistente se già aperta. Ogni tab conserva la propria cronologia. Preferiti, recenti, tab e dimensioni dei pannelli sono preferenze locali della campagna.
-
-Il flusso editoriale è completo: salvataggio autorevole, recovery, rilettura esterna, conflitto e risoluzione; la ricerca locale e la proiezione grafo derivano da note e wikilink risolti; la campagna continua a funzionare anche se la cartella viene spostata o resa non disponibile e il relink automatico è verificato con `campaignId`.
-
-Scorciatoie: `Ctrl+S` salva; `Ctrl+K` apre la palette, navigabile con frecce, Invio ed Esc. I separatori dei pannelli sono utilizzabili da tastiera. La preview Markdown e l'interazione wikilink sono integrate nell'editor; la ricerca locale e il grafo sono disponibili e ricostruibili dal patrimonio autorevole.
+La V0.2 continua a fornire le board locali portabili in `Boards/*.board.json`: canvas pan/zoom, testo, immagini in `Assets/Board/`, token, linee/frecce, card nota/estratto, gruppi semplici, lock, z-order, undo/redo, recovery e conflitti. La V0.1 resta la base locale per note Markdown, wikilink, ricerca, grafo e filesystem guardrail.
 
 ## Persistenza e isolamento
 
@@ -50,9 +38,10 @@ Il renderer non dispone di Node.js o filesystem: il preload espone il protocollo
 ```powershell
 npm test
 npm run build
+npm run test:live-network
 ```
 
-I test usano directory temporanee e includono fault injection per disco pieno, accesso negato, root mancante, recovery e interruzioni degli spostamenti. La suite verifica i flussi core della V0.1 e della V0.2: campagna, note, recovery, wikilink, rename/move/trash, ricerca, grafo, persistenza board, asset portabili, token/collegamenti/gruppi, card note/estratti e privacy della proiezione player. Il controllo di build conferma che il codice TypeScript resta coerente con il runtime app.
+I test usano directory temporanee e includono fault injection per disco pieno, accesso negato, root mancante, recovery e interruzioni degli spostamenti. La suite copre anche protocollo live, privacy, permessi token, reconnect host/player, timeout, fine sessione e apply/discard delle posizioni finali. `test:live-network` avvia `wrangler dev` e verifica in loopback 1 host + 8 player WebSocket, burst di preview e commit finale autorevole.
 
 Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale esteso per leggere le informazioni utente e risolvere le directory dei moduli.
 
@@ -60,9 +49,12 @@ Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale este
 
 - `packages/core/src`: identificatori, metadata, errori e policy di percorso.
 - `apps/desktop/infrastructure`: filesystem, revisioni, watcher e storage locale.
-- `apps/desktop/application`: documenti, tab, recovery, conflitti, organizzazione della campagna, board e proiezione privacy.
+- `apps/desktop/application`: documenti, tab, recovery, board, proiezione privacy e client live host.
 - `apps/desktop/main.ts` e `preload.ts`: integrazione Electron e confine IPC.
-- `apps/desktop/renderer`: interfaccia React.
-- `tests`: verifiche di dominio, storage e applicazione.
+- `apps/desktop/renderer`: interfaccia React desktop.
+- `apps/activity`: client web standalone del giocatore.
+- `services/relay`: Worker, Durable Objects, lifecycle e asset live.
+- `packages/protocol`: contratto runtime condiviso desktop/relay/player.
+- `tests`: verifiche di dominio, storage, protocollo e lifecycle live.
 
-Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. La V0.2 locale è in stato verificato; il prossimo gradino previsto dalla roadmap è la V0.3 live web standalone.
+Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. La V0.3 standalone è in stato verificato; il prossimo gradino previsto dalla roadmap è la V0.4 Discord Activity.
