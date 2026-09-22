@@ -12,7 +12,8 @@
     "test:electron": "npm run build && node scripts/smoke.mjs",
     "test:goal2": "npm run build && node scripts/goal2-smoke.mjs",
     "test:goal3": "npm run build && node scripts/goal3-smoke.mjs",
-    "test:live-network": "node scripts/live-network-smoke.mjs"
+    "test:live-network": "node scripts/live-network-smoke.mjs",
+    "package:win": "npm run build && npx --yes electron-builder@26.16.1 --win nsis --x64 --publish never"
   },
   "engines": {
     "node": ">=24.15.0"
@@ -40,5 +41,36 @@
     "tsx": "^4.23.13",
     "typescript": "^6.0.3",
     "typescript-eslint": "^8.70.0"
+  },
+  "build": {
+    "appId": "it.diaspro.rpgcampaignmanager",
+    "productName": "Diaspro RPG Campaign Manager",
+    "directories": {
+      "output": "release"
+    },
+    "files": [
+      "dist/**/*",
+      "package.json",
+      "!node_modules/**/*"
+    ],
+    "asar": true,
+    "win": {
+      "target": [
+        {
+          "target": "nsis",
+          "arch": [
+            "x64"
+          ]
+        }
+      ],
+      "artifactName": "Diaspro-RPG-Campaign-Manager-${version}-Setup.${ext}"
+    },
+    "nsis": {
+      "oneClick": false,
+      "allowToChangeInstallationDirectory": true,
+      "createDesktopShortcut": true,
+      "createStartMenuShortcut": true,
+      "shortcutName": "Diaspro RPG Campaign Manager"
+    }
   }
 }
