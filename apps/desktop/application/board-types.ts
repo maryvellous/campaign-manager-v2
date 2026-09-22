@@ -1,4 +1,4 @@
-import { CampaignError, validateRelativePath } from '../../../packages/core/src/index';
+import { CampaignError, validateNoteId, validateRelativePath } from '../../../packages/core/src/index';
 
 export type BoardSaveState = 'clean' | 'dirty' | 'saving' | 'error' | 'conflict';
 
@@ -13,6 +13,7 @@ interface BoardElementBase {
   z: number;
   locked: boolean;
   groupId?: string;
+  visibleByDefault?: boolean;
 }
 
 interface BoardBoxElementBase extends BoardElementBase {
@@ -38,6 +39,19 @@ export interface BoardTokenElement extends BoardBoxElementBase {
   assetPath?: string;
 }
 
+export interface BoardNoteCardElement extends BoardBoxElementBase {
+  type: 'note-card';
+  sourceNoteId: string;
+  title: string;
+}
+
+export interface BoardExcerptCardElement extends BoardBoxElementBase {
+  type: 'excerpt-card';
+  sourceNoteId: string;
+  sourceTitle: string;
+  excerpt: string;
+}
+
 export type BoardLinkEndpoint =
   | { kind: 'point'; x: number; y: number }
   | { kind: 'element'; elementId: string };
@@ -49,7 +63,7 @@ export interface BoardLinkElement extends BoardElementBase {
   arrow: 'none' | 'end';
 }
 
-export type BoardBoxElement = BoardTextElement | BoardImageElement | BoardTokenElement;
+export type BoardBoxElement = BoardTextElement | BoardImageElement | BoardTokenElement | BoardNoteCardElement | BoardExcerptCardElement;
 export type BoardElement = BoardBoxElement | BoardLinkElement;
 
 export interface BoardDocument {
@@ -150,10 +164,12 @@ export function parseBoardDocument(value: unknown): BoardDocument {
     seen.add(element.elementId);
     if (!finite(element.z) || typeof element.locked !== 'boolean') throw new CampaignError('metadata_invalid', 'Ordine o lock elemento board non validi.');
     const groupId = parseGroupId(element.groupId);
+    if (element.visibleByDefault !== undefined && typeof element.visibleByDefault !== 'boolean') throw new CampaignError('metadata_invalid', 'Visibilità board non valida.');
     const base = {
       elementId: element.elementId,
       z: element.z,
       locked: element.locked,
+      visibleByDefault: element.visibleByDefault === true,
       ...(groupId ? { groupId } : {})
     };
 
@@ -186,6 +202,14 @@ export function parseBoardDocument(value: unknown): BoardDocument {
       const assetPath = element.assetPath === undefined ? undefined : validateBoardAssetPath(element.assetPath);
       return { ...box, type: 'token', name: element.name.trim(), ...(assetPath ? { assetPath } : {}) };
     }
+    if (element.type === 'note-card') {
+      if (typeof element.sourceNoteId !== 'string' || typeof element.title !== 'string' || !element.title.trim()) throw new CampaignError('metadata_invalid', 'Card nota non valida.');
+      return { ...box, type: 'note-card', sourceNoteId: validateNoteId(element.sourceNoteId), title: element.title.trim() };
+    }
+    if (element.type === 'excerpt-card') {
+      if (typeof element.sourceNoteId !== 'string' || typeof element.sourceTitle !== 'string' || !element.sourceTitle.trim() || typeof element.excerpt !== 'string') throw new CampaignError('metadata_invalid', 'Card estratto non valida.');
+      return { ...box, type: 'excerpt-card', sourceNoteId: validateNoteId(element.sourceNoteId), sourceTitle: element.sourceTitle.trim(), excerpt: element.excerpt };
+    }
     throw new CampaignError('metadata_invalid', 'Tipo elemento board non supportato.');
   });
 
@@ -195,4 +219,26 @@ export function parseBoardDocument(value: unknown): BoardDocument {
     camera: { x: camera.x as number, y: camera.y as number, zoom: bounded(camera.zoom as number, 0.2, 4) },
     elements
   };
+}
+
+function remapBoardPath(id: string, oldPath: string, newPath: string): string {
+  return id === oldPath || id.startsWith(oldPath + '/') ? newPath + id.slice(oldPath.length) : id;
+}
+
+function sourceTitle(noteId: string): string {
+  return noteId.split('/').at(-1)!.replace(/\.md$/iu, '');
+}
+
+export function remapBoardNoteSources(document: BoardDocument, oldPath: string, newPath: string): BoardDocument {
+  let changed = false;
+  const elements = document.elements.map(element => {
+    if (element.type !== 'note-card' && element.type !== 'excerpt-card') return element;
+    const sourceNoteId = remapBoardPath(element.sourceNoteId, oldPath, newPath);
+    if (sourceNoteId === element.sourceNoteId) return element;
+    changed = true;
+    return element.type === 'note-card'
+      ? { ...element, sourceNoteId, title: sourceTitle(sourceNoteId) }
+      : { ...element, sourceNoteId, sourceTitle: sourceTitle(sourceNoteId) };
+  });
+  return changed ? { ...document, elements } : document;
 }
