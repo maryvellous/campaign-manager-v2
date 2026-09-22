@@ -12,7 +12,10 @@
     "LiveSession": { "type": "durable-object", "storage": "sqlite" },
     "SessionDirectory": { "type": "durable-object", "storage": "sqlite" }
   },
-  "vars": {\n    "DISCORD_CLIENT_ID": "1551919866074628228"\n  },\n  "r2_buckets": [
+  "vars": {
+    "DISCORD_CLIENT_ID": "1551919866074628228"
+  },
+  "r2_buckets": [
     {
       "binding": "LIVE_ASSETS",
       "bucket_name": "campaign-manager-live-assets"
