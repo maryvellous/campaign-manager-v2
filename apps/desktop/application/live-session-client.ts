@@ -1,10 +1,13 @@
 import {
   validateEnvelope,
+  validateFinalTokenPositionsResponse,
   type CreateSessionResponse,
   type LiveApiError,
   type LiveBoardElement,
   type LiveBoardPayload,
+  type FinalTokenPositionsResponse,
   type LiveBoardSnapshot,
+  type SessionEndedEvent,
   type SessionSummary
 } from '../../../packages/protocol/src/index';
 import type { PublicBoardElement, PublicPreparedBoard } from './board-privacy';
@@ -19,6 +22,7 @@ export interface DesktopLiveState {
   participants: SessionSummary['participants'];
   stateSeq: number;
   presentation: SessionSummary['presentation'];
+  hostGraceUntil?: number;
   activeBoardId?: string;
   activeElementIds: string[];
   liveBoards: SessionSummary['liveBoards'];
@@ -75,6 +79,7 @@ export class LiveSessionClient {
   private retryTimer?: ReturnType<typeof setTimeout>;
   private retryCount = 0;
   private disposed = false;
+  private ending = false;
   private publishedAssets = new Map<string, string>();
   readonly relayUrl: string;
 
@@ -112,6 +117,7 @@ export class LiveSessionClient {
       participants: summary.participants,
       stateSeq: summary.stateSeq,
       presentation: summary.presentation,
+      ...(summary.hostGraceUntil ? { hostGraceUntil: summary.hostGraceUntil } : { hostGraceUntil: undefined }),
       ...(summary.activeBoardId ? { activeBoardId: summary.activeBoardId } : { activeBoardId: undefined }),
       activeElementIds: summary.activeElementIds ?? [],
       liveBoards: summary.liveBoards,
@@ -151,10 +157,18 @@ export class LiveSessionClient {
         const summary = message.payload as SessionSummary;
         if (typeof summary.liveSessionId === 'string' && Array.isArray(summary.participants) && Array.isArray(summary.liveBoards)) this.applySummary(summary);
       }
+      else if (message.type === 'session.ended') {
+        const payload = message.payload as Partial<SessionEndedEvent>;
+        this.ending = true;
+        this.hostCredential = undefined;
+        this.publishedAssets.clear();
+        this.state = { ...initialState(), status: 'error', error: payload.reason === 'host_timeout' ? 'Sessione terminata: il master è rimasto offline per più di 10 minuti.' : 'Sessione terminata.' };
+        this.emit();
+      }
     });
 
     socket.addEventListener('close', () => {
-      if (this.disposed || !this.hostCredential || this.socket !== socket) return;
+      if (this.disposed || this.ending || !this.hostCredential || this.socket !== socket) return;
       this.state = { ...this.state, connected: false, status: 'host_reconnecting', error: 'Connessione al relay interrotta. Riprovo automaticamente.' };
       this.emit();
       this.scheduleReconnect();
@@ -176,6 +190,14 @@ export class LiveSessionClient {
     if (!this.state.liveSessionId || !this.hostCredential || this.disposed) return;
     const ticket = await this.api<{ ticket: string }>(`/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/host-ticket`, { method: 'POST' });
     if (!ticket.ok) {
+      if (['SESSION_ENDED', 'SESSION_NOT_FOUND', 'AUTH_FAILED'].includes(ticket.error.code)) {
+        this.ending = true;
+        this.hostCredential = undefined;
+        this.publishedAssets.clear();
+        this.state = { ...initialState(), status: 'error', error: ticket.error.message };
+        this.emit();
+        return;
+      }
       this.state = { ...this.state, connected: false, status: 'host_reconnecting', error: ticket.error.message };
       this.emit();
       this.scheduleReconnect();
@@ -246,6 +268,7 @@ export class LiveSessionClient {
 
   async start(): Promise<ApiResult<DesktopLiveState>> {
     if (this.state.liveSessionId) return { ok: true, value: this.state };
+    this.ending = false;
     this.state = { ...initialState(), status: 'starting' }; this.emit();
     const created = await this.api<CreateSessionResponse>('/api/sessions', { method: 'POST' });
     if (!created.ok) {
@@ -371,6 +394,30 @@ export class LiveSessionClient {
     if (!response.ok) return response;
     await this.refresh();
     return { ok: true, value: this.state };
+  }
+
+  async finalTokenPositions(): Promise<ApiResult<FinalTokenPositionsResponse>> {
+    if (!this.state.liveSessionId) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
+    const response = await this.api<unknown>(`/api/sessions/${encodeURIComponent(this.state.liveSessionId)}/final-token-positions`, { method: 'GET' });
+    if (!response.ok) return response;
+    const valid = validateFinalTokenPositionsResponse(response.value);
+    return valid ? { ok: true, value: valid } : { ok: false, error: { code: 'PAYLOAD_INVALID', message: 'Il relay ha restituito posizioni token non valide.' } };
+  }
+
+  async end(): Promise<ApiResult<SessionEndedEvent>> {
+    if (!this.state.liveSessionId) return { ok: false, error: { code: 'SESSION_NOT_FOUND', message: 'Nessuna sessione attiva.' } };
+    this.ending = true;
+    const response = await this.postBoardAction<SessionEndedEvent>('/end');
+    if (!response.ok) { this.ending = false; return response; }
+    if (this.retryTimer) clearTimeout(this.retryTimer);
+    this.socket?.close();
+    this.socket = undefined;
+    this.hostCredential = undefined;
+    this.publishedAssets.clear();
+    this.state = initialState();
+    this.emit();
+    this.ending = false;
+    return response;
   }
 
   dispose(): void {
