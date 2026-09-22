@@ -1,5 +1,4 @@
 import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
-import { randomUUID } from 'node:crypto';
 import type { BoardDocument, BoardElement, BoardImageElement, BoardRecoveryDraft, BoardSnapshot, BoardTextElement } from '../application/board-types';
 
 type Tool = 'select' | 'hand' | 'text' | 'image';
