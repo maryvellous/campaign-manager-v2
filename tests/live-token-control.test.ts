@@ -38,9 +38,8 @@ test('one token has at most one player controller and reassignment replaces it',
   const first = await f.model.assignTokenController(f.hostCredential, f.boardId, f.tokenId, f.one.participantId);
   assert.equal(first.ok, true);
   assert.equal(f.model.controllerForToken(f.boardId, f.tokenId), f.one.participantId);
-  assert.deepEqual(f.model.playerSnapshot(f.one.participantId).presentation === 'board'
-    ? f.model.playerSnapshot(f.one.participantId).board.controlledTokenIds
-    : [], [f.tokenId]);
+  const firstSnapshot = f.model.playerSnapshot(f.one.participantId);
+  assert.deepEqual(firstSnapshot.presentation === 'board' ? firstSnapshot.board.controlledTokenIds : [], [f.tokenId]);
 
   const second = await f.model.assignTokenController(f.hostCredential, f.boardId, f.tokenId, f.two.participantId);
   assert.equal(second.ok, true);
