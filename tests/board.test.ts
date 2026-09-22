@@ -101,6 +101,24 @@ test('board image import stays inside Assets/Board and never overwrites a collis
   } finally { await fixture.cleanup(); }
 });
 
+test('board asset import rejects symlinked asset directories before writing outside the campaign', { skip: process.platform === 'win32' }, async () => {
+  const fixture = await campaignFixture();
+  const outside = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-board-outside-'));
+  try {
+    await fs.symlink(outside, path.join(fixture.root, 'Assets'), 'dir');
+    const repo = new BoardRepository(fixture.root, fixture.campaignId);
+    const png = 'iVBORw0KGgoAAAANSUhEUgAAAAEAAAABCAQAAAC1HAwCAAAAC0lEQVR42mNk+A8AAQUBAScY42YAAAAASUVORK5CYII=';
+    await assert.rejects(() => repo.importImage('mappa.png', png), (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'outside_campaign_root');
+      return true;
+    });
+    await assert.rejects(() => fs.lstat(path.join(outside, 'Board')), { code: 'ENOENT' });
+  } finally {
+    await fixture.cleanup();
+    await fs.rm(outside, { recursive: true, force: true });
+  }
+});
+
 test('board recovery is outside the vault and removed only after confirmed save', async () => {
   const fixture = await campaignFixture();
   const localRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-board-local-'));
