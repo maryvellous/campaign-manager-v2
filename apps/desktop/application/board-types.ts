@@ -10,25 +10,47 @@ export interface BoardCamera {
 
 interface BoardElementBase {
   elementId: string;
+  z: number;
+  locked: boolean;
+  groupId?: string;
+}
+
+interface BoardBoxElementBase extends BoardElementBase {
   x: number;
   y: number;
   width: number;
   height: number;
-  z: number;
-  locked: boolean;
 }
 
-export interface BoardTextElement extends BoardElementBase {
+export interface BoardTextElement extends BoardBoxElementBase {
   type: 'text';
   text: string;
 }
 
-export interface BoardImageElement extends BoardElementBase {
+export interface BoardImageElement extends BoardBoxElementBase {
   type: 'image';
   assetPath: string;
 }
 
-export type BoardElement = BoardTextElement | BoardImageElement;
+export interface BoardTokenElement extends BoardBoxElementBase {
+  type: 'token';
+  name: string;
+  assetPath?: string;
+}
+
+export type BoardLinkEndpoint =
+  | { kind: 'point'; x: number; y: number }
+  | { kind: 'element'; elementId: string };
+
+export interface BoardLinkElement extends BoardElementBase {
+  type: 'link';
+  from: BoardLinkEndpoint;
+  to: BoardLinkEndpoint;
+  arrow: 'none' | 'end';
+}
+
+export type BoardBoxElement = BoardTextElement | BoardImageElement | BoardTokenElement;
+export type BoardElement = BoardBoxElement | BoardLinkElement;
 
 export interface BoardDocument {
   schemaVersion: 1;
@@ -62,6 +84,10 @@ const uuid = /^[0-9a-f]{8}-[0-9a-f]{4}-[1-8][0-9a-f]{3}-[89ab][0-9a-f]{3}-[0-9a-
 const finite = (value: unknown): value is number => typeof value === 'number' && Number.isFinite(value);
 const bounded = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
+export function isBoardBoxElement(element: BoardElement): element is BoardBoxElement {
+  return element.type !== 'link';
+}
+
 export function boardTitleFromPath(boardPath: string): string {
   validateBoardPath(boardPath);
   return boardPath.slice('Boards/'.length, -'.board.json'.length);
@@ -86,6 +112,26 @@ export function validateBoardAssetPath(assetPath: string): string {
   return assetPath;
 }
 
+function parseGroupId(value: unknown): string | undefined {
+  if (value === undefined) return undefined;
+  if (typeof value !== 'string' || !uuid.test(value)) throw new CampaignError('metadata_invalid', 'Gruppo board non valido.');
+  return value;
+}
+
+function parseEndpoint(value: unknown): BoardLinkEndpoint {
+  if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CampaignError('metadata_invalid', 'Estremità collegamento non valida.');
+  const endpoint = value as Record<string, unknown>;
+  if (endpoint.kind === 'point') {
+    if (!finite(endpoint.x) || !finite(endpoint.y)) throw new CampaignError('metadata_invalid', 'Punto collegamento non valido.');
+    return { kind: 'point', x: endpoint.x, y: endpoint.y };
+  }
+  if (endpoint.kind === 'element') {
+    if (typeof endpoint.elementId !== 'string' || !uuid.test(endpoint.elementId)) throw new CampaignError('metadata_invalid', 'Ancora collegamento non valida.');
+    return { kind: 'element', elementId: endpoint.elementId };
+  }
+  throw new CampaignError('metadata_invalid', 'Tipo estremità collegamento non supportato.');
+}
+
 export function parseBoardDocument(value: unknown): BoardDocument {
   if (!value || typeof value !== 'object' || Array.isArray(value)) throw new CampaignError('metadata_invalid', 'Documento board non valido.');
   const record = value as Record<string, unknown>;
@@ -102,24 +148,43 @@ export function parseBoardDocument(value: unknown): BoardDocument {
     const element = raw as Record<string, unknown>;
     if (typeof element.elementId !== 'string' || !uuid.test(element.elementId) || seen.has(element.elementId)) throw new CampaignError('metadata_invalid', 'Identità elemento board non valida.');
     seen.add(element.elementId);
-    for (const key of ['x', 'y', 'width', 'height', 'z'] as const) if (!finite(element[key])) throw new CampaignError('metadata_invalid', 'Geometria elemento board non valida.');
-    if ((element.width as number) <= 0 || (element.height as number) <= 0 || typeof element.locked !== 'boolean') throw new CampaignError('metadata_invalid', 'Dimensione o lock elemento board non validi.');
+    if (!finite(element.z) || typeof element.locked !== 'boolean') throw new CampaignError('metadata_invalid', 'Ordine o lock elemento board non validi.');
+    const groupId = parseGroupId(element.groupId);
     const base = {
       elementId: element.elementId,
+      z: element.z,
+      locked: element.locked,
+      ...(groupId ? { groupId } : {})
+    };
+
+    if (element.type === 'link') {
+      if (element.arrow !== 'none' && element.arrow !== 'end') throw new CampaignError('metadata_invalid', 'Freccia collegamento non valida.');
+      return { ...base, type: 'link', from: parseEndpoint(element.from), to: parseEndpoint(element.to), arrow: element.arrow };
+    }
+
+    for (const key of ['x', 'y', 'width', 'height'] as const) if (!finite(element[key])) throw new CampaignError('metadata_invalid', 'Geometria elemento board non valida.');
+    if ((element.width as number) <= 0 || (element.height as number) <= 0) throw new CampaignError('metadata_invalid', 'Dimensione elemento board non valida.');
+    const box = {
+      ...base,
       x: element.x as number,
       y: element.y as number,
       width: element.width as number,
-      height: element.height as number,
-      z: element.z as number,
-      locked: element.locked
+      height: element.height as number
     };
+
     if (element.type === 'text') {
       if (typeof element.text !== 'string') throw new CampaignError('metadata_invalid', 'Testo board non valido.');
-      return { ...base, type: 'text', text: element.text };
+      return { ...box, type: 'text', text: element.text };
     }
     if (element.type === 'image') {
       if (typeof element.assetPath !== 'string') throw new CampaignError('metadata_invalid', 'Immagine board non valida.');
-      return { ...base, type: 'image', assetPath: validateBoardAssetPath(element.assetPath) };
+      return { ...box, type: 'image', assetPath: validateBoardAssetPath(element.assetPath) };
+    }
+    if (element.type === 'token') {
+      if (typeof element.name !== 'string' || !element.name.trim()) throw new CampaignError('metadata_invalid', 'Nome token non valido.');
+      if (element.assetPath !== undefined && typeof element.assetPath !== 'string') throw new CampaignError('metadata_invalid', 'Avatar token non valido.');
+      const assetPath = element.assetPath === undefined ? undefined : validateBoardAssetPath(element.assetPath);
+      return { ...box, type: 'token', name: element.name.trim(), ...(assetPath ? { assetPath } : {}) };
     }
     throw new CampaignError('metadata_invalid', 'Tipo elemento board non supportato.');
   });
