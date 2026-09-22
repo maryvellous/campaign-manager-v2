@@ -453,8 +453,11 @@ export class LiveSession {
       await this.persist(model);
       if (result.ok) {
         this.hostSnapshot(model);
-        for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.revealed', { boardId: input.boardId, element: input.element, stateSeq: result.value.stateSeq });
-        if (input.element.type === 'token' && model.controllerForToken(input.boardId, input.element.elementId)) this.broadcastTokenController(model, input.boardId, input.element.elementId);
+        if (input.element.type === 'token' && model.controllerForToken(input.boardId, input.element.elementId)) {
+          this.broadcastPlayerSnapshot(model);
+        } else {
+          for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.revealed', { boardId: input.boardId, element: input.element, stateSeq: result.value.stateSeq });
+        }
       }
       return resultResponse(result);
     }
