@@ -31,8 +31,11 @@ else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
   void app.whenReady().then(async () => {
     const store = new LocalStore(path.join(app.getPath('userData'), 'local'));
-    service = new CampaignService(store);
     boardService = new BoardService(store);
+    service = new CampaignService(store, async (oldId, newId) => {
+      boardService.bind(service.state.campaign);
+      await boardService.remapNoteReferences(oldId, newId);
+    });
     window = new BrowserWindow({ width: 1200, height: 820, minWidth: 760, minHeight: 540, show: false, backgroundColor: '#1E1333', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
     window.removeMenu();
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
@@ -58,6 +61,7 @@ else {
             case 'board:protect': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.protect(text(command.path, 2000), text(command.baseRevision, 100), command.document as BoardDocument) };
             case 'board:save': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.save(text(command.path, 2000), text(command.baseRevision, 100), command.document as BoardDocument) };
             case 'board:rename': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.rename(text(command.path, 2000), text(command.title, 250)) };
+            case 'board:addCard': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.addCard(text(command.path, 2000), text(command.noteId, 2000), command.excerpt === undefined ? undefined : text(command.excerpt, 1000000)) };
             case 'board:importImage': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.importImage(text(command.name, 260), text(command.base64, 30 * 1024 * 1024)) };
             case 'board:asset': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.readAsset(text(command.assetPath, 2000)) };
             case 'board:discardRecovery': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.discardRecovery(text(command.path, 2000)) };

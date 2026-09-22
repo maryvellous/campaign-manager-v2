@@ -9,6 +9,7 @@ import {
 import {
   isBoardBoxElement,
   type BoardBoxElement,
+  type BoardCardElement,
   type BoardDocument,
   type BoardElement,
   type BoardImageElement,
@@ -132,6 +133,15 @@ function BoardToken({ element, command }: { element: BoardTokenElement; command:
   </div>;
 }
 
+function BoardCard({ element, missing, onOpen }: { element: BoardCardElement; missing: boolean; onOpen: () => void }) {
+  return <div className="board-card-content">
+    <div className="board-card-kicker">{element.cardKind === 'excerpt' ? 'Estratto' : 'Nota collegata'}</div>
+    <strong>{element.sourceTitle}</strong>
+    {element.cardKind === 'excerpt' ? <p>{element.excerpt}</p> : <p className="board-card-path">{element.sourceNoteId}</p>}
+    <footer>{missing ? <span className="board-card-warning">Sorgente mancante</span> : <button onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onOpen(); }}>Apri nota</button>}</footer>
+  </div>;
+}
+
 function BoardLinkVisual({
   element,
   document,
@@ -155,7 +165,7 @@ function BoardLinkVisual({
   </svg>;
 }
 
-export function BoardWorkspace({ command }: { command: Command }) {
+export function BoardWorkspace({ command, noteIds }: { command: Command; noteIds: string[] }) {
   const [boards, setBoards] = useState<BoardListItem[]>([]);
   const [recoveries, setRecoveries] = useState<RecoveryItem[]>([]);
   const [session, setSession] = useState<BoardSession>();
@@ -381,6 +391,13 @@ export function BoardWorkspace({ command }: { command: Command }) {
     applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => selected.has(element.elementId) ? { ...element, locked: !allLocked } : element) });
   }, [applyDocument]);
 
+  const toggleVisibility = useCallback(() => {
+    const current = sessionRef.current; if (!current || !selectedRef.current.length) return;
+    const selected = new Set(selectedRef.current);
+    const allVisible = current.snapshot.document.elements.filter(element => selected.has(element.elementId)).every(element => element.visibleByDefault === true);
+    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => selected.has(element.elementId) ? { ...element, visibleByDefault: !allVisible } : element) });
+  }, [applyDocument]);
+
   const groupSelection = useCallback((ungroup = false) => {
     const current = sessionRef.current; if (!current || selectedRef.current.length < (ungroup ? 1 : 2)) return;
     const selected = new Set(selectedRef.current);
@@ -398,7 +415,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     for (const element of originals) if (element.groupId && !groupMap.has(element.groupId)) groupMap.set(element.groupId, crypto.randomUUID());
     let z = nextZ(current.snapshot.document);
     const copies = originals.map((element): BoardElement => {
-      const base = { ...element, elementId: idMap.get(element.elementId)!, z: z++, groupId: element.groupId ? groupMap.get(element.groupId) : undefined };
+      const base = { ...element, elementId: idMap.get(element.elementId)!, z: z++, groupId: element.groupId ? groupMap.get(element.groupId) : undefined, visibleByDefault: false };
       if (isBoardBoxElement(base)) return { ...base, x: base.x + 24, y: base.y + 24 };
       const endpoint = (value: BoardLinkEndpoint): BoardLinkEndpoint => value.kind === 'point'
         ? { ...value, x: value.x + 24, y: value.y + 24 }
@@ -526,6 +543,27 @@ export function BoardWorkspace({ command }: { command: Command }) {
     changeElement(edit.elementId, element => element.type === 'token' ? { ...element, name: edit.name.trim() } : element);
   };
 
+  const addNoteCard = (noteId: string, world?: Point) => {
+    const current = sessionRef.current;
+    if (!current || !noteIds.includes(noteId)) return;
+    const element: BoardCardElement = {
+      type: 'card',
+      cardKind: 'note',
+      elementId: crypto.randomUUID(),
+      sourceNoteId: noteId,
+      sourceTitle: noteId.split('/').at(-1)!.replace(/\.md$/iu, ''),
+      x: world?.x ?? 140,
+      y: world?.y ?? 120,
+      width: 280,
+      height: 120,
+      z: nextZ(current.snapshot.document),
+      locked: false,
+      visibleByDefault: false
+    };
+    applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
+    setSelection([element.elementId]); setTool('select');
+  };
+
   const importImageElement = async (file: File, world?: Point) => {
     if (!/image\/(png|jpeg|webp)/u.test(file.type) && !/\.(png|jpe?g|webp)$/iu.test(file.name)) { setMessage('Usa un’immagine PNG, JPG/JPEG o WebP.'); return; }
     if (file.size > 20 * 1024 * 1024) { setMessage('L’immagine supera il limite di 20 MB.'); return; }
@@ -538,7 +576,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const element: BoardImageElement = {
       type: 'image', elementId: crypto.randomUUID(), assetPath: (reply.data as { assetPath: string }).assetPath,
       x: world?.x ?? 160, y: world?.y ?? 140, width: size.width, height: size.height,
-      z: nextZ(current.snapshot.document), locked: false
+      z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false
     };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelection([element.elementId]); setTool('select');
@@ -569,7 +607,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (linkStart.kind === 'element' && endpoint.kind === 'element' && linkStart.elementId === endpoint.elementId) { setMessage('Scegli due estremità diverse.'); return; }
     const element: BoardLinkElement = {
       type: 'link', elementId: crypto.randomUUID(), from: linkStart, to: endpoint, arrow: 'end',
-      z: nextZ(current.snapshot.document), locked: false
+      z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false
     };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setLinkStart(undefined); setMessage(undefined); setSelection([element.elementId]); setTool('select');
@@ -580,7 +618,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!current || !draft) return;
     setTextDraft(undefined);
     if (!draft.text.trim()) { setTool('select'); return; }
-    const element: BoardTextElement = { type: 'text', elementId: crypto.randomUUID(), text: draft.text.trim(), x: draft.x, y: draft.y, width: 260, height: 120, z: nextZ(current.snapshot.document), locked: false };
+    const element: BoardTextElement = { type: 'text', elementId: crypto.randomUUID(), text: draft.text.trim(), x: draft.x, y: draft.y, width: 260, height: 120, z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelection([element.elementId]); setTool('select');
   };
@@ -590,7 +628,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!current || !draft) return;
     setTokenDraft(undefined);
     if (!draft.name.trim()) { setTool('select'); return; }
-    const element: BoardTokenElement = { type: 'token', elementId: crypto.randomUUID(), name: draft.name.trim(), x: draft.x, y: draft.y, width: 84, height: 84, z: nextZ(current.snapshot.document), locked: false };
+    const element: BoardTokenElement = { type: 'token', elementId: crypto.randomUUID(), name: draft.name.trim(), x: draft.x, y: draft.y, width: 84, height: 84, z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelection([element.elementId]); setTool('select');
   };
@@ -701,6 +739,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
   const selection = selectedElements();
   const sameGroup = selection.length > 0 && !!selection[0].groupId && selection.every(element => element.groupId === selection[0].groupId);
   const allLocked = selection.length > 0 && selection.every(element => element.locked);
+  const allVisible = selection.length > 0 && selection.every(element => element.visibleByDefault === true);
   const saveLabel = session?.state === 'clean' ? 'Salvata' : session?.state === 'saving' ? 'Salvataggio…' : session?.state === 'conflict' ? 'Conflitto' : session?.state === 'error' ? 'Errore' : 'Da salvare';
   const toolLabels: Record<Tool, string> = { select: 'Seleziona', hand: 'Mano', text: 'Testo', image: 'Immagine', token: 'Token', link: 'Collegamento' };
 
@@ -730,6 +769,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
               <button onClick={duplicateSelection} title="Duplica (Ctrl+D)">Duplica</button>
               <button onClick={() => groupSelection(sameGroup)} disabled={!sameGroup && selection.length < 2} title={sameGroup ? 'Separa gruppo (Ctrl+Shift+G)' : 'Raggruppa (Ctrl+G)'}>{sameGroup ? 'Separa' : 'Raggruppa'}</button>
               <button onClick={toggleLock}>{allLocked ? 'Sblocca' : 'Blocca'}</button>
+              <button onClick={toggleVisibility}>{allVisible ? 'Rendi privato' : 'Visibile ai giocatori'}</button>
               <button onClick={() => zOrder('back')}>Sfondo</button><button onClick={() => zOrder('backward')}>Indietro</button><button onClick={() => zOrder('forward')}>Avanti</button><button onClick={() => zOrder('front')}>Primo piano</button>
               {currentElement?.type === 'token' && <button onClick={() => tokenAvatarInput.current?.click()}>Avatar…</button>}
               {currentElement?.type === 'link' && <button onClick={() => changeElement(currentElement.elementId, element => element.type === 'link' ? { ...element, arrow: element.arrow === 'end' ? 'none' : 'end' } : element)}>{currentElement.arrow === 'end' ? 'Togli freccia' : 'Aggiungi freccia'}</button>}
@@ -741,8 +781,14 @@ export function BoardWorkspace({ command }: { command: Command }) {
         <input ref={imageInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importImageElement(file); event.currentTarget.value = ''; }} />
         <input ref={tokenAvatarInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importTokenAvatar(file); event.currentTarget.value = ''; }} />
         <div ref={viewport} className={`board-viewport tool-${tool}`} onPointerDown={viewportPointerDown} onWheel={zoom}
-          onDragOver={event => { if ([...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
-          onDrop={event => { const file = event.dataTransfer.files?.[0]; if (!file) return; event.preventDefault(); void importImageElement(file, worldPoint(event.clientX, event.clientY)); }}>
+          onDragOver={event => { if (event.dataTransfer.types.includes('application/x-campaign-note') || [...event.dataTransfer.items].some(item => item.kind === 'file')) { event.preventDefault(); event.dataTransfer.dropEffect = 'copy'; } }}
+          onDrop={event => {
+            const point = worldPoint(event.clientX, event.clientY);
+            const noteId = event.dataTransfer.getData('application/x-campaign-note');
+            if (noteId) { event.preventDefault(); addNoteCard(noteId, point); return; }
+            const file = event.dataTransfer.files?.[0]; if (!file) return;
+            event.preventDefault(); void importImageElement(file, point);
+          }}>
           <div className="board-stage" style={{ transform: `translate(${session.snapshot.document.camera.x}px, ${session.snapshot.document.camera.y}px) scale(${session.snapshot.document.camera.zoom})` }}>
             {session.snapshot.document.elements.slice().sort(byZ).map(element => {
               if (element.type === 'link') return <BoardLinkVisual key={element.elementId} element={element} document={session.snapshot.document} selected={selectedIds.includes(element.elementId)} selectable={tool === 'select'}
@@ -762,11 +808,14 @@ export function BoardWorkspace({ command }: { command: Command }) {
                     : <div className="board-text-content" onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTextEditing({ elementId: element.elementId, text: element.text }); }}>{element.text}</div>
                   : element.type === 'image'
                     ? <BoardImage element={element} command={command} />
-                    : tokenEditing?.elementId === element.elementId
-                      ? <input className="board-token-editor" autoFocus value={tokenEditing.name} onPointerDown={event => event.stopPropagation()} onChange={event => setTokenEditing({ elementId: element.elementId, name: event.target.value })} onBlur={commitTokenEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTokenEditing(undefined); } if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
-                      : <div onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTokenEditing({ elementId: element.elementId, name: element.name }); }}><BoardToken element={element} command={command} /></div>}
+                    : element.type === 'card'
+                      ? <BoardCard element={element} missing={!noteIds.includes(element.sourceNoteId)} onOpen={() => void command({ action: 'note', noteId: element.sourceNoteId })} />
+                      : tokenEditing?.elementId === element.elementId
+                        ? <input className="board-token-editor" autoFocus value={tokenEditing.name} onPointerDown={event => event.stopPropagation()} onChange={event => setTokenEditing({ elementId: element.elementId, name: event.target.value })} onBlur={commitTokenEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTokenEditing(undefined); } if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+                        : <div onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTokenEditing({ elementId: element.elementId, name: element.name }); }}><BoardToken element={element} command={command} /></div>}
                 {selected && selectedIds.length === 1 && !element.locked && <button className="board-resize" aria-label="Ridimensiona elemento" onPointerDown={event => beginResize(event, element)} />}
                 {element.locked && <span className="board-lock-badge">Bloccato</span>}
+                {element.visibleByDefault === true && <span className="board-visible-badge">Pubblico</span>}
               </div>;
             })}
             {marquee && <div className="board-marquee" style={{ left: Math.min(marquee.start.x, marquee.end.x), top: Math.min(marquee.start.y, marquee.end.y), width: Math.abs(marquee.end.x - marquee.start.x), height: Math.abs(marquee.end.y - marquee.start.y) }} />}

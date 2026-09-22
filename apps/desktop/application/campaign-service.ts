@@ -64,7 +64,7 @@ export class CampaignService {
   state: AppState = { tabs: [], ui: defaultUi(), repairs: [], entries: [], preferences: { recent: [] }, recoveries: [], rootMissing: false };
   onChange: () => void = () => undefined;
   private autoSaveTimer?: ReturnType<typeof setTimeout>;
-  constructor(readonly store: LocalStore) {
+  constructor(readonly store: LocalStore, readonly remapBoardReferences?: (oldId: string, newId: string) => Promise<void>) {
     Object.defineProperty(this.state, 'document', {
       enumerable: true,
       get: () => this.activeTab()?.document,
@@ -379,6 +379,7 @@ export class CampaignService {
     for (const key of ['favorites', 'recentNotes', 'expandedFolders'] as const) this.state.ui[key] = this.state.ui[key].map(map);
     this.state.ui.selectedFolder = map(this.state.ui.selectedFolder);
     this.state.ui.folderColors = Object.fromEntries(Object.entries(this.state.ui.folderColors).map(([key, value]) => [map(key), value]));
+    await this.remapBoardReferences?.(oldId, newId);
     await this.persistUi();
   }
   async retryRepair(id: string): Promise<void> {

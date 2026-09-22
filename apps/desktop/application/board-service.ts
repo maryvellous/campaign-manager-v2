@@ -1,7 +1,8 @@
-import { CampaignError } from '../../../packages/core/src/index';
+import { randomUUID } from 'node:crypto';
+import { CampaignError, validateNoteId, validateRelativePath } from '../../../packages/core/src/index';
 import { BoardRepository } from '../infrastructure/board-repository';
 import { LocalStore } from '../infrastructure/local-store';
-import { parseBoardDocument, validateBoardPath, type BoardDocument } from './board-types';
+import { isBoardBoxElement, parseBoardDocument, validateBoardPath, type BoardCardElement, type BoardDocument } from './board-types';
 
 export interface BoardCampaignContext {
   campaignId: string;
@@ -93,4 +94,72 @@ export class BoardService {
     await this.store.removeBoardRecovery(campaign.campaignId, boardPath);
     return this.list();
   }
+
+  async addCard(boardPath: string, noteId: string, excerpt?: string) {
+    const { repo } = this.required();
+    validateBoardPath(boardPath);
+    validateNoteId(noteId);
+    if (excerpt !== undefined && !excerpt.trim()) throw new CampaignError('invalid_path', 'Seleziona del testo prima di portarlo sulla board.');
+    const snapshot = await repo.readBoard(boardPath);
+    const boxes = snapshot.document.elements.filter(isBoardBoxElement);
+    const right = boxes.length ? Math.max(...boxes.map(element => element.x + element.width)) : 60;
+    const top = boxes.length ? Math.min(...boxes.map(element => element.y)) : 80;
+    const sourceTitle = noteId.split('/').at(-1)!.replace(/\.md$/iu, '');
+    const element: BoardCardElement = {
+      type: 'card',
+      cardKind: excerpt === undefined ? 'note' : 'excerpt',
+      elementId: randomUUID(),
+      sourceNoteId: noteId,
+      sourceTitle,
+      ...(excerpt === undefined ? {} : { excerpt }),
+      x: boxes.length ? right + 36 : 80,
+      y: top + (snapshot.document.elements.filter(element => element.type === 'card').length % 5) * 24,
+      width: 280,
+      height: excerpt === undefined ? 120 : 180,
+      z: Math.max(0, ...snapshot.document.elements.map(element => element.z)) + 1,
+      locked: false,
+      visibleByDefault: false
+    };
+    const document: BoardDocument = { ...snapshot.document, elements: [...snapshot.document.elements, element] };
+    return { snapshot: await repo.saveBoard(boardPath, document, snapshot.revision), elementId: element.elementId };
+  }
+
+  async remapNoteReferences(oldPath: string, newPath: string): Promise<void> {
+    const { repo, campaign } = this.required();
+    validateRelativePath(oldPath);
+    validateRelativePath(newPath);
+    const map = (noteId: string) => noteId === oldPath || noteId.startsWith(oldPath + '/') ? newPath + noteId.slice(oldPath.length) : noteId;
+    const recoveries = await this.store.listBoardRecovery(campaign.campaignId);
+    const recoveryByPath = new Map(recoveries.map(item => [item.draft.boardPath, item]));
+    for (const board of await repo.discover()) {
+      const before = await repo.readBoard(board.path);
+      let changed = false;
+      const elements = before.document.elements.map(element => {
+        if (element.type !== 'card') return element;
+        const sourceNoteId = map(element.sourceNoteId);
+        if (sourceNoteId === element.sourceNoteId) return element;
+        changed = true;
+        return { ...element, sourceNoteId, sourceTitle: sourceNoteId.split('/').at(-1)!.replace(/\.md$/iu, '') };
+      });
+      const after = changed ? await repo.saveBoard(board.path, { ...before.document, elements }, before.revision) : before;
+      const recovery = recoveryByPath.get(board.path);
+      if (!recovery) continue;
+      let recoveryChanged = false;
+      const recoveryElements = recovery.draft.document.elements.map(element => {
+        if (element.type !== 'card') return element;
+        const sourceNoteId = map(element.sourceNoteId);
+        if (sourceNoteId === element.sourceNoteId) return element;
+        recoveryChanged = true;
+        return { ...element, sourceNoteId, sourceTitle: sourceNoteId.split('/').at(-1)!.replace(/\.md$/iu, '') };
+      });
+      if (!recoveryChanged && after.revision === before.revision) continue;
+      await this.store.putBoardRecovery({
+        ...recovery.draft,
+        baseRevision: recovery.draft.baseRevision === before.revision ? after.revision : recovery.draft.baseRevision,
+        document: recoveryChanged ? { ...recovery.draft.document, elements: recoveryElements } : recovery.draft.document,
+        capturedAt: new Date().toISOString()
+      });
+    }
+  }
+
 }

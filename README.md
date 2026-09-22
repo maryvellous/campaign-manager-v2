@@ -13,7 +13,15 @@ npm start
 
 L'installazione scarica il runtime Electron. L'uso della campagna non richiede rete o account.
 
-## Stato: V0.1 — Goal 5 completato
+## Stato: V0.2 — Board locale completata
+
+La V0.2 aggiunge board locali portabili in `Boards/*.board.json`: canvas pan/zoom, testo, immagini importate in `Assets/Board/`, token, linee/frecce, multi-selezione, gruppi semplici, lock, z-order e undo/redo. Save, recovery e conflitti usano gli stessi principi local-first della campagna e non conservano path assoluti esterni.
+
+Le note possono essere trascinate sulla board o aggiunte con `Porta sulla board…`. Una card nota conserva soltanto titolo e riferimento alla nota; una card estratto conserva esclusivamente il testo selezionato come snapshot. Rename e move eseguiti da Campaign Manager aggiornano i riferimenti delle card anche nelle recovery; una sorgente eliminata lascia la card intatta e viene segnalata come mancante.
+
+Ogni nuovo elemento nasce privato rispetto alla futura vista giocatore. `visibleByDefault` è una proprietà preparata esplicita e la proiezione player testata esclude gli elementi privati, rimuove `NoteId`, metadata master e collegamenti che richiederebbero endpoint privati. La V0.2 non introduce rete, relay, permessi giocatore o reveal realtime.
+
+La V0.1 locale resta la base stabile su cui vive la board.
 
 La shell comprende topbar, rail, albero delle note, area centrale con tab e inspector. I pannelli si possono ridimensionare e chiudere. Note, Recenti, Preferiti, Ricerca e Grafo sono tutti attivi in modo locale e coerente con la roadmap V0.1.
 
@@ -44,7 +52,7 @@ npm test
 npm run build
 ```
 
-I test usano directory temporanee e includono fault injection per disco pieno, accesso negato, root mancante, recovery e interruzioni degli spostamenti. La suite finale verifica i flussi core della V0.1: campagna, note, recovery, wikilink, rename/move/trash, ricerca, grafo e hardening di filesystem. Il controllo di build è incluso per confermare che il codice TypeScript resta coerente con il runtime app.
+I test usano directory temporanee e includono fault injection per disco pieno, accesso negato, root mancante, recovery e interruzioni degli spostamenti. La suite verifica i flussi core della V0.1 e della V0.2: campagna, note, recovery, wikilink, rename/move/trash, ricerca, grafo, persistenza board, asset portabili, token/collegamenti/gruppi, card note/estratti e privacy della proiezione player. Il controllo di build conferma che il codice TypeScript resta coerente con il runtime app.
 
 Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale esteso per leggere le informazioni utente e risolvere le directory dei moduli.
 
@@ -52,9 +60,9 @@ Nel sandbox Codex Windows, test e bundler possono richiedere accesso locale este
 
 - `packages/core/src`: identificatori, metadata, errori e policy di percorso.
 - `apps/desktop/infrastructure`: filesystem, revisioni, watcher e storage locale.
-- `apps/desktop/application`: documenti, tab, recovery, conflitti e organizzazione della campagna.
+- `apps/desktop/application`: documenti, tab, recovery, conflitti, organizzazione della campagna, board e proiezione privacy.
 - `apps/desktop/main.ts` e `preload.ts`: integrazione Electron e confine IPC.
 - `apps/desktop/renderer`: interfaccia React.
 - `tests`: verifiche di dominio, storage e applicazione.
 
-Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. I documenti di prodotto esistenti non sono stati modificati; la V0.1 locale è in stato verificato e coerente con la roadmap di goal 4 e 5.
+Per il prossimo lavoro seguire `AGENTS.md`, `docs/SPEC_INDEX.md` e il goal pertinente. La V0.2 locale è in stato verificato; il prossimo gradino previsto dalla roadmap è la V0.3 live web standalone.

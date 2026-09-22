@@ -1,4 +1,4 @@
-import { CampaignError, validateRelativePath } from '../../../packages/core/src/index';
+import { CampaignError, validateNoteId, validateRelativePath } from '../../../packages/core/src/index';
 
 export type BoardSaveState = 'clean' | 'dirty' | 'saving' | 'error' | 'conflict';
 
@@ -13,6 +13,7 @@ interface BoardElementBase {
   z: number;
   locked: boolean;
   groupId?: string;
+  visibleByDefault?: boolean;
 }
 
 interface BoardBoxElementBase extends BoardElementBase {
@@ -38,6 +39,14 @@ export interface BoardTokenElement extends BoardBoxElementBase {
   assetPath?: string;
 }
 
+export interface BoardCardElement extends BoardBoxElementBase {
+  type: 'card';
+  cardKind: 'note' | 'excerpt';
+  sourceNoteId: string;
+  sourceTitle: string;
+  excerpt?: string;
+}
+
 export type BoardLinkEndpoint =
   | { kind: 'point'; x: number; y: number }
   | { kind: 'element'; elementId: string };
@@ -49,7 +58,7 @@ export interface BoardLinkElement extends BoardElementBase {
   arrow: 'none' | 'end';
 }
 
-export type BoardBoxElement = BoardTextElement | BoardImageElement | BoardTokenElement;
+export type BoardBoxElement = BoardTextElement | BoardImageElement | BoardTokenElement | BoardCardElement;
 export type BoardElement = BoardBoxElement | BoardLinkElement;
 
 export interface BoardDocument {
@@ -150,11 +159,13 @@ export function parseBoardDocument(value: unknown): BoardDocument {
     seen.add(element.elementId);
     if (!finite(element.z) || typeof element.locked !== 'boolean') throw new CampaignError('metadata_invalid', 'Ordine o lock elemento board non validi.');
     const groupId = parseGroupId(element.groupId);
+    if (element.visibleByDefault !== undefined && typeof element.visibleByDefault !== 'boolean') throw new CampaignError('metadata_invalid', 'Visibilità board non valida.');
     const base = {
       elementId: element.elementId,
       z: element.z,
       locked: element.locked,
-      ...(groupId ? { groupId } : {})
+      ...(groupId ? { groupId } : {}),
+      ...(element.visibleByDefault === undefined ? {} : { visibleByDefault: element.visibleByDefault })
     };
 
     if (element.type === 'link') {
@@ -185,6 +196,18 @@ export function parseBoardDocument(value: unknown): BoardDocument {
       if (element.assetPath !== undefined && typeof element.assetPath !== 'string') throw new CampaignError('metadata_invalid', 'Avatar token non valido.');
       const assetPath = element.assetPath === undefined ? undefined : validateBoardAssetPath(element.assetPath);
       return { ...box, type: 'token', name: element.name.trim(), ...(assetPath ? { assetPath } : {}) };
+    }
+    if (element.type === 'card') {
+      if (element.cardKind !== 'note' && element.cardKind !== 'excerpt') throw new CampaignError('metadata_invalid', 'Tipo card board non valido.');
+      if (typeof element.sourceNoteId !== 'string') throw new CampaignError('metadata_invalid', 'Sorgente card non valida.');
+      const sourceNoteId = validateNoteId(element.sourceNoteId);
+      if (typeof element.sourceTitle !== 'string' || !element.sourceTitle.trim()) throw new CampaignError('metadata_invalid', 'Titolo card non valido.');
+      if (element.cardKind === 'note') {
+        if (element.excerpt !== undefined) throw new CampaignError('metadata_invalid', 'Una card nota non deve incorporare il Markdown della sorgente.');
+        return { ...box, type: 'card', cardKind: 'note', sourceNoteId, sourceTitle: element.sourceTitle.trim() };
+      }
+      if (typeof element.excerpt !== 'string' || !element.excerpt.trim()) throw new CampaignError('metadata_invalid', 'Estratto card non valido.');
+      return { ...box, type: 'card', cardKind: 'excerpt', sourceNoteId, sourceTitle: element.sourceTitle.trim(), excerpt: element.excerpt };
     }
     throw new CampaignError('metadata_invalid', 'Tipo elemento board non supportato.');
   });
