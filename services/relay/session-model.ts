@@ -187,6 +187,7 @@ export class LiveSessionModel {
   }
 
   async authenticateHost(hostCredential: string): Promise<boolean> {
+    if (this.record.lifecycle === 'ended') return false;
     return await secretHash(hostCredential) === this.record.hostCredentialHash;
   }
 
@@ -366,6 +367,7 @@ export class LiveSessionModel {
       if (this.record.lifecycle === 'host_reconnecting') {
         this.record.lifecycle = 'open';
         this.record.hostGraceUntil = undefined;
+        this.bump();
       }
       return ok(this.summary());
     }
@@ -384,6 +386,7 @@ export class LiveSessionModel {
       if (this.record.lifecycle === 'open') {
         this.record.lifecycle = 'host_reconnecting';
         this.record.hostGraceUntil = now + HOST_GRACE_MS;
+        this.bump();
       }
       return;
     }
