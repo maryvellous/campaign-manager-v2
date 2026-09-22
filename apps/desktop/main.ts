@@ -146,6 +146,65 @@ else {
                 throw error;
               }
             }
+            case 'ai:proposeEdit': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              const noteId = text(command.noteId, 2000);
+              const note = await service.readNoteForAi(noteId, false);
+              try {
+                const context = await prepareAiContext(service, aiService.latestUserPrompt() ?? 'Proponi una modifica', { kind: 'note', noteId });
+                return { ok: true, data: await aiService.proposeEdit({ noteId: note.noteId, title: note.title, revision: note.revision, markdown: note.markdown }, context) };
+              } catch (error) {
+                if (error instanceof AiContextError) {
+                  const state = aiService.contextError(error.code, error.message);
+                  return { ok: false, data: state, error: { code: error.code, message: error.message } };
+                }
+                throw error;
+              }
+            }
+            case 'ai:proposeNew': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              const prompt = aiService.latestUserPrompt() ?? 'Proponi una nuova nota';
+              try {
+                const context = await prepareAiContext(service, prompt, aiContextSelection(command.context));
+                return { ok: true, data: await aiService.proposeNew(context, service.aiFolderIds()) };
+              } catch (error) {
+                if (error instanceof AiContextError) {
+                  const state = aiService.contextError(error.code, error.message);
+                  return { ok: false, data: state, error: { code: error.code, message: error.message } };
+                }
+                throw error;
+              }
+            }
+            case 'ai:updateProposal': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              const proposal = aiService.state.proposal;
+              if (!proposal) throw new CampaignError('not_found', 'Nessuna proposta disponibile.');
+              if (proposal.kind === 'edit') return { ok: true, data: await aiService.updateEditProposal(text(command.markdown, 100000)) };
+              return { ok: true, data: await aiService.updateNewProposal(text(command.title, 180), text(command.parentFolder, 2000), text(command.markdown, 100000)) };
+            }
+            case 'ai:discardProposal': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.discardProposal() };
+            }
+            case 'ai:applyProposal': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              const proposal = aiService.state.proposal;
+              if (!proposal) throw new CampaignError('not_found', 'Nessuna proposta disponibile.');
+              try {
+                const saved = proposal.kind === 'edit'
+                  ? await service.applyAiEditProposal(proposal.noteId, proposal.baseRevision, proposal.proposedMarkdown)
+                  : await service.createAiNote(proposal.parentFolder, proposal.title, proposal.markdown);
+                await aiService.proposalApplied();
+                return { ok: true, data: { state: aiService.state, noteId: saved.noteId } };
+              } catch (error) {
+                const failure = ioError(error);
+                const stale = proposal.kind === 'edit' && ['conflict', 'not_found'].includes(failure.code);
+                const code = stale ? 'proposal_stale' : 'save_conflict';
+                const message = stale ? 'La nota è cambiata dopo la creazione della proposta. Rivedi la proposta sul contenuto corrente.' : failure.message;
+                const state = aiService.proposalError(code, message);
+                return { ok: false, data: state, error: { code, message } };
+              }
+            }
             case 'live:state': return { ok: true, data: liveService.state };
             case 'live:start': {
               if (!service.state.campaign) throw new CampaignError('not_found', 'Apri una campagna prima di avviare una sessione.');
