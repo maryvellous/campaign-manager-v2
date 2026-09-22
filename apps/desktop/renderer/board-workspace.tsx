@@ -16,6 +16,7 @@ const clone = (document: BoardDocument): BoardDocument => structuredClone(docume
 const byZ = (a: BoardElement, b: BoardElement) => a.z - b.z;
 const nextZ = (document: BoardDocument) => Math.max(0, ...document.elements.map(element => element.z)) + 1;
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
+const tokenInitials = (name: string) => name.trim().split(/\s+/u).filter(Boolean).slice(0, 2).map(part => part[0]?.toUpperCase() ?? '').join('') || '•';
 
 function bytesToBase64(bytes: Uint8Array): string {
   let binary = '';
@@ -664,7 +665,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     <section className="board-main">
       {!session ? <div className="board-empty"><span>◇</span><h1>Prepara una scena</h1><p>Le board restano nella cartella della campagna e funzionano offline.</p></div> : <>
         <header className="board-header">
-          <div>{renaming ? <form onSubmit={event => { event.preventDefault(); void renameBoard(); }}><input autoFocus value={renameTitle} onChange={event => setRenameTitle(event.target.value)} onBlur={() => setRenaming(false)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setRenaming(false); } }} /></form> : <button className="board-title-button" onClick={() => { setRenameTitle(session.snapshot.title); setRenaming(true); }}><strong>{session.snapshot.title}</strong><small>{session.snapshot.path}</small></button>}</div>
+          <div>{renaming ? <form onSubmit={event => { event.preventDefault(); renameCancelled.current = true; void renameBoard(); }}><input autoFocus value={renameTitle} onChange={event => setRenameTitle(event.target.value)} onBlur={() => { if (!renameCancelled.current) { renameCancelled.current = true; void renameBoard(); } }} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); renameCancelled.current = true; setRenaming(false); } }} /></form> : <button className="board-title-button" onClick={() => { renameCancelled.current = false; setRenameTitle(session.snapshot.title); setRenaming(true); }}><strong>{session.snapshot.title}</strong><small>{session.snapshot.path}</small></button>}</div>
           <div className="board-header-actions"><span className={`board-save-state ${session.state}`}>{saveLabel}</span><button disabled={session.state === 'clean' || session.state === 'saving' || session.state === 'conflict'} onClick={() => void save()}>Salva <kbd>Ctrl S</kbd></button></div>
         </header>
         {message && <div className="board-notice" role="alert">{message}<button onClick={() => setMessage(undefined)}>Chiudi</button></div>}
@@ -672,11 +673,24 @@ export function BoardWorkspace({ command }: { command: Command }) {
         {session.state === 'conflict' && <div className="board-notice" role="alert"><strong>La board è cambiata anche sul disco.</strong><p>{session.error}</p><div><button onClick={() => void reloadDisk()}>Usa versione su disco</button><button onClick={() => void overwriteAfterConflict()}>Usa la mia versione</button></div></div>}
         {session.state === 'error' && <div className="board-notice" role="alert">{session.error}</div>}
         <div className="board-toolbar" role="toolbar" aria-label="Strumenti board">
-          <div className="board-tools">{(['select', 'hand', 'text', 'image'] as Tool[]).map(item => <button key={item} aria-pressed={tool === item} onClick={() => { setTool(item); if (item === 'image') input.current?.click(); }}>{({ select: 'Seleziona', hand: 'Mano', text: 'Testo', image: 'Immagine' })[item]}</button>)}</div>
-          <div className="board-tools"><button onClick={() => undo()} disabled={!history.current.past.length}>↶</button><button onClick={() => undo(true)} disabled={!history.current.future.length}>↷</button>{currentElement && <><button onClick={() => changeElement(currentElement.elementId, element => ({ ...element, locked: !element.locked }))}>{currentElement.locked ? 'Sblocca' : 'Blocca'}</button><button onClick={() => zOrder('back')}>Sfondo</button><button onClick={() => zOrder('backward')}>Indietro</button><button onClick={() => zOrder('forward')}>Avanti</button><button onClick={() => zOrder('front')}>Primo piano</button><button disabled={currentElement.locked} onClick={deleteSelected}>Elimina</button></>}</div>
+          <div className="board-tools">{(['select', 'hand', 'text', 'image', 'token', 'link'] as Tool[]).map(item => <button key={item} aria-pressed={tool === item} onClick={() => { setTool(item); setConnectionStart(undefined); if (item === 'image') input.current?.click(); }}>{({ select: 'Seleziona', hand: 'Mano', text: 'Testo', image: 'Immagine', token: 'Token', link: 'Collegamento' })[item]}</button>)}</div>
+          {tool === 'link' && <div className="board-tools"><button aria-pressed={linkStyle === 'line'} onClick={() => setLinkStyle('line')}>Linea</button><button aria-pressed={linkStyle === 'arrow'} onClick={() => setLinkStyle('arrow')}>Freccia</button>{connectionStart && <span className="board-tool-hint">Scegli destinazione</span>}</div>}
+          <div className="board-tools">
+            <button title="Annulla" onClick={() => undo()} disabled={!history.current.past.length}>↶</button>
+            <button title="Ripeti" onClick={() => undo(true)} disabled={!history.current.future.length}>↷</button>
+            <button onClick={centerContent}>Centra contenuto</button>
+            {(selectedIds.length > 0 || currentConnector) && <>
+              <button onClick={toggleLock}>{currentConnector ? currentConnector.locked ? 'Sblocca' : 'Blocca' : selectionLocked ? 'Sblocca' : 'Blocca'}</button>
+              {!currentConnector && <><button onClick={duplicateSelected}>Duplica</button><button onClick={groupSelected} disabled={selectedIds.length < 2}>Raggruppa</button><button onClick={ungroupSelected} disabled={!groupedSelection}>Separa</button><button onClick={() => zOrder('back')}>Sfondo</button><button onClick={() => zOrder('backward')}>Indietro</button><button onClick={() => zOrder('forward')}>Avanti</button><button onClick={() => zOrder('front')}>Primo piano</button></>}
+              {currentConnector && <><button aria-pressed={currentConnector.style === 'line'} onClick={() => changeConnector(currentConnector.connectorId, connector => ({ ...connector, style: 'line' }))}>Linea</button><button aria-pressed={currentConnector.style === 'arrow'} onClick={() => changeConnector(currentConnector.connectorId, connector => ({ ...connector, style: 'arrow' }))}>Freccia</button></>}
+              <button disabled={currentConnector ? currentConnector.locked : selectionLocked} onClick={deleteSelected}>Elimina</button>
+            </>}
+            {currentElement?.type === 'token' && <><button onClick={() => avatarInput.current?.click()}>Avatar</button>{currentElement.avatarPath && <button onClick={() => changeElement(currentElement.elementId, element => element.type === 'token' ? { ...element, avatarPath: undefined } : element)}>Rimuovi avatar</button>}</>}
+          </div>
           <span className="board-zoom">{Math.round(session.snapshot.document.camera.zoom * 100)}%</span>
         </div>
         <input ref={input} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importFile(file); event.currentTarget.value = ''; }} />
+        <input ref={avatarInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importTokenAvatar(file); event.currentTarget.value = ''; }} />
         <div ref={viewport} className={`board-viewport tool-${tool}`} onPointerDown={viewportPointerDown} onWheel={zoom}
           onDragOver={event => { if ([...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
           onDrop={event => { const file = event.dataTransfer.files?.[0]; if (!file) return; event.preventDefault(); void importFile(file, worldPoint(event.clientX, event.clientY)); }}>
