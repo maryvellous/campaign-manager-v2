@@ -341,7 +341,12 @@ function App() {
         const payload = message.payload as { boardId?: unknown; elementIds?: unknown; stateSeq?: unknown };
         if (typeof payload.boardId !== 'string' || !Array.isArray(payload.elementIds) || !payload.elementIds.every(value => typeof value === 'string') || typeof payload.stateSeq !== 'number') { requestSnapshot(); return; }
         const elementIds = payload.elementIds as string[];
-        applyIncrement(payload.stateSeq, current => current.boardId === payload.boardId ? { ...current, elements: current.elements.filter(item => !elementIds.includes(item.elementId)) } : undefined);
+        applyIncrement(payload.stateSeq, current => current.boardId === payload.boardId ? {
+          ...current,
+          elements: current.elements.filter(item => !elementIds.includes(item.elementId)),
+          controlledTokenIds: (current.controlledTokenIds ?? []).filter(tokenId => !elementIds.includes(tokenId))
+        } : undefined);
+        setPreviewPositions(previews => Object.fromEntries(Object.entries(previews).filter(([tokenId]) => !elementIds.includes(tokenId))));
       } else if (message.type === 'token.move.preview') {
         const move = validateTokenMovePayload(message.payload);
         if (move && boardRef.current?.boardId === move.boardId) setPreviewPositions(current => ({ ...current, [move.tokenId]: { x: move.x, y: move.y } }));
@@ -395,6 +400,8 @@ function App() {
     socket.addEventListener('close', () => {
       if (socketRef.current !== socket) return;
       socketRef.current = undefined;
+      pendingRequests.current.clear();
+      setPreviewPositions({});
       setConnected(false);
       if (stopped.current || !resumeRef.current) return;
       const current = resumeRef.current;
