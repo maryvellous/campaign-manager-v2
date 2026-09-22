@@ -253,7 +253,8 @@ function App() {
       } else if (message.type === 'element.hidden' && message.payload && typeof message.payload === 'object') {
         const payload = message.payload as { boardId?: unknown; elementIds?: unknown; stateSeq?: unknown };
         if (typeof payload.boardId !== 'string' || !Array.isArray(payload.elementIds) || !payload.elementIds.every(value => typeof value === 'string') || typeof payload.stateSeq !== 'number') { requestSnapshot(); return; }
-        applyIncrement(payload.stateSeq, current => current.boardId === payload.boardId ? { ...current, elements: current.elements.filter(item => !payload.elementIds!.includes(item.elementId)) } : undefined);
+        const elementIds = payload.elementIds as string[];
+        applyIncrement(payload.stateSeq, current => current.boardId === payload.boardId ? { ...current, elements: current.elements.filter(item => !elementIds.includes(item.elementId)) } : undefined);
       } else if (message.type === 'session.state' && message.payload && typeof message.payload === 'object') {
         const payload = message.payload as { lifecycle?: SessionLifecycle; stateSeq?: number; presentation?: string };
         if (payload.lifecycle) {
