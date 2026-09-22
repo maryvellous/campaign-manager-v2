@@ -262,6 +262,20 @@ export async function verifyDiscordActivityUser(
   return { userId: user.id, displayName: displayName || 'Discord user', accessToken: token.access_token };
 }
 
+export async function verifyDiscordActivityInstance(
+  env: Env & { DISCORD_CLIENT_ID: string; DISCORD_BOT_TOKEN: string },
+  instanceId: string,
+  fetcher: typeof fetch = fetch
+): Promise<boolean> {
+  const response = await fetcher(
+    `https://discord.com/api/v10/applications/${encodeURIComponent(env.DISCORD_CLIENT_ID)}/activity-instances/${encodeURIComponent(instanceId)}`,
+    { headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } }
+  );
+  if (!response.ok) return false;
+  const instance = await response.json() as { application_id?: unknown; instance_id?: unknown };
+  return instance.application_id === env.DISCORD_CLIENT_ID && instance.instance_id === instanceId;
+}
+
 export async function verifyDiscordInstanceMembership(
   env: Env & { DISCORD_CLIENT_ID: string; DISCORD_BOT_TOKEN: string },
   instanceId: string,
@@ -961,6 +975,9 @@ export default {
     if (request.method === 'POST' && url.pathname === '/api/activity/pair') {
       const input = validateActivityPairRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Pairing Activity non valido.'), 400);
+      if (discordIdentityConfigured(env) && !await verifyDiscordActivityInstance(env, input.instanceId)) {
+        return json(safeError('AUTH_FAILED', 'Discord non conferma questa Activity instance.'), 401);
+      }
       const paired = await directoryCall(env, '/pairing-consume', input);
       if (!paired.ok) return paired;
       const value = await paired.json() as { bound?: unknown; liveSessionId?: unknown; previousInstanceId?: unknown };
