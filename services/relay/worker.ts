@@ -15,6 +15,7 @@ import {
   validatePingPayload,
   validateCameraFocusPayload,
   validateActivityPairRequest,
+  validateActivityInstanceId,
   type ActivityBindingStatus,
   type ActivityPairingResponse,
   type ConnectionReadyPayload,
@@ -475,6 +476,12 @@ export class LiveSession {
       return resultResponse(result);
     }
 
+    if (request.method === 'POST' && url.pathname === '/activity-pairing-authorize') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
+      return resultResponse(await model.authorizeActivityPairing(credential));
+    }
+
     if (request.method === 'POST' && url.pathname === '/join') {
       const input = validateJoinRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Codice o nome non valido.'), 400);
@@ -812,6 +819,23 @@ export default {
       return json(createResponse(created.model, created.hostCredential, created.ticket, `${url.origin}/`), 201);
     }
 
+    if (request.method === 'GET' && url.pathname === '/api/activity/config') {
+      return json({ ...(env.DISCORD_CLIENT_ID ? { clientId: env.DISCORD_CLIENT_ID } : {}) });
+    }
+
+    const activityInstanceMatch = url.pathname.match(/^\/api\/activity\/instances\/([^/]+)$/u);
+    if (request.method === 'GET' && activityInstanceMatch) {
+      const instanceId = validateActivityInstanceId(decodeURIComponent(activityInstanceMatch[1]));
+      if (!instanceId) return json(safeError('PAYLOAD_INVALID', 'Activity instance non valida.'), 400);
+      return directoryStub(env).fetch(`https://directory.internal/activity-binding?instanceId=${encodeURIComponent(instanceId)}`);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/activity/pair') {
+      const input = validateActivityPairRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Pairing Activity non valido.'), 400);
+      return directoryCall(env, '/pairing-consume', input);
+    }
+
     if (request.method === 'POST' && url.pathname === '/api/join') {
       const input = validateJoinRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Codice o nome non valido.'), 400);
@@ -868,6 +892,20 @@ export default {
     }
 
     if (request.method === 'GET' && !tail) return forwardSession(env, liveSessionId, '/summary', request);
+
+    if (request.method === 'POST' && tail === '/activity-pairing') {
+      const authorized = await forwardSession(env, liveSessionId, '/activity-pairing-authorize', request);
+      if (!authorized.ok) return authorized;
+      try { return json(await reserveActivityPairing(env, liveSessionId), 201); }
+      catch { return json(safeError('INTERNAL_ERROR', 'Non è stato possibile creare il pairing Discord.'), 500); }
+    }
+
+    if (request.method === 'GET' && tail === '/activity-binding') {
+      const authorized = await forwardSession(env, liveSessionId, '/summary', request);
+      if (!authorized.ok) return authorized;
+      return directoryStub(env).fetch(`https://directory.internal/activity-binding-session?liveSessionId=${encodeURIComponent(liveSessionId)}`);
+    }
+
     if (request.method === 'GET' && tail === '/final-token-positions') return forwardSession(env, liveSessionId, '/final-token-positions', request);
     if (request.method === 'POST' && tail === '/end') return forwardSession(env, liveSessionId, '/end', request);
     if (request.method === 'POST' && tail === '/host-ticket') return forwardSession(env, liveSessionId, '/host-ticket', request);
