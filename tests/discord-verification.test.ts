@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { verifyDiscordActivityUser, verifyDiscordInstanceMembership } from '../services/relay/worker';
+import { verifyDiscordActivityInstance, verifyDiscordActivityUser, verifyDiscordInstanceMembership } from '../services/relay/worker';
 
 const env = {
   DISCORD_CLIENT_ID: '1215413995645968394',
@@ -86,4 +86,21 @@ test('Activity reconnect membership check binds both application and instance id
     users: []
   });
   assert.equal(await verifyDiscordInstanceMembership(env, 'instance_one', '205519959982473217', missingUser), false);
+});
+
+
+test('pairing can verify a real Activity instance before consuming the one-use code', async () => {
+  const good: typeof fetch = async () => response({
+    application_id: env.DISCORD_CLIENT_ID,
+    instance_id: 'instance_one',
+    users: []
+  });
+  assert.equal(await verifyDiscordActivityInstance(env, 'instance_one', good), true);
+
+  const fake: typeof fetch = async () => response({
+    application_id: env.DISCORD_CLIENT_ID,
+    instance_id: 'instance_fake',
+    users: []
+  });
+  assert.equal(await verifyDiscordActivityInstance(env, 'instance_one', fake), false);
 });
