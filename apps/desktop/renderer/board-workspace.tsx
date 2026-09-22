@@ -310,13 +310,18 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!edit) return;
     setTextEditing(undefined);
     if (!edit.text.trim()) return;
+    const existing = sessionRef.current?.snapshot.document.elements.find(element => element.elementId === edit.elementId);
+    if (!existing || existing.type !== 'text' || existing.text === edit.text) return;
     changeElement(edit.elementId, element => element.type === 'text' ? { ...element, text: edit.text } : element);
   };
 
   const importFile = async (file: File, world?: { x: number; y: number }) => {
     if (!/image\/(png|jpeg|webp)/u.test(file.type) && !/\.(png|jpe?g|webp)$/iu.test(file.name)) { setMessage('Usa un’immagine PNG, JPG/JPEG o WebP.'); return; }
     if (file.size > 20 * 1024 * 1024) { setMessage('L’immagine supera il limite di 20 MB.'); return; }
-    const [buffer, size] = await Promise.all([file.arrayBuffer(), imageSize(file)]);
+    let buffer: ArrayBuffer;
+    let size: { width: number; height: number };
+    try { [buffer, size] = await Promise.all([file.arrayBuffer(), imageSize(file)]); }
+    catch { setMessage('L’immagine non è leggibile.'); return; }
     const reply = await command({ action: 'board:importImage', name: file.name, base64: bytesToBase64(new Uint8Array(buffer)) });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const current = sessionRef.current; if (!current) return;
@@ -371,6 +376,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     event.preventDefault();
     const camera = current.snapshot.document.camera;
     const nextZoom = clamp(camera.zoom * (event.deltaY > 0 ? 0.9 : 1.1), 0.2, 4);
+    if (nextZoom === camera.zoom) return;
     const rect = viewport.current?.getBoundingClientRect(); if (!rect) return;
     const px = event.clientX - rect.left, py = event.clientY - rect.top;
     const worldX = (px - camera.x) / camera.zoom, worldY = (py - camera.y) / camera.zoom;
@@ -408,12 +414,12 @@ export function BoardWorkspace({ command }: { command: Command }) {
     <aside className="boards-list">
       <div className="boards-list-heading"><div><span className="eyebrow">V0.2</span><h2>Board</h2></div><button title="Aggiorna elenco" onClick={() => void refreshList()}>↻</button></div>
       <form className="board-new" onSubmit={event => { event.preventDefault(); void createBoard(); }}><input aria-label="Nome nuova board" placeholder="Nuova board…" value={newTitle} onChange={event => setNewTitle(event.target.value)} /><button type="submit" disabled={!newTitle.trim()}>+</button></form>
-      <nav>{boards.map(board => <button key={board.boardId} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => void openBoard(board.path)}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
+      <nav>{boards.map(board => <button key={board.path} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => void openBoard(board.path)}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
     </aside>
     <section className="board-main">
       {!session ? <div className="board-empty"><span>◇</span><h1>Prepara una scena</h1><p>Le board restano nella cartella della campagna e funzionano offline.</p></div> : <>
         <header className="board-header">
-          <div>{renaming ? <form onSubmit={event => { event.preventDefault(); void renameBoard(); }}><input autoFocus value={renameTitle} onChange={event => setRenameTitle(event.target.value)} onBlur={() => void renameBoard()} onKeyDown={event => { if (event.key === 'Escape') setRenaming(false); }} /></form> : <button className="board-title-button" onClick={() => { setRenameTitle(session.snapshot.title); setRenaming(true); }}><strong>{session.snapshot.title}</strong><small>{session.snapshot.path}</small></button>}</div>
+          <div>{renaming ? <form onSubmit={event => { event.preventDefault(); void renameBoard(); }}><input autoFocus value={renameTitle} onChange={event => setRenameTitle(event.target.value)} onBlur={() => setRenaming(false)} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setRenaming(false); } }} /></form> : <button className="board-title-button" onClick={() => { setRenameTitle(session.snapshot.title); setRenaming(true); }}><strong>{session.snapshot.title}</strong><small>{session.snapshot.path}</small></button>}</div>
           <div className="board-header-actions"><span className={`board-save-state ${session.state}`}>{saveLabel}</span><button disabled={session.state === 'clean' || session.state === 'saving' || session.state === 'conflict'} onClick={() => void save()}>Salva <kbd>Ctrl S</kbd></button></div>
         </header>
         {message && <div className="board-notice" role="alert">{message}<button onClick={() => setMessage(undefined)}>Chiudi</button></div>}
