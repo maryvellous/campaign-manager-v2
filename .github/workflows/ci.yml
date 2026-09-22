@@ -21,4 +21,5 @@ jobs:
       - run: npm run lint
       - run: npm test
       - run: npm run build
+      - run: npm run test:live-network
       - run: npx --yes wrangler@4.136.1 deploy --dry-run --outdir .wrangler-dry-run
