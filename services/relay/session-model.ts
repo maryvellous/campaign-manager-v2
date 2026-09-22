@@ -68,7 +68,10 @@ export interface SessionTicket {
 }
 
 export interface StoredParticipant extends LiveParticipant {
-  resumeCredentialHash: string;
+  resumeCredentialHash?: string;
+  activityCredentialHash?: string;
+  discordUserId?: string;
+  activityInstanceId?: string;
 }
 
 export interface StoredLiveBoard {
@@ -203,7 +206,7 @@ export class LiveSessionModel {
     if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
     const hash = await secretHash(credential);
     if (hash === this.record.hostCredentialHash) return ok(true);
-    if (this.record.participants.some(participant => participant.resumeCredentialHash === hash)) return ok(true);
+    if (this.record.participants.some(participant => participant.resumeCredentialHash === hash || participant.activityCredentialHash === hash)) return ok(true);
     return fail('AUTH_FAILED', 'Credenziale asset non valida.');
   }
 
@@ -368,6 +371,48 @@ export class LiveSessionModel {
     const participant = this.record.participants.find(item => item.participantId === participantId);
     if (!participant || await secretHash(resumeCredential) !== participant.resumeCredentialHash) return fail('AUTH_FAILED', 'Credenziale partecipante non valida.');
     return ok({ ticket: await this.issueTicket('player', participantId, now) });
+  }
+
+  async joinDiscordParticipant(instanceId: string, discordUserId: string, displayName: string, now = Date.now()): Promise<SessionResult<{ participantId: string; activityCredential: string; ticket: string; displayName: string }>> {
+    if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
+
+    let participant = this.record.participants.find(item => item.discordUserId === discordUserId);
+    if (!participant) {
+      if (!this.record.acceptingJoins) return fail('JOIN_LOCKED', 'Il master ha chiuso i nuovi ingressi.');
+      if (!this.record.hostConnected || this.record.lifecycle !== 'open') return fail('HOST_OFFLINE', 'Il master non è connesso alla sessione.');
+      participant = {
+        participantId: randomOpaque('participant', 18),
+        displayName,
+        connected: false,
+        tokenIds: [],
+        discordUserId,
+        activityInstanceId: instanceId
+      };
+      this.record.participants.push(participant);
+      this.bump();
+    } else {
+      let changed = false;
+      if (participant.displayName !== displayName) { participant.displayName = displayName; changed = true; }
+      if (participant.activityInstanceId !== instanceId) { participant.activityInstanceId = instanceId; changed = true; }
+      if (changed) this.bump();
+    }
+
+    const activityCredential = randomOpaque('activity', 32);
+    participant.activityCredentialHash = await secretHash(activityCredential);
+    return ok({
+      participantId: participant.participantId,
+      activityCredential,
+      ticket: await this.issueTicket('player', participant.participantId, now),
+      displayName: participant.displayName
+    });
+  }
+
+  async resumeDiscordParticipant(instanceId: string, participantId: string, activityCredential: string, now = Date.now()): Promise<SessionResult<{ ticket: string; displayName: string }>> {
+    if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
+    const participant = this.record.participants.find(item => item.participantId === participantId);
+    if (!participant || participant.activityInstanceId !== instanceId || !participant.activityCredentialHash) return fail('AUTH_FAILED', 'Credenziale Activity non valida.');
+    if (await secretHash(activityCredential) !== participant.activityCredentialHash) return fail('AUTH_FAILED', 'Credenziale Activity non valida.');
+    return ok({ ticket: await this.issueTicket('player', participantId, now), displayName: participant.displayName });
   }
 
   async consumeTicket(ticket: string, now = Date.now()): Promise<SessionResult<TicketIdentity>> {
