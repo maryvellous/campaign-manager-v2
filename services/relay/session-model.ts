@@ -147,6 +147,7 @@ export class LiveSessionModel {
       stateSeq: this.record.stateSeq,
       presentation: this.record.activeBoardId ? 'board' : 'waiting',
       ...(this.record.activeBoardId ? { activeBoardId: this.record.activeBoardId } : {}),
+      ...(this.record.activeBoardId ? { activeElementIds: this.board(this.record.activeBoardId)?.elements.map(element => element.elementId) ?? [] } : {}),
       liveBoards: this.record.boards.map(board => ({ boardId: board.boardId, title: board.title }))
     };
   }
