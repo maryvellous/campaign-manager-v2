@@ -194,6 +194,34 @@ export interface ActivityBindingStatus {
 
 export interface ActivityConfig {
   clientId?: string;
+  identityReady?: boolean;
+}
+
+export interface ActivityJoinRequest {
+  instanceId: string;
+  code: string;
+}
+
+export interface ActivityJoinResponse {
+  liveSessionId: string;
+  participantId: string;
+  activityCredential: string;
+  ticket: string;
+  accessToken: string;
+  displayName: string;
+}
+
+export interface ActivityResumeRequest {
+  instanceId: string;
+  participantId: string;
+  activityCredential: string;
+}
+
+export interface ActivityResumeResponse {
+  liveSessionId: string;
+  participantId: string;
+  ticket: string;
+  displayName: string;
 }
 
 export interface PublishBoardRequest { board: LiveBoardPayload }
@@ -240,6 +268,16 @@ export function validateActivityInstanceId(value: unknown): string | undefined {
 
 export function validateActivityPairingCode(value: unknown): string | undefined {
   return activityPairingCode(value) ? value : undefined;
+}
+
+export function validateActivityJoinRequest(value: unknown): ActivityJoinRequest | undefined {
+  if (!object(value) || !activityInstanceId(value.instanceId) || !cleanString(value.code, 4096)) return undefined;
+  return { instanceId: value.instanceId, code: value.code };
+}
+
+export function validateActivityResumeRequest(value: unknown): ActivityResumeRequest | undefined {
+  if (!object(value) || !activityInstanceId(value.instanceId) || !opaqueId(value.participantId) || !opaqueId(value.activityCredential)) return undefined;
+  return { instanceId: value.instanceId, participantId: value.participantId, activityCredential: value.activityCredential };
 }
 
 export function validateActivityPairRequest(value: unknown): ActivityPairRequest | undefined {

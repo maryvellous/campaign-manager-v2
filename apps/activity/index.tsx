@@ -11,6 +11,8 @@ import {
   validatePingPayload,
   validateTokenMovePayload,
   type ActivityConfig,
+  type ActivityJoinResponse,
+  type ActivityResumeResponse,
   type JoinSessionResponse,
   type LiveApiError,
   type LiveBoardElement,
@@ -18,28 +20,68 @@ import {
   type LiveBoardSnapshot,
   type SessionLifecycle
 } from '../../packages/protocol/src/index';
-import { activityApiPath, discordActivityContext, readyDiscordActivity, type DiscordActivityContext } from './discord-adapter';
+import { activityApiPath, discordActivityContext, readyDiscordActivity, type DiscordActivityContext, type ReadyDiscordActivity } from './discord-adapter';
 import './style.css';
 
 interface StoredResume {
+  kind: 'standalone';
   liveSessionId: string;
   participantId: string;
   resumeCredential: string;
   displayName: string;
 }
 
+interface ActivityResume {
+  kind: 'activity';
+  liveSessionId: string;
+  participantId: string;
+  activityCredential: string;
+  displayName: string;
+  instanceId: string;
+}
+
+type PlayerResume = StoredResume | ActivityResume;
+type ActivitySessionBootstrap = { resume: ActivityResume; ticket: string };
+
 type Screen = 'join' | 'connecting' | 'waiting' | 'board' | 'ended';
 type ApiFailure = LiveApiError['error'];
 type Camera = { x: number; y: number; zoom: number };
 
 const storageKey = 'cmv2-live-resume-v1';
+const activityStoragePrefix = 'cmv2-discord-resume-v1:';
+
+function storedActivityResume(instanceId: string): ActivityResume | undefined {
+  try {
+    const value = JSON.parse(localStorage.getItem(activityStoragePrefix + instanceId) ?? 'null') as Partial<ActivityResume> | null;
+    if (!value || value.kind !== 'activity' || value.instanceId !== instanceId || typeof value.liveSessionId !== 'string' || typeof value.participantId !== 'string' || typeof value.activityCredential !== 'string' || typeof value.displayName !== 'string') return undefined;
+    return {
+      kind: 'activity',
+      instanceId,
+      liveSessionId: value.liveSessionId,
+      participantId: value.participantId,
+      activityCredential: value.activityCredential,
+      displayName: value.displayName
+    };
+  } catch { return undefined; }
+}
+
+function saveActivityResume(resume: ActivityResume | undefined): void {
+  if (resume) localStorage.setItem(activityStoragePrefix + resume.instanceId, JSON.stringify(resume));
+  else {
+    for (let index = localStorage.length - 1; index >= 0; index--) {
+      const key = localStorage.key(index);
+      if (key?.startsWith(activityStoragePrefix)) localStorage.removeItem(key);
+    }
+  }
+}
+
 const clamp = (value: number, min: number, max: number) => Math.min(max, Math.max(min, value));
 
 function storedResume(): StoredResume | undefined {
   try {
-    const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as StoredResume | null;
+    const value = JSON.parse(localStorage.getItem(storageKey) ?? 'null') as Partial<StoredResume> | null;
     if (!value || typeof value.liveSessionId !== 'string' || typeof value.participantId !== 'string' || typeof value.resumeCredential !== 'string' || typeof value.displayName !== 'string') return undefined;
-    return value;
+    return { kind: 'standalone', liveSessionId: value.liveSessionId, participantId: value.participantId, resumeCredential: value.resumeCredential, displayName: value.displayName };
   } catch { return undefined; }
 }
 
@@ -48,13 +90,17 @@ function formatJoinCode(value: string): string {
   return compact.length > 4 ? `${compact.slice(0, 4)}-${compact.slice(4)}` : compact;
 }
 
+function playerApiPath(path: string): string {
+  return discordActivityContext() ? activityApiPath(path, true) : path;
+}
+
 function websocketUrl(liveSessionId: string): string {
   const protocol = location.protocol === 'https:' ? 'wss:' : 'ws:';
-  return `${protocol}//${location.host}/api/sessions/${encodeURIComponent(liveSessionId)}/ws`;
+  return `${protocol}//${location.host}${playerApiPath(`/api/sessions/${encodeURIComponent(liveSessionId)}/ws`)}`;
 }
 
 function assetUrl(liveSessionId: string, publishedAssetId: string): string {
-  return `/api/sessions/${encodeURIComponent(liveSessionId)}/assets/${encodeURIComponent(publishedAssetId)}`;
+  return playerApiPath(`/api/sessions/${encodeURIComponent(liveSessionId)}/assets/${encodeURIComponent(publishedAssetId)}`);
 }
 
 function useAuthorizedAsset(liveSessionId: string, publishedAssetId: string | undefined, credential: string) {
@@ -238,12 +284,13 @@ function PlayerBoard({
   </section>;
 }
 
-function App() {
+function App({ activitySession }: { activitySession?: ActivitySessionBootstrap } = {}) {
   const [screen, setScreen] = useState<Screen>('join');
   const [joinCode, setJoinCode] = useState('');
   const [displayName, setDisplayName] = useState('');
-  const [resume, setResume] = useState<StoredResume>();
-  const resumeRef = useRef<StoredResume | undefined>(undefined);
+  const activityMode = !!activitySession;
+  const [resume, setResume] = useState<PlayerResume>();
+  const resumeRef = useRef<PlayerResume | undefined>(undefined);
   const [lifecycle, setLifecycle] = useState<SessionLifecycle>('open');
   const [error, setError] = useState<ApiFailure>();
   const [connected, setConnected] = useState(false);
@@ -259,11 +306,12 @@ function App() {
   const retryCount = useRef(0);
   const stopped = useRef(false);
 
-  const setResumeState = useCallback((value: StoredResume | undefined) => {
+  const setResumeState = useCallback((value: PlayerResume | undefined) => {
     resumeRef.current = value; setResume(value);
-    if (value) localStorage.setItem(storageKey, JSON.stringify(value));
-    else localStorage.removeItem(storageKey);
-  }, []);
+    if (activityMode) return;
+    if (value?.kind === 'standalone') localStorage.setItem(storageKey, JSON.stringify(value));
+    else if (!value) localStorage.removeItem(storageKey);
+  }, [activityMode]);
 
   const requestSnapshot = useCallback(() => {
     const socket = socketRef.current;
@@ -418,10 +466,20 @@ function App() {
         if (stopped.current || resumeRef.current?.participantId !== current.participantId) return;
         const delay = Math.min(5000, 700 * 2 ** Math.min(retryCount.current++, 3));
         retryTimer.current = setTimeout(() => {
-          void api<{ ticket: string }>('/api/resume', current).then(result => {
+          const resumeRequest = current.kind === 'activity'
+            ? activityFetch<ActivityResumeResponse>('/api/activity/resume', {
+                method: 'POST',
+                body: JSON.stringify({
+                  instanceId: current.instanceId,
+                  participantId: current.participantId,
+                  activityCredential: current.activityCredential
+                })
+              })
+            : api<{ ticket: string }>('/api/resume', current);
+          void resumeRequest.then(result => {
             if (stopped.current) return;
             if (!result.ok) {
-              if (result.error.code === 'SESSION_ENDED' || result.error.code === 'AUTH_FAILED') {
+              if (result.error.code === 'SESSION_ENDED' || result.error.code === 'AUTH_FAILED' || result.error.code === 'SESSION_NOT_FOUND') {
                 stopped.current = true; setResumeState(undefined); setScreen('ended'); setError(result.error);
               } else {
                 setError({ ...result.error, message: 'Connessione persa. Riprovo automaticamente.' });
@@ -438,22 +496,30 @@ function App() {
   }, [applyIncrement, applySnapshot, requestSnapshot, setResumeState, showPing]);
 
   useEffect(() => {
-    const prior = storedResume();
-    if (!prior) return;
-    setResumeState(prior); setDisplayName(prior.displayName); setScreen('connecting');
-    void api<{ ticket: string }>('/api/resume', prior).then(result => {
-      if (!result.ok) {
-        setResumeState(undefined); setScreen(result.error.code === 'SESSION_ENDED' ? 'ended' : 'join'); setError(result.error);
-        return;
-      }
-      connect(prior.liveSessionId, result.value.ticket);
-    });
+    if (activitySession) {
+      stopped.current = false;
+      setResumeState(activitySession.resume);
+      setDisplayName(activitySession.resume.displayName);
+      setScreen('connecting');
+      connect(activitySession.resume.liveSessionId, activitySession.ticket);
+    } else {
+      const prior = storedResume();
+      if (!prior) return;
+      setResumeState(prior); setDisplayName(prior.displayName); setScreen('connecting');
+      void api<{ ticket: string }>('/api/resume', prior).then(result => {
+        if (!result.ok) {
+          setResumeState(undefined); setScreen(result.error.code === 'SESSION_ENDED' ? 'ended' : 'join'); setError(result.error);
+          return;
+        }
+        connect(prior.liveSessionId, result.value.ticket);
+      });
+    }
     return () => {
       stopped.current = true;
       if (retryTimer.current) clearTimeout(retryTimer.current);
       socketRef.current?.close();
     };
-  }, [connect, setResumeState]);
+  }, [activitySession, connect, setResumeState]);
 
   async function join(event: React.FormEvent) {
     event.preventDefault();
@@ -464,6 +530,7 @@ function App() {
     const result = await api<JoinSessionResponse>('/api/join', { joinCode: code, displayName: name });
     if (!result.ok) { setScreen('join'); setError(result.error); return; }
     const next: StoredResume = {
+      kind: 'standalone',
       liveSessionId: result.value.liveSessionId,
       participantId: result.value.participantId,
       resumeCredential: result.value.resumeCredential,
@@ -474,12 +541,14 @@ function App() {
   }
 
   function leaveLocalResume() {
-    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setScreen('join'); setError(undefined); setJoinCode(''); setBoard(undefined); boardRef.current = undefined; setPreviewPositions({}); setPings([]); seqRef.current = 0;
+    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setError(undefined); setJoinCode(''); setBoard(undefined); boardRef.current = undefined; setPreviewPositions({}); setPings([]); seqRef.current = 0;
+    if (activityMode) { globalThis.location.reload(); return; }
+    setScreen('join');
   }
 
   return <main className={`player-shell ${screen === 'board' ? 'has-board' : ''}`}>
-    <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>Sessione giocatore</small></span></div>
-    {screen === 'join' && <section className="join-card">
+    <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>{activityMode ? 'Discord Activity' : 'Sessione giocatore'}</small></span></div>
+    {screen === 'join' && !activityMode && <section className="join-card">
       <span className="eyebrow">UNISCITI ALLA SESSIONE</span>
       <h1>Entra al tavolo.</h1>
       <p>Chiedi al master il codice della sessione. Non serve un account.</p>
@@ -497,8 +566,8 @@ function App() {
       <p>{lifecycle === 'host_reconnecting' ? 'Il master si sta riconnettendo. La sessione riprenderà quando torna online.' : 'Il master non sta condividendo una board in questo momento.'}</p>
       <small>Puoi lasciare aperta questa pagina.</small>
     </section>}
-    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} credential={resume.resumeCredential} interactive={connected && lifecycle === 'open'} previewPositions={previewPositions} pings={pings} focusNonce={focusNonce} onPreview={(tokenId, x, y) => { setPreviewPositions(current => ({ ...current, [tokenId]: { x, y } })); sendPreview('token.move.preview', { boardId: board.boardId, tokenId, x, y }); }} onCommit={(tokenId, x, y) => sendMutation('token.move.commit', { boardId: board.boardId, tokenId, x, y })} onPing={(x, y) => sendMutation('ping.create', { boardId: board.boardId, x, y })} />}
-    {screen === 'ended' && <section className="waiting-card"><h1>Sessione non disponibile.</h1><p>{error?.message ?? 'Questa sessione è terminata.'}</p><button onClick={leaveLocalResume}>Inserisci un altro codice</button></section>}
+    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} credential={resume.kind === 'activity' ? resume.activityCredential : resume.resumeCredential} interactive={connected && lifecycle === 'open'} previewPositions={previewPositions} pings={pings} focusNonce={focusNonce} onPreview={(tokenId, x, y) => { setPreviewPositions(current => ({ ...current, [tokenId]: { x, y } })); sendPreview('token.move.preview', { boardId: board.boardId, tokenId, x, y }); }} onCommit={(tokenId, x, y) => sendMutation('token.move.commit', { boardId: board.boardId, tokenId, x, y })} onPing={(x, y) => sendMutation('ping.create', { boardId: board.boardId, x, y })} />}
+    {screen === 'ended' && <section className="waiting-card"><h1>Sessione non disponibile.</h1><p>{error?.message ?? 'Questa sessione è terminata.'}</p><button onClick={leaveLocalResume}>{activityMode ? 'Ricollega Discord' : 'Inserisci un altro codice'}</button></section>}
     {error && (screen === 'join' || screen === 'board') && <div className="player-error" role="alert">{error.message}</div>}
   </main>;
 }
@@ -524,11 +593,88 @@ async function activityFetch<T>(path: string, init: RequestInit = {}): Promise<{
 }
 
 function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivityContext }) {
-  const [status, setStatus] = useState<'booting' | 'unbound' | 'bound' | 'error'>('booting');
+  const [status, setStatus] = useState<'booting' | 'unbound' | 'authorizing' | 'error'>('booting');
   const [pairingCode, setPairingCode] = useState('');
   const [error, setError] = useState<string>();
   const [pairing, setPairing] = useState(false);
+  const [session, setSession] = useState<ActivitySessionBootstrap>();
   const instanceId = useRef(initialContext.instanceId);
+  const readySdk = useRef<ReadyDiscordActivity | undefined>(undefined);
+  const config = useRef<ActivityConfig | undefined>(undefined);
+
+  const enterBoundActivity = useCallback(async () => {
+    const ready = readySdk.current;
+    const currentConfig = config.current;
+    if (!ready || !currentConfig?.clientId) return;
+
+    setStatus('authorizing');
+    setError(undefined);
+
+    const prior = storedActivityResume(instanceId.current);
+    if (prior) {
+      const resumed = await activityFetch<ActivityResumeResponse>('/api/activity/resume', {
+        method: 'POST',
+        body: JSON.stringify({
+          instanceId: prior.instanceId,
+          participantId: prior.participantId,
+          activityCredential: prior.activityCredential
+        })
+      });
+      if (resumed.ok) {
+        const next = { ...prior, liveSessionId: resumed.value.liveSessionId, displayName: resumed.value.displayName };
+        saveActivityResume(next);
+        setSession({ resume: next, ticket: resumed.value.ticket });
+        return;
+      }
+      if (resumed.error.code === 'SESSION_ENDED' || resumed.error.code === 'SESSION_NOT_FOUND' || resumed.error.code === 'AUTH_FAILED') {
+        saveActivityResume(undefined);
+      }
+    }
+
+    if (!currentConfig.identityReady) {
+      setError('L’identità Discord server-side non è ancora configurata sul relay.');
+      setStatus('error');
+      return;
+    }
+
+    try {
+      const authorization = await ready.sdk.commands.authorize({
+        client_id: currentConfig.clientId,
+        response_type: 'code',
+        state: '',
+        prompt: 'none',
+        scope: ['identify']
+      });
+      if (!authorization?.code) throw new Error('Discord non ha restituito un codice OAuth.');
+
+      const joined = await activityFetch<ActivityJoinResponse>('/api/activity/join', {
+        method: 'POST',
+        body: JSON.stringify({ instanceId: instanceId.current, code: authorization.code })
+      });
+      if (!joined.ok) {
+        setError(joined.error.message);
+        setStatus('error');
+        return;
+      }
+
+      const authenticated = await ready.sdk.commands.authenticate({ access_token: joined.value.accessToken });
+      if (!authenticated) throw new Error('Discord non ha completato authenticate.');
+
+      const resume: ActivityResume = {
+        kind: 'activity',
+        instanceId: instanceId.current,
+        liveSessionId: joined.value.liveSessionId,
+        participantId: joined.value.participantId,
+        activityCredential: joined.value.activityCredential,
+        displayName: joined.value.displayName
+      };
+      saveActivityResume(resume);
+      setSession({ resume, ticket: joined.value.ticket });
+    } catch (failure) {
+      setError(failure instanceof Error ? failure.message : 'Autenticazione Discord non riuscita.');
+      setStatus('error');
+    }
+  }, []);
 
   const readBinding = useCallback(async () => {
     const result = await activityFetch<unknown>(`/api/activity/instances/${encodeURIComponent(instanceId.current)}`, { method: 'GET' });
@@ -536,8 +682,9 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
     const binding = validateActivityBindingStatus(result.value);
     if (!binding) { setError('Il relay ha restituito uno stato Activity non valido.'); setStatus('error'); return; }
     setError(undefined);
-    setStatus(binding.bound ? 'bound' : 'unbound');
-  }, []);
+    if (binding.bound) await enterBoundActivity();
+    else setStatus('unbound');
+  }, [enterBoundActivity]);
 
   useEffect(() => {
     let cancelled = false;
@@ -552,6 +699,8 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       try {
         const ready = await readyDiscordActivity(configResult.value.clientId, initialContext);
         if (cancelled) return;
+        config.current = configResult.value;
+        readySdk.current = ready;
         instanceId.current = ready.instanceId;
         await readBinding();
       } catch (failure) {
@@ -577,13 +726,16 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       const binding = validateActivityBindingStatus(result.value);
       if (!binding?.bound) { setError('Il pairing non è stato confermato dal relay.'); return; }
       setPairingCode('');
-      setStatus('bound');
+      await enterBoundActivity();
     } finally { setPairing(false); }
   }
+
+  if (session) return <App activitySession={session} />;
 
   return <main className="player-shell discord-shell">
     <div className="player-brand"><span className="player-mark">◇</span><span><strong>Campaign Manager</strong><small>Discord Activity</small></span></div>
     {status === 'booting' && <section className="waiting-card"><span className="spinner" /><h1>Avvio Activity…</h1><p>Sto leggendo il contesto dell’istanza Discord.</p></section>}
+    {status === 'authorizing' && <section className="waiting-card"><span className="spinner" /><h1>Ingresso al tavolo…</h1><p>Discord sta verificando identità e appartenenza a questa Activity.</p></section>}
     {status === 'unbound' && <section className="join-card discord-pair-card">
       <span className="eyebrow">COLLEGA QUESTA ACTIVITY</span>
       <h1>Inserisci il pairing del master.</h1>
@@ -594,14 +746,7 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       </form>
       {error && <div className="player-error inline-error" role="alert">{error}</div>}
     </section>}
-    {status === 'bound' && <section className="waiting-card discord-bound-card">
-      <span className="connection-dot online" />
-      <span className="eyebrow">ACTIVITY COLLEGATA</span>
-      <h1>Questa istanza è pronta.</h1>
-      <p>Il pairing è completato. Campaign Manager Desktop resta l’unico host autorevole della sessione.</p>
-      <small>L’ingresso automatico dei giocatori arriva nel prossimo blocco V0.4.</small>
-    </section>}
-    {status === 'error' && <section className="waiting-card"><h1>Activity non disponibile.</h1><p>{error ?? 'Non riesco a inizializzare Discord.'}</p><button onClick={() => void readBinding()}>Riprova stato</button></section>}
+    {status === 'error' && <section className="waiting-card"><h1>Activity non disponibile.</h1><p>{error ?? 'Non riesco a inizializzare Discord.'}</p><button onClick={() => void readBinding()}>Riprova</button></section>}
   </main>;
 }
 

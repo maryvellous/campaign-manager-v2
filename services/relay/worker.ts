@@ -14,9 +14,13 @@ import {
   validateTokenMovePayload,
   validatePingPayload,
   validateCameraFocusPayload,
+  validateActivityJoinRequest,
   validateActivityPairRequest,
+  validateActivityResumeRequest,
   validateActivityInstanceId,
   type ActivityBindingStatus,
+  type ActivityJoinResponse,
+  type ActivityResumeResponse,
   type ActivityPairingResponse,
   type ConnectionReadyPayload,
   type LiveApiError,
@@ -77,6 +81,8 @@ export interface Env {
   LIVE_ASSETS: R2BucketLike;
   ASSETS: AssetBinding;
   DISCORD_CLIENT_ID?: string;
+  DISCORD_CLIENT_SECRET?: string;
+  DISCORD_BOT_TOKEN?: string;
 }
 
 declare const WebSocketPair: {
@@ -204,6 +210,91 @@ async function reserveActivityPairing(env: Env, liveSessionId: string): Promise<
   throw new Error('Unable to reserve activity pairing code');
 }
 
+interface VerifiedDiscordUser {
+  userId: string;
+  displayName: string;
+  accessToken: string;
+}
+
+function discordIdentityConfigured(env: Env): env is Env & { DISCORD_CLIENT_ID: string; DISCORD_CLIENT_SECRET: string; DISCORD_BOT_TOKEN: string } {
+  return !!env.DISCORD_CLIENT_ID && !!env.DISCORD_CLIENT_SECRET && !!env.DISCORD_BOT_TOKEN;
+}
+
+export async function verifyDiscordActivityUser(
+  env: Env & { DISCORD_CLIENT_ID: string; DISCORD_CLIENT_SECRET: string; DISCORD_BOT_TOKEN: string },
+  code: string,
+  instanceId: string,
+  fetcher: typeof fetch = fetch
+): Promise<VerifiedDiscordUser | undefined> {
+  const tokenResponse = await fetcher('https://discord.com/api/oauth2/token', {
+    method: 'POST',
+    headers: { 'content-type': 'application/x-www-form-urlencoded' },
+    body: new URLSearchParams({
+      client_id: env.DISCORD_CLIENT_ID,
+      client_secret: env.DISCORD_CLIENT_SECRET,
+      grant_type: 'authorization_code',
+      code
+    })
+  });
+  if (!tokenResponse.ok) return undefined;
+  const token = await tokenResponse.json() as { access_token?: unknown; token_type?: unknown };
+  if (typeof token.access_token !== 'string' || !token.access_token || token.token_type !== 'Bearer') return undefined;
+
+  const userResponse = await fetcher('https://discord.com/api/v10/users/@me', {
+    headers: { authorization: `Bearer ${token.access_token}` }
+  });
+  if (!userResponse.ok) return undefined;
+  const user = await userResponse.json() as { id?: unknown; username?: unknown; global_name?: unknown };
+  if (typeof user.id !== 'string' || !/^\d{5,32}$/u.test(user.id) || typeof user.username !== 'string' || !user.username) return undefined;
+  const displayName = typeof user.global_name === 'string' && user.global_name.trim()
+    ? user.global_name.trim().slice(0, 80)
+    : user.username.trim().slice(0, 80);
+
+  const instanceResponse = await fetcher(
+    `https://discord.com/api/v10/applications/${encodeURIComponent(env.DISCORD_CLIENT_ID)}/activity-instances/${encodeURIComponent(instanceId)}`,
+    { headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } }
+  );
+  if (!instanceResponse.ok) return undefined;
+  const instance = await instanceResponse.json() as { application_id?: unknown; instance_id?: unknown; users?: unknown };
+  if (instance.application_id !== env.DISCORD_CLIENT_ID || instance.instance_id !== instanceId || !Array.isArray(instance.users) || !instance.users.every(value => typeof value === 'string')) return undefined;
+  if (!(instance.users as string[]).includes(user.id)) return undefined;
+
+  return { userId: user.id, displayName: displayName || 'Discord user', accessToken: token.access_token };
+}
+
+export async function verifyDiscordActivityInstance(
+  env: Env & { DISCORD_CLIENT_ID: string; DISCORD_BOT_TOKEN: string },
+  instanceId: string,
+  fetcher: typeof fetch = fetch
+): Promise<boolean> {
+  const response = await fetcher(
+    `https://discord.com/api/v10/applications/${encodeURIComponent(env.DISCORD_CLIENT_ID)}/activity-instances/${encodeURIComponent(instanceId)}`,
+    { headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } }
+  );
+  if (!response.ok) return false;
+  const instance = await response.json() as { application_id?: unknown; instance_id?: unknown };
+  return instance.application_id === env.DISCORD_CLIENT_ID && instance.instance_id === instanceId;
+}
+
+export async function verifyDiscordInstanceMembership(
+  env: Env & { DISCORD_CLIENT_ID: string; DISCORD_BOT_TOKEN: string },
+  instanceId: string,
+  discordUserId: string,
+  fetcher: typeof fetch = fetch
+): Promise<boolean> {
+  const response = await fetcher(
+    `https://discord.com/api/v10/applications/${encodeURIComponent(env.DISCORD_CLIENT_ID)}/activity-instances/${encodeURIComponent(instanceId)}`,
+    { headers: { authorization: `Bot ${env.DISCORD_BOT_TOKEN}` } }
+  );
+  if (!response.ok) return false;
+  const instance = await response.json() as { application_id?: unknown; instance_id?: unknown; users?: unknown };
+  return instance.application_id === env.DISCORD_CLIENT_ID
+    && instance.instance_id === instanceId
+    && Array.isArray(instance.users)
+    && instance.users.every(value => typeof value === 'string')
+    && (instance.users as string[]).includes(discordUserId);
+}
+
 export class SessionDirectory {
   private pairAttempts = new Map<string, { startedAt: number; count: number }>();
 
@@ -258,6 +349,12 @@ export class SessionDirectory {
       return json(status);
     }
 
+    if (request.method === 'GET' && url.pathname === '/activity-resolve') {
+      const instanceId = url.searchParams.get('instanceId') ?? '';
+      const binding = instanceId ? model.activityBinding(instanceId) : undefined;
+      return binding ? json({ liveSessionId: binding.liveSessionId }) : json(safeError('SESSION_NOT_FOUND', 'Activity non associata.'), 404);
+    }
+
     if (request.method !== 'POST') return json(safeError('PAYLOAD_INVALID', 'Metodo non supportato.'), 405);
     const body = await requestJson(request);
     if (!body || typeof body !== 'object' || Array.isArray(body)) return json(safeError('PAYLOAD_INVALID', 'Richiesta non valida.'), 400);
@@ -284,10 +381,16 @@ export class SessionDirectory {
       const instanceId = typeof data.instanceId === 'string' ? data.instanceId : '';
       if (!pairingCode || !instanceId) return json(safeError('PAYLOAD_INVALID', 'Pairing non valido.'), 400);
       if (!this.allowPairAttempt(instanceId)) return json(safeError('RATE_LIMITED', 'Troppi tentativi di pairing.'), 429);
+      const pending = model.pairings[pairingCode];
+      const previous = pending ? model.activityBindingForSession(pending.liveSessionId) : undefined;
       const binding = model.consumeActivityPairing(pairingCode, instanceId);
       if (!binding) return json(safeError('CODE_INVALID', 'Pairing scaduto, già usato o non valido.'), 400);
       await this.persist(model);
-      return json({ bound: true });
+      return json({
+        bound: true,
+        liveSessionId: binding.liveSessionId,
+        ...(previous && previous.instanceId !== instanceId ? { previousInstanceId: previous.instanceId } : {})
+      });
     }
 
     if (url.pathname === '/remove') {
@@ -482,6 +585,39 @@ export class LiveSession {
       const credential = bearer(request);
       if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale host mancante.'), 401);
       return resultResponse(await model.authorizeActivityPairing(credential));
+    }
+
+    if (request.method === 'POST' && url.pathname === '/activity-instance-replaced') {
+      const body = await requestJson(request) as { instanceId?: unknown } | undefined;
+      if (typeof body?.instanceId !== 'string') return json(safeError('PAYLOAD_INVALID', 'Activity instance non valida.'), 400);
+      const revokedParticipantIds = model.revokeActivityInstance(body.instanceId);
+      await this.persist(model);
+      for (const participantId of revokedParticipantIds) {
+        for (const socket of this.state.getWebSockets(`participant:${participantId}`)) {
+          try { socket.close(4004, 'activity_replaced'); } catch { /* already closed */ }
+        }
+      }
+      if (revokedParticipantIds.length) this.hostSnapshot(model);
+      return json({ revoked: revokedParticipantIds.length });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/activity-join') {
+      const body = await requestJson(request) as { instanceId?: unknown; discordUserId?: unknown; displayName?: unknown } | undefined;
+      if (!body || typeof body.instanceId !== 'string' || typeof body.discordUserId !== 'string' || !/^\d{5,32}$/u.test(body.discordUserId) || typeof body.displayName !== 'string' || !body.displayName.trim() || body.displayName.length > 80) {
+        return json(safeError('PAYLOAD_INVALID', 'Identità Discord verificata non valida.'), 400);
+      }
+      const result = await model.joinDiscordParticipant(body.instanceId, body.discordUserId, body.displayName);
+      await this.persist(model);
+      if (result.ok) this.hostSnapshot(model);
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/activity-resume') {
+      const input = validateActivityResumeRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Resume Activity non valido.'), 400);
+      const result = await model.resumeDiscordParticipant(input.instanceId, input.participantId, input.activityCredential);
+      await this.persist(model);
+      return resultResponse(result);
     }
 
     if (request.method === 'POST' && url.pathname === '/join') {
@@ -823,7 +959,10 @@ export default {
     }
 
     if (request.method === 'GET' && url.pathname === '/api/activity/config') {
-      return json({ ...(env.DISCORD_CLIENT_ID ? { clientId: env.DISCORD_CLIENT_ID } : {}) });
+      return json({
+        ...(env.DISCORD_CLIENT_ID ? { clientId: env.DISCORD_CLIENT_ID } : {}),
+        identityReady: discordIdentityConfigured(env)
+      });
     }
 
     const activityInstanceMatch = url.pathname.match(/^\/api\/activity\/instances\/([^/]+)$/u);
@@ -836,7 +975,74 @@ export default {
     if (request.method === 'POST' && url.pathname === '/api/activity/pair') {
       const input = validateActivityPairRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Pairing Activity non valido.'), 400);
-      return directoryCall(env, '/pairing-consume', input);
+      if (discordIdentityConfigured(env) && !await verifyDiscordActivityInstance(env, input.instanceId)) {
+        return json(safeError('AUTH_FAILED', 'Discord non conferma questa Activity instance.'), 401);
+      }
+      const paired = await directoryCall(env, '/pairing-consume', input);
+      if (!paired.ok) return paired;
+      const value = await paired.json() as { bound?: unknown; liveSessionId?: unknown; previousInstanceId?: unknown };
+      if (value.bound !== true || typeof value.liveSessionId !== 'string') return json(safeError('INTERNAL_ERROR', 'Binding Activity non valido.'), 500);
+      if (typeof value.previousInstanceId === 'string') {
+        await forwardSession(env, value.liveSessionId, '/activity-instance-replaced', new Request(request.url, { method: 'POST' }), { instanceId: value.previousInstanceId });
+      }
+      return json({ bound: true });
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/activity/join') {
+      const input = validateActivityJoinRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Ingresso Activity non valido.'), 400);
+      if (!discordIdentityConfigured(env)) return json(safeError('INTERNAL_ERROR', 'Identity Discord non configurata sul relay.'), 500);
+
+      const resolved = await directoryStub(env).fetch(`https://directory.internal/activity-resolve?instanceId=${encodeURIComponent(input.instanceId)}`);
+      if (!resolved.ok) return json(safeError('SESSION_NOT_FOUND', 'Questa Activity non è associata a una sessione.'), 404);
+      const { liveSessionId } = await resolved.json() as { liveSessionId?: unknown };
+      if (typeof liveSessionId !== 'string') return json(safeError('INTERNAL_ERROR', 'Binding Activity non valido.'), 500);
+
+      const verified = await verifyDiscordActivityUser(env, input.code, input.instanceId);
+      if (!verified) return json(safeError('AUTH_FAILED', 'Discord non ha confermato identità e appartenenza a questa Activity.'), 401);
+
+      const joinedResponse = await forwardSession(env, liveSessionId, '/activity-join', new Request(request.url, { method: 'POST' }), {
+        instanceId: input.instanceId,
+        discordUserId: verified.userId,
+        displayName: verified.displayName
+      });
+      if (!joinedResponse.ok) return joinedResponse;
+      const joined = await joinedResponse.json() as { participantId?: unknown; activityCredential?: unknown; ticket?: unknown; displayName?: unknown };
+      if (typeof joined.participantId !== 'string' || typeof joined.activityCredential !== 'string' || typeof joined.ticket !== 'string' || typeof joined.displayName !== 'string') {
+        return json(safeError('INTERNAL_ERROR', 'Sessione Activity non valida.'), 500);
+      }
+      const response: ActivityJoinResponse = {
+        liveSessionId,
+        participantId: joined.participantId,
+        activityCredential: joined.activityCredential,
+        ticket: joined.ticket,
+        accessToken: verified.accessToken,
+        displayName: joined.displayName
+      };
+      return json(response);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/api/activity/resume') {
+      const input = validateActivityResumeRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Resume Activity non valido.'), 400);
+      const resolved = await directoryStub(env).fetch(`https://directory.internal/activity-resolve?instanceId=${encodeURIComponent(input.instanceId)}`);
+      if (!resolved.ok) return json(safeError('SESSION_NOT_FOUND', 'Questa Activity non è più associata a una sessione.'), 404);
+      const { liveSessionId } = await resolved.json() as { liveSessionId?: unknown };
+      if (typeof liveSessionId !== 'string') return json(safeError('INTERNAL_ERROR', 'Binding Activity non valido.'), 500);
+      const resumedResponse = await forwardSession(env, liveSessionId, '/activity-resume', new Request(request.url, { method: 'POST' }), input);
+      if (!resumedResponse.ok) return resumedResponse;
+      const resumed = await resumedResponse.json() as { ticket?: unknown; displayName?: unknown; discordUserId?: unknown };
+      if (typeof resumed.ticket !== 'string' || typeof resumed.displayName !== 'string' || typeof resumed.discordUserId !== 'string') return json(safeError('INTERNAL_ERROR', 'Resume Activity non valido.'), 500);
+      if (!discordIdentityConfigured(env) || !await verifyDiscordInstanceMembership(env, input.instanceId, resumed.discordUserId)) {
+        return json(safeError('AUTH_FAILED', 'Discord non conferma più la presenza in questa Activity.'), 401);
+      }
+      const response: ActivityResumeResponse = {
+        liveSessionId,
+        participantId: input.participantId,
+        ticket: resumed.ticket,
+        displayName: resumed.displayName
+      };
+      return json(response);
     }
 
     if (request.method === 'POST' && url.pathname === '/api/join') {
