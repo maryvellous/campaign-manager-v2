@@ -190,6 +190,10 @@ export class LiveSessionModel {
     };
   }
 
+  async authorizeAssetUpload(hostCredential: string): Promise<SessionResult<true>> {
+    return this.authorizeHostMutation(hostCredential);
+  }
+
   async hostTicket(hostCredential: string, now = Date.now()): Promise<SessionResult<TicketResponse>> {
     if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
     if (!(await this.authenticateHost(hostCredential))) return fail('AUTH_FAILED', 'Credenziale host non valida.');
