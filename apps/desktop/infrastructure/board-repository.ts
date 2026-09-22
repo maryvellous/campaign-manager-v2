@@ -235,6 +235,14 @@ export class BoardRepository {
   }
 
   async remapNoteSources(oldPath: string, newPath: string): Promise<string[]> {
+    const boardsDirectory = path.join(this.root, 'Boards');
+    try {
+      const stat = await fs.lstat(boardsDirectory);
+      if (!stat.isDirectory() || stat.isSymbolicLink()) throw new CampaignError('outside_campaign_root', 'La cartella Boards non è sicura.');
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code === 'ENOENT') return [];
+      throw ioError(error);
+    }
     const changed: string[] = [];
     for (const board of await this.discover()) {
       const snapshot = await this.readBoard(board.path);
