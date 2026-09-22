@@ -1,4 +1,4 @@
-import { useCallback, useEffect, useMemo, useRef, useState, type PointerEvent as ReactPointerEvent } from 'react';
+import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import type { BoardDocument, BoardElement, BoardImageElement, BoardRecoveryDraft, BoardSnapshot, BoardTextElement } from '../application/board-types';
 
 type Tool = 'select' | 'hand' | 'text' | 'image';
@@ -315,7 +315,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
   };
 
-  const zoom = (event: React.WheelEvent<HTMLDivElement>) => {
+  const zoom = (event: ReactWheelEvent<HTMLDivElement>) => {
     const current = sessionRef.current; if (!current) return;
     event.preventDefault();
     const camera = current.snapshot.document.camera;
