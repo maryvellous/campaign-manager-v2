@@ -73,6 +73,13 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       : { action: 'live:revealElement', path: selectedPath, elementId: element.elementId }, true);
   };
 
+  const setTokenController = async (tokenId: string, participantId: string) => {
+    if (!selectedIsActive) return;
+    await run(`controller:${tokenId}`, participantId
+      ? { action: 'live:assignToken', tokenId, participantId }
+      : { action: 'live:clearToken', tokenId });
+  };
+
   return <section className="live-view">
     <header className="live-view-header">
       <div><span className="eyebrow">V0.3 · LIVE WEB</span><h1>Sessione live</h1><p>Fai entrare i giocatori dal browser e condividi solo ciò che decidi tu.</p></div>
@@ -103,7 +110,7 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
         <div className="live-card-heading"><div><span className="eyebrow">PARTECIPANTI</span><h2>{live.participants.length} al tavolo</h2></div><button onClick={() => void command({ action: 'live:refresh' })}>Aggiorna</button></div>
         {live.participants.length ? <div className="participant-list">{live.participants.map(participant => <div className="participant-row" key={participant.participantId}>
           <span className={`presence-dot ${participant.connected ? 'online' : ''}`} aria-label={participant.connected ? 'Connesso' : 'Disconnesso'} />
-          <div><strong>{participant.displayName}</strong><small>{participant.connected ? 'Connesso' : 'Disconnesso'}</small></div>
+          <div><strong>{participant.displayName}</strong><small>{participant.connected ? 'Connesso' : 'Disconnesso'} · {participant.tokenIds.length ? `${participant.tokenIds.length} token assegnat${participant.tokenIds.length === 1 ? 'o' : 'i'}` : 'nessun token'}</small></div>
           <button onClick={() => void command({ action: 'live:removeParticipant', participantId: participant.participantId })}>Rimuovi</button>
         </div>)}</div> : <p className="live-empty-list">Nessun giocatore è ancora entrato.</p>}
       </section>
@@ -111,7 +118,7 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       <section className="live-card live-scene-card">
         <div className="live-card-heading">
           <div><span className="eyebrow">SCENA</span><h2>{live.presentation === 'board' ? live.liveBoards.find(board => board.boardId === live.activeBoardId)?.title ?? 'Board live' : 'In attesa'}</h2></div>
-          {live.presentation === 'board' && <button onClick={() => void run('unpublish', { action: 'live:unpublish' })}>Smetti di condividere</button>}
+          {live.presentation === 'board' && <div className="actions"><button onClick={() => void run('focus', { action: 'live:focusPlayers' })}>Porta tutti qui</button><button onClick={() => void run('unpublish', { action: 'live:unpublish' })}>Smetti di condividere</button></div>}
         </div>
         {!boards.length ? <p className="live-empty-list">Crea almeno una board locale per condividerla.</p> : <>
           <label className="live-board-picker"><span>Board preparata</span><select value={selectedPath} onChange={event => setSelectedPath(event.target.value)}>{boards.map(board => <option value={board.path} key={board.boardId}>{board.title}{board.boardId === live.activeBoardId ? ' · attiva' : live.liveBoards.some(item => item.boardId === board.boardId) ? ' · già usata' : ''}</option>)}</select></label>
@@ -127,9 +134,10 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
         <div className="live-card-heading"><div><span className="eyebrow">VISIBILITÀ LIVE</span><h2>{elementList.elements.length} elementi preparati</h2></div><span className="live-seq">seq {live.stateSeq}</span></div>
         <div className="live-element-list">{elementList.elements.map(element => {
           const visible = activeIds.has(element.elementId);
-          return <div className="live-element-row" key={element.elementId}>
+          const controller = element.type === 'token' ? live.participants.find(participant => participant.tokenIds.includes(element.elementId)) : undefined;
+          return <div className={`live-element-row ${element.type === 'token' ? 'token-row' : ''}`} key={element.elementId}>
             <span className={`live-element-dot ${visible ? 'visible' : ''}`} />
-            <div><strong>{element.label || element.type}</strong><small>{element.type}{element.visibleByDefault ? ' · pubblico di default' : ' · privato di default'}</small></div>
+            <div className="live-element-main"><strong>{element.label || element.type}</strong><small>{element.type}{element.visibleByDefault ? ' · pubblico di default' : ' · privato di default'}</small>{element.type === 'token' && <label className="token-controller"><span>Controller</span><select aria-label={`Controller di ${element.label || 'token'}`} disabled={!visible || busyAction === `controller:${element.elementId}`} value={controller?.participantId ?? ''} onChange={event => void setTokenController(element.elementId, event.target.value)}><option value="">Solo master</option>{live.participants.map(participant => <option key={participant.participantId} value={participant.participantId}>{participant.displayName}{participant.connected ? '' : ' · offline'}</option>)}</select></label>}</div>
             <button disabled={busyAction === `element:${element.elementId}`} onClick={() => void toggleElement(element)}>{visible ? 'Nascondi' : 'Rivela'}</button>
           </div>;
         })}</div>
