@@ -496,6 +496,22 @@ export class LiveSessionModel {
     return ok(this.summary());
   }
 
+  revokeActivityInstance(instanceId: string): string[] {
+    const participantIds: string[] = [];
+    for (const participant of this.record.participants) {
+      if (participant.activityInstanceId !== instanceId) continue;
+      participantIds.push(participant.participantId);
+      participant.connected = false;
+      participant.activityInstanceId = undefined;
+      participant.activityCredentialHash = undefined;
+    }
+    if (!participantIds.length) return [];
+    const revoked = new Set(participantIds);
+    this.record.tickets = this.record.tickets.filter(ticket => !ticket.participantId || !revoked.has(ticket.participantId));
+    this.bump();
+    return participantIds;
+  }
+
   async assignTokenController(hostCredential: string, boardId: string, tokenId: string, participantId: string): Promise<SessionResult<SessionSummary>> {
     const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
     if (this.record.activeBoardId !== boardId) return fail('BOARD_NOT_ACTIVE', 'La board non è la scena attiva.');
