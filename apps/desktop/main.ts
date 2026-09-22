@@ -28,6 +28,32 @@ async function exportText(content: string) {
   const result = await dialog.showSaveDialog(window, { title: 'Esporta bozza', defaultPath: 'Bozza.md', filters: [{ name: 'Markdown', extensions: ['md'] }] });
   if (!result.canceled && result.filePath) await fs.writeFile(result.filePath, content, 'utf8');
 }
+
+async function finishLiveSession(savePositions: boolean) {
+  let applied: { updated: Array<{ path: string; changedTokens: number }>; changedTokens: number } | undefined;
+  if (savePositions) {
+    const finalPositions = await liveService.finalTokenPositions();
+    if (!finalPositions.ok) throw new CampaignError('io_error', finalPositions.error.message);
+    boardService.bind(service.state.campaign);
+    applied = await boardService.applyLiveTokenPositions(finalPositions.value);
+  }
+  const ended = await liveService.end();
+  if (!ended.ok) throw new CampaignError('io_error', ended.error.message);
+  return { ended: ended.value, applied };
+}
+
+async function chooseFinalTokenPositions(): Promise<boolean | undefined> {
+  const result = await dialog.showMessageBox(window, {
+    type: 'question',
+    message: 'Mantenere le posizioni finali dei token?',
+    detail: 'Puoi copiare nelle board preparate soltanto le posizioni finali dei token. Reveal, ping, camera, partecipanti e permessi live non vengono salvati.',
+    buttons: ['Annulla', 'Lascia la board com’era', 'Salva sulla board'],
+    defaultId: 1,
+    cancelId: 0
+  });
+  if (result.response === 0) return undefined;
+  return result.response === 2;
+}
 if (!app.requestSingleInstanceLock()) app.quit();
 else {
   app.on('second-instance', () => { if (window) { if (window.isMinimized()) window.restore(); window.focus(); } });
@@ -143,6 +169,11 @@ else {
               const result = await liveService.focusPlayers(liveService.state.activeBoardId);
               return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
             }
+            case 'live:end': {
+              if (typeof command.savePositions !== 'boolean') throw new CampaignError('invalid_path', 'Scelta posizioni finali non valida.');
+              const result = await finishLiveSession(command.savePositions);
+              return { ok: true, data: result };
+            }
             case 'boards:list': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.list() };
             case 'board:create': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.create(text(command.title, 250)) };
             case 'board:open': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.open(text(command.path, 2000)) };
@@ -158,10 +189,31 @@ else {
             case 'createLinkedNote': await service.createLinkedNote(text(command.target, 2000)); break;
             case 'close': {
               try {
-                if (await service.prepareLeave(false)) { allowClose = true; window.close(); break; }
-                const protectedBuffer = await service.prepareLeave(true).catch(() => false);
-                const result = await dialog.showMessageBox(window, { type: 'warning', message: 'Ci sono modifiche non salvate.', detail: protectedBuffer ? 'Puoi chiudere conservando la bozza di recupero.' : 'Non è stato possibile proteggere la bozza. Esporta o scarta esplicitamente le modifiche prima di chiudere.', buttons: protectedBuffer ? ['Resta', 'Chiudi conservando bozza'] : ['Resta'], defaultId: 0, cancelId: 0 });
-                if (protectedBuffer && result.response === 1) { allowClose = true; window.close(); }
+                let canLeave = await service.prepareLeave(false);
+                if (!canLeave) {
+                  const protectedBuffer = await service.prepareLeave(true).catch(() => false);
+                  const result = await dialog.showMessageBox(window, { type: 'warning', message: 'Ci sono modifiche non salvate.', detail: protectedBuffer ? 'Puoi chiudere conservando la bozza di recupero.' : 'Non è stato possibile proteggere la bozza. Esporta o scarta esplicitamente le modifiche prima di chiudere.', buttons: protectedBuffer ? ['Resta', 'Chiudi conservando bozza'] : ['Resta'], defaultId: 0, cancelId: 0 });
+                  canLeave = protectedBuffer && result.response === 1;
+                }
+                if (!canLeave) break;
+
+                if (liveService.state.liveSessionId) {
+                  const liveChoice = await dialog.showMessageBox(window, {
+                    type: 'warning',
+                    message: 'C’è una sessione live attiva.',
+                    detail: 'Campaign Manager non mantiene la sessione in background dopo la chiusura volontaria.',
+                    buttons: ['Annulla', 'Termina sessione e chiudi'],
+                    defaultId: 0,
+                    cancelId: 0
+                  });
+                  if (liveChoice.response !== 1) break;
+                  const savePositions = await chooseFinalTokenPositions();
+                  if (savePositions === undefined) break;
+                  await finishLiveSession(savePositions);
+                }
+
+                allowClose = true;
+                window.close();
               } finally { closeRequested = false; }
               break;
             }
@@ -210,7 +262,9 @@ else {
               const result = await dialog.showMessageBox(window, { type: 'warning', message: entry.kind === 'folder' ? 'Spostare la cartella nel cestino?' : 'Spostare la nota nel cestino?', detail: entry.kind === 'folder' ? `${id}\nLa cartella e tutti i suoi contenuti verranno spostati nel cestino di Windows.` : id, buttons: ['Annulla', 'Sposta nel cestino'], defaultId: 0, cancelId: 0 });
               if (result.response === 1) await service.trashResource(id, target => shell.trashItem(target), true); break;
             }
-            case 'closeCampaign': await service.closeCampaign(command.preserve === true); break;
+            case 'closeCampaign':
+              if (liveService.state.liveSessionId) throw new CampaignError('conflict', 'Termina la sessione live prima di chiudere la campagna.');
+              await service.closeCampaign(command.preserve === true); break;
             case 'revealRoot': {
               if (!service.state.campaign) throw new CampaignError('not_found', 'Nessuna campagna aperta.');
               const error = await shell.openPath(service.state.campaign.root);
