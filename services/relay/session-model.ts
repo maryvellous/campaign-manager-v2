@@ -12,6 +12,8 @@ import {
   type SessionLifecycle,
   type SessionSummary,
   type TicketResponse,
+  type TokenMovePayload,
+  type TokenPositionEvent,
   type WaitingSnapshot
 } from '../../packages/protocol/src/index';
 
@@ -61,6 +63,7 @@ export interface StoredLiveBoard {
   boardId: string;
   title: string;
   elements: LiveBoardElement[];
+  tokenControllers: Record<string, string>;
 }
 
 export interface LiveSessionRecord {
@@ -112,7 +115,9 @@ export class LiveSessionModel {
   static from(record: LiveSessionRecord): LiveSessionModel {
     return new LiveSessionModel({
       ...structuredClone(record),
-      boards: Array.isArray(record.boards) ? structuredClone(record.boards) : [],
+      boards: Array.isArray(record.boards)
+        ? structuredClone(record.boards).map(board => ({ ...board, tokenControllers: board.tokenControllers ?? {} }))
+        : [],
       ...(record.activeBoardId ? { activeBoardId: record.activeBoardId } : {})
     });
   }
@@ -143,7 +148,12 @@ export class LiveSessionModel {
       joinCode: this.record.joinCode,
       lifecycle: this.record.lifecycle,
       acceptingJoins: this.record.acceptingJoins,
-      participants: this.record.participants.map(participant => ({ participantId: participant.participantId, displayName: participant.displayName, connected: participant.connected, tokenIds: [...participant.tokenIds] })),
+      participants: this.record.participants.map(participant => ({
+        participantId: participant.participantId,
+        displayName: participant.displayName,
+        connected: participant.connected,
+        tokenIds: this.controlledVisibleTokenIds(participant.participantId)
+      })),
       stateSeq: this.record.stateSeq,
       presentation: this.record.activeBoardId ? 'board' : 'waiting',
       ...(this.record.activeBoardId ? { activeBoardId: this.record.activeBoardId } : {}),
@@ -175,14 +185,49 @@ export class LiveSessionModel {
     return this.record.boards.find(board => board.boardId === boardId);
   }
 
-  boardSnapshot(boardId = this.record.activeBoardId): LiveBoardSnapshot | undefined {
-    if (!boardId) return undefined;
-    const board = this.board(boardId);
-    return board ? { boardId: board.boardId, title: board.title, elements: structuredClone(board.elements), stateSeq: this.record.stateSeq } : undefined;
+  private visibleToken(board: StoredLiveBoard, tokenId: string): Extract<LiveBoardElement, { type: 'token' }> | undefined {
+    const token = board.elements.find(element => element.elementId === tokenId);
+    return token?.type === 'token' ? token : undefined;
   }
 
-  playerSnapshot(): WaitingSnapshot | PlayerBoardState {
-    const board = this.boardSnapshot();
+  private controlledVisibleTokenIds(participantId: string): string[] {
+    return [...new Set(this.record.boards.flatMap(board =>
+      Object.entries(board.tokenControllers)
+        .filter(([tokenId, controller]) => controller === participantId && !!this.visibleToken(board, tokenId))
+        .map(([tokenId]) => tokenId)
+    ))];
+  }
+
+  controllerForToken(boardId: string, tokenId: string): string | undefined {
+    return this.board(boardId)?.tokenControllers[tokenId];
+  }
+
+  tokenPosition(boardId: string, tokenId: string): { x: number; y: number } | undefined {
+    const board = this.board(boardId); if (!board) return undefined;
+    const token = this.visibleToken(board, tokenId);
+    return token ? { x: token.x, y: token.y } : undefined;
+  }
+
+  boardSnapshot(boardId = this.record.activeBoardId, participantId?: string): LiveBoardSnapshot | undefined {
+    if (!boardId) return undefined;
+    const board = this.board(boardId);
+    if (!board) return undefined;
+    const controlledTokenIds = participantId
+      ? Object.entries(board.tokenControllers)
+          .filter(([tokenId, controller]) => controller === participantId && !!this.visibleToken(board, tokenId))
+          .map(([tokenId]) => tokenId)
+      : undefined;
+    return {
+      boardId: board.boardId,
+      title: board.title,
+      elements: structuredClone(board.elements),
+      stateSeq: this.record.stateSeq,
+      ...(controlledTokenIds ? { controlledTokenIds } : {})
+    };
+  }
+
+  playerSnapshot(participantId?: string): WaitingSnapshot | PlayerBoardState {
+    const board = this.boardSnapshot(undefined, participantId);
     if (!board) {
       return {
         lifecycle: this.record.lifecycle,
@@ -304,15 +349,91 @@ export class LiveSessionModel {
     if (index < 0) return fail('SESSION_NOT_FOUND', 'Partecipante non trovato.');
     this.record.participants.splice(index, 1);
     this.record.tickets = this.record.tickets.filter(ticket => ticket.participantId !== participantId);
+    for (const board of this.record.boards) {
+      for (const [tokenId, controller] of Object.entries(board.tokenControllers)) if (controller === participantId) delete board.tokenControllers[tokenId];
+    }
     this.bump();
     return ok(this.summary());
+  }
+
+  async assignTokenController(hostCredential: string, boardId: string, tokenId: string, participantId: string): Promise<SessionResult<SessionSummary>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    if (this.record.activeBoardId !== boardId) return fail('BOARD_NOT_ACTIVE', 'La board non è la scena attiva.');
+    const board = this.board(boardId); if (!board) return fail('SESSION_NOT_FOUND', 'Board live non trovata.');
+    if (!this.visibleToken(board, tokenId)) return fail('TOKEN_NOT_CONTROLLABLE', 'Il token non è pubblicato nella scena attiva.');
+    if (!this.record.participants.some(participant => participant.participantId === participantId)) return fail('SESSION_NOT_FOUND', 'Partecipante non trovato.');
+    if (board.tokenControllers[tokenId] !== participantId) {
+      board.tokenControllers[tokenId] = participantId;
+      this.bump();
+    }
+    return ok(this.summary());
+  }
+
+  async clearTokenController(hostCredential: string, boardId: string, tokenId: string): Promise<SessionResult<SessionSummary>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    const board = this.board(boardId); if (!board) return fail('SESSION_NOT_FOUND', 'Board live non trovata.');
+    if (board.tokenControllers[tokenId]) {
+      delete board.tokenControllers[tokenId];
+      this.bump();
+    }
+    return ok(this.summary());
+  }
+
+  private authorizePlayerBoardMutation(participantId: string, boardId: string): SessionResult<StoredLiveBoard> {
+    if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
+    if (this.record.lifecycle !== 'open' || !this.record.hostConnected) return fail('HOST_OFFLINE', 'Il master non è connesso alla sessione.');
+    if (!this.record.participants.some(participant => participant.participantId === participantId)) return fail('AUTH_FAILED', 'Partecipante non valido.');
+    if (this.record.activeBoardId !== boardId) return fail('BOARD_NOT_ACTIVE', 'La board non è la scena attiva.');
+    const board = this.board(boardId);
+    return board ? ok(board) : fail('SESSION_NOT_FOUND', 'Board live non trovata.');
+  }
+
+  authorizePlayerTokenPreview(participantId: string, move: TokenMovePayload): SessionResult<TokenMovePayload> {
+    const authorized = this.authorizePlayerBoardMutation(participantId, move.boardId); if (!authorized.ok) return authorized;
+    const board = authorized.value;
+    if (!this.visibleToken(board, move.tokenId) || board.tokenControllers[move.tokenId] !== participantId) return fail('TOKEN_NOT_CONTROLLABLE', 'Questo token non è controllabile dal partecipante.');
+    return ok({ ...move });
+  }
+
+  commitPlayerTokenMove(participantId: string, move: TokenMovePayload): SessionResult<TokenPositionEvent> {
+    const authorized = this.authorizePlayerBoardMutation(participantId, move.boardId); if (!authorized.ok) return authorized;
+    const board = authorized.value;
+    const token = this.visibleToken(board, move.tokenId);
+    if (!token || board.tokenControllers[move.tokenId] !== participantId) return fail('TOKEN_NOT_CONTROLLABLE', 'Questo token non è controllabile dal partecipante.');
+    if (token.x !== move.x || token.y !== move.y) {
+      token.x = move.x; token.y = move.y; this.bump();
+    }
+    return ok({ ...move, stateSeq: this.record.stateSeq });
+  }
+
+  async moveTokenAsHost(hostCredential: string, move: TokenMovePayload): Promise<SessionResult<TokenPositionEvent>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    if (this.record.activeBoardId !== move.boardId) return fail('BOARD_NOT_ACTIVE', 'La board non è la scena attiva.');
+    const board = this.board(move.boardId); if (!board) return fail('SESSION_NOT_FOUND', 'Board live non trovata.');
+    const token = this.visibleToken(board, move.tokenId);
+    if (!token) return fail('TOKEN_NOT_CONTROLLABLE', 'Il token non è pubblicato nella scena attiva.');
+    if (token.x !== move.x || token.y !== move.y) {
+      token.x = move.x; token.y = move.y; this.bump();
+    }
+    return ok({ ...move, stateSeq: this.record.stateSeq });
+  }
+
+  authorizePing(participantId: string, boardId: string): SessionResult<true> {
+    const authorized = this.authorizePlayerBoardMutation(participantId, boardId);
+    return authorized.ok ? ok(true) : authorized;
+  }
+
+  async authorizeCameraFocus(hostCredential: string, boardId: string): Promise<SessionResult<true>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    if (this.record.activeBoardId !== boardId) return fail('BOARD_NOT_ACTIVE', 'La board non è la scena attiva.');
+    return this.board(boardId) ? ok(true) : fail('SESSION_NOT_FOUND', 'Board live non trovata.');
   }
 
   async publishBoard(hostCredential: string, payload: LiveBoardPayload): Promise<SessionResult<LiveBoardSnapshot>> {
     const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
     const existing = this.board(payload.boardId);
     if (!existing) {
-      this.record.boards.push(structuredClone(payload));
+      this.record.boards.push({ ...structuredClone(payload), tokenControllers: {} });
       this.record.activeBoardId = payload.boardId;
       this.bump();
     } else if (this.record.activeBoardId !== payload.boardId) {
@@ -325,8 +446,8 @@ export class LiveSessionModel {
   async resetBoard(hostCredential: string, payload: LiveBoardPayload): Promise<SessionResult<LiveBoardSnapshot>> {
     const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
     const index = this.record.boards.findIndex(board => board.boardId === payload.boardId);
-    if (index >= 0) this.record.boards[index] = structuredClone(payload);
-    else this.record.boards.push(structuredClone(payload));
+    if (index >= 0) this.record.boards[index] = { ...structuredClone(payload), tokenControllers: {} };
+    else this.record.boards.push({ ...structuredClone(payload), tokenControllers: {} });
     this.record.activeBoardId = payload.boardId;
     this.bump();
     return ok(this.boardSnapshot(payload.boardId)!);

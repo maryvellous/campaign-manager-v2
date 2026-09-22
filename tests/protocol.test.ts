@@ -1,6 +1,6 @@
 import test from 'node:test';
 import assert from 'node:assert/strict';
-import { envelope, PROTOCOL_VERSION, safeError, validateElementHiddenEvent, validateElementRevealedEvent, validateEnvelope, validateJoinPolicy, validateJoinRequest, validateLiveBoardSnapshot, validateResumeRequest } from '../packages/protocol/src/index';
+import { envelope, PROTOCOL_VERSION, safeError, validateCameraFocusPayload, validateElementHiddenEvent, validateElementRevealedEvent, validateEnvelope, validateJoinPolicy, validateJoinRequest, validateLiveBoardSnapshot, validatePingPayload, validateResumeRequest, validateTokenAssignRequest, validateTokenClearRequest, validateTokenMovePayload } from '../packages/protocol/src/index';
 
 test('join request accepts readable code and duplicate-safe display names', () => {
   assert.deepEqual(validateJoinRequest({ joinCode: 'ABCD-EFGH', displayName: 'Mary' }), { joinCode: 'ABCD-EFGH', displayName: 'Mary' });
@@ -45,4 +45,39 @@ test('board snapshot and incremental events require validated sequence and paylo
 
   assert.deepEqual(validateElementHiddenEvent({ boardId, elementIds: ['element_1'], stateSeq: 5 }), { boardId, elementIds: ['element_1'], stateSeq: 5 });
   assert.equal(validateElementHiddenEvent({ boardId, elementIds: ['element_1', 'element_1'], stateSeq: 5 }), undefined);
+});
+
+
+test('mutating envelopes preserve a safe requestId', () => {
+  const message = envelope('token.move.commit', { boardId: 'board_1' }, 'req_abc-123');
+  assert.deepEqual(validateEnvelope(message), message);
+  assert.equal(validateEnvelope({ ...message, requestId: '../bad' }), undefined);
+});
+
+test('token control move ping and focus payloads are narrowly validated', () => {
+  assert.deepEqual(validateTokenAssignRequest({ boardId: 'board_1', tokenId: 'token_1', participantId: 'participant_1' }), { boardId: 'board_1', tokenId: 'token_1', participantId: 'participant_1' });
+  assert.deepEqual(validateTokenClearRequest({ boardId: 'board_1', tokenId: 'token_1' }), { boardId: 'board_1', tokenId: 'token_1' });
+  assert.deepEqual(validateTokenMovePayload({ boardId: 'board_1', tokenId: 'token_1', x: -12.5, y: 99 }), { boardId: 'board_1', tokenId: 'token_1', x: -12.5, y: 99 });
+  assert.equal(validateTokenMovePayload({ boardId: 'board_1', tokenId: 'token_1', x: Infinity, y: 0 }), undefined);
+  assert.deepEqual(validatePingPayload({ boardId: 'board_1', x: 1, y: 2 }), { boardId: 'board_1', x: 1, y: 2 });
+  assert.deepEqual(validateCameraFocusPayload({ boardId: 'board_1', mode: 'fit' }), { boardId: 'board_1', mode: 'fit' });
+  assert.equal(validateCameraFocusPayload({ boardId: 'board_1', mode: 'free' }), undefined);
+});
+
+test('player board snapshot can expose only the current player controllable token ids', () => {
+  const snapshot = validateLiveBoardSnapshot({
+    boardId: 'board_1',
+    title: 'Arena',
+    stateSeq: 7,
+    controlledTokenIds: ['token_1', 'token_1'],
+    elements: [{ elementId: 'token_1', type: 'token', name: 'Hero', x: 0, y: 0, width: 80, height: 80, z: 1 }]
+  });
+  assert.deepEqual(snapshot?.controlledTokenIds, ['token_1']);
+  assert.equal(validateLiveBoardSnapshot({
+    boardId: 'board_1',
+    title: 'Arena',
+    stateSeq: 7,
+    controlledTokenIds: ['../bad'],
+    elements: []
+  }), undefined);
 });

@@ -58,7 +58,18 @@ export interface LiveBoardPayload {
 
 export interface LiveBoardSnapshot extends LiveBoardPayload {
   stateSeq: number;
+  controlledTokenIds?: string[];
 }
+
+export interface TokenControllerRequest { boardId: string; tokenId: string; participantId: string }
+export interface TokenControllerClearRequest { boardId: string; tokenId: string }
+export interface TokenMovePayload { boardId: string; tokenId: string; x: number; y: number }
+export interface TokenPositionEvent extends TokenMovePayload { stateSeq: number }
+export type TokenPreviewEvent = TokenMovePayload;
+export interface TokenControllerEvent { boardId: string; tokenId: string; controlled: boolean; stateSeq: number }
+export interface PingPayload { boardId: string; x: number; y: number }
+export interface PingEvent extends PingPayload { participantId: string }
+export interface CameraFocusPayload { boardId: string; mode: 'fit' }
 
 export interface ElementRevealedEvent {
   boardId: string;
@@ -104,6 +115,7 @@ export interface ProtocolEnvelope<T = unknown> {
   protocolVersion: 1;
   type: string;
   payload: T;
+  requestId?: string;
 }
 
 export interface LiveApiError {
@@ -146,6 +158,8 @@ export interface PublishBoardRequest { board: LiveBoardPayload }
 export interface RevealElementRequest { boardId: string; element: LiveBoardElement }
 export interface HideElementRequest { boardId: string; elementId: string }
 export interface BoardIdRequest { boardId: string }
+export type TokenAssignRequest = TokenControllerRequest;
+export type TokenClearRequest = TokenControllerClearRequest;
 
 export interface SessionSummary {
   liveSessionId: string;
@@ -230,7 +244,9 @@ export function validateLiveBoardPayload(value: unknown): LiveBoardPayload | und
 export function validateLiveBoardSnapshot(value: unknown): LiveBoardSnapshot | undefined {
   if (!object(value) || !Number.isSafeInteger(value.stateSeq) || (value.stateSeq as number) < 0) return undefined;
   const board = validateLiveBoardPayload(value);
-  return board ? { ...board, stateSeq: value.stateSeq as number } : undefined;
+  if (!board) return undefined;
+  if (value.controlledTokenIds !== undefined && (!Array.isArray(value.controlledTokenIds) || !value.controlledTokenIds.every(opaqueId))) return undefined;
+  return { ...board, stateSeq: value.stateSeq as number, ...(Array.isArray(value.controlledTokenIds) ? { controlledTokenIds: [...new Set(value.controlledTokenIds as string[])] } : {}) };
 }
 
 export function validateElementRevealedEvent(value: unknown): ElementRevealedEvent | undefined {
@@ -286,13 +302,39 @@ export function validateBoardIdRequest(value: unknown): BoardIdRequest | undefin
   return { boardId: value.boardId };
 }
 
-export function validateEnvelope(value: unknown): ProtocolEnvelope | undefined {
-  if (!object(value) || value.protocolVersion !== PROTOCOL_VERSION || typeof value.type !== 'string' || !value.type || !('payload' in value)) return undefined;
-  return { protocolVersion: PROTOCOL_VERSION, type: value.type, payload: value.payload };
+export function validateTokenAssignRequest(value: unknown): TokenAssignRequest | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !opaqueId(value.tokenId) || !opaqueId(value.participantId)) return undefined;
+  return { boardId: value.boardId, tokenId: value.tokenId, participantId: value.participantId };
 }
 
-export function envelope<T>(type: string, payload: T): ProtocolEnvelope<T> {
-  return { protocolVersion: PROTOCOL_VERSION, type, payload };
+export function validateTokenClearRequest(value: unknown): TokenClearRequest | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !opaqueId(value.tokenId)) return undefined;
+  return { boardId: value.boardId, tokenId: value.tokenId };
+}
+
+export function validateTokenMovePayload(value: unknown): TokenMovePayload | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !opaqueId(value.tokenId) || !finite(value.x) || !finite(value.y)) return undefined;
+  return { boardId: value.boardId, tokenId: value.tokenId, x: value.x, y: value.y };
+}
+
+export function validatePingPayload(value: unknown): PingPayload | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !finite(value.x) || !finite(value.y)) return undefined;
+  return { boardId: value.boardId, x: value.x, y: value.y };
+}
+
+export function validateCameraFocusPayload(value: unknown): CameraFocusPayload | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || value.mode !== 'fit') return undefined;
+  return { boardId: value.boardId, mode: 'fit' };
+}
+
+export function validateEnvelope(value: unknown): ProtocolEnvelope | undefined {
+  if (!object(value) || value.protocolVersion !== PROTOCOL_VERSION || typeof value.type !== 'string' || !value.type || !('payload' in value)) return undefined;
+  if (value.requestId !== undefined && !opaqueId(value.requestId)) return undefined;
+  return { protocolVersion: PROTOCOL_VERSION, type: value.type, payload: value.payload, ...(typeof value.requestId === 'string' ? { requestId: value.requestId } : {}) };
+}
+
+export function envelope<T>(type: string, payload: T, requestId?: string): ProtocolEnvelope<T> {
+  return { protocolVersion: PROTOCOL_VERSION, type, payload, ...(requestId ? { requestId } : {}) };
 }
 
 export function safeError(code: LiveErrorCode, message: string): LiveApiError {

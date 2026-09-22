@@ -9,6 +9,11 @@ import {
   validatePublishBoardRequest,
   validateResumeRequest,
   validateRevealElementRequest,
+  validateTokenAssignRequest,
+  validateTokenClearRequest,
+  validateTokenMovePayload,
+  validatePingPayload,
+  validateCameraFocusPayload,
   type ConnectionReadyPayload,
   type LiveApiError,
   type LiveBoardElement,
@@ -206,7 +211,20 @@ export class SessionDirectory {
 }
 
 export class LiveSession {
+  private rateWindows = new Map<string, { startedAt: number; count: number }>();
+
   constructor(private readonly state: DurableObjectStateLike) {}
+
+  private allowRate(key: string, limit: number, windowMs: number, now = Date.now()): boolean {
+    const current = this.rateWindows.get(key);
+    if (!current || now - current.startedAt >= windowMs) {
+      this.rateWindows.set(key, { startedAt: now, count: 1 });
+      return true;
+    }
+    if (current.count >= limit) return false;
+    current.count += 1;
+    return true;
+  }
 
   private async model(): Promise<LiveSessionModel | undefined> {
     const record = await this.state.storage.get<LiveSessionRecord>('session');
@@ -221,8 +239,16 @@ export class LiveSession {
     return (webSocket as AttachedSocket).deserializeAttachment?.();
   }
 
-  private send(webSocket: WebSocket, type: string, payload: unknown): void {
-    try { webSocket.send(JSON.stringify(envelope(type, payload))); } catch { /* closing socket */ }
+  private send(webSocket: WebSocket, type: string, payload: unknown, requestId?: string): void {
+    try { webSocket.send(JSON.stringify(envelope(type, payload, requestId))); } catch { /* closing socket */ }
+  }
+
+  private reject(webSocket: WebSocket, requestId: string | undefined, error: LiveApiError['error'], extra?: Record<string, unknown>): void {
+    this.send(webSocket, 'request.rejected', { error, ...(extra ?? {}) }, requestId);
+  }
+
+  private accept(webSocket: WebSocket, requestId: string, payload: Record<string, unknown> = {}): void {
+    this.send(webSocket, 'request.accepted', payload, requestId);
   }
 
   private hostSnapshot(model: LiveSessionModel): void {
@@ -231,13 +257,28 @@ export class LiveSession {
   }
 
   private sendPlayerSnapshot(model: LiveSessionModel, socket: WebSocket): void {
-    const snapshot = model.playerSnapshot();
+    const identity = this.socketIdentity(socket);
+    const snapshot = model.playerSnapshot(identity?.role === 'player' ? identity.participantId : undefined);
     if (snapshot.presentation === 'board') this.send(socket, 'board.snapshot', snapshot.board);
     else this.send(socket, 'presentation.waiting', snapshot);
   }
 
   private broadcastPlayerSnapshot(model: LiveSessionModel): void {
     for (const socket of this.state.getWebSockets('player')) this.sendPlayerSnapshot(model, socket);
+  }
+
+  private broadcastTokenController(model: LiveSessionModel, boardId: string, tokenId: string): void {
+    const stateSeq = model.summary().stateSeq;
+    const controller = model.controllerForToken(boardId, tokenId);
+    for (const socket of this.state.getWebSockets('player')) {
+      const identity = this.socketIdentity(socket);
+      this.send(socket, 'token.controller', {
+        boardId,
+        tokenId,
+        controlled: identity?.role === 'player' && identity.participantId === controller,
+        stateSeq
+      });
+    }
   }
 
   private playersLifecycle(model: LiveSessionModel): void {
@@ -412,7 +453,11 @@ export class LiveSession {
       await this.persist(model);
       if (result.ok) {
         this.hostSnapshot(model);
-        for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.revealed', { boardId: input.boardId, element: input.element, stateSeq: result.value.stateSeq });
+        if (input.element.type === 'token' && model.controllerForToken(input.boardId, input.element.elementId)) {
+          this.broadcastPlayerSnapshot(model);
+        } else {
+          for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.revealed', { boardId: input.boardId, element: input.element, stateSeq: result.value.stateSeq });
+        }
       }
       return resultResponse(result);
     }
@@ -429,6 +474,44 @@ export class LiveSession {
         const removedIds = before?.elements.filter(element => !afterIds.has(element.elementId)).map(element => element.elementId) ?? [input.elementId];
         for (const socket of this.state.getWebSockets('player')) this.send(socket, 'element.hidden', { boardId: input.boardId, elementIds: removedIds, stateSeq: result.value.stateSeq });
       }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/token-controller/assign') {
+      const credential = bearer(request); const input = validateTokenAssignRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Assegnazione token non valida.'), 400);
+      const result = await model.assignTokenController(credential, input.boardId, input.tokenId, input.participantId);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastTokenController(model, input.boardId, input.tokenId); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/token-controller/clear') {
+      const credential = bearer(request); const input = validateTokenClearRequest(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Rimozione controller non valida.'), 400);
+      const result = await model.clearTokenController(credential, input.boardId, input.tokenId);
+      await this.persist(model);
+      if (result.ok) { this.hostSnapshot(model); this.broadcastTokenController(model, input.boardId, input.tokenId); }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/token-move-host') {
+      const credential = bearer(request); const input = validateTokenMovePayload(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Movimento token non valido.'), 400);
+      const result = await model.moveTokenAsHost(credential, input);
+      await this.persist(model);
+      if (result.ok) {
+        this.hostSnapshot(model);
+        for (const socket of this.state.getWebSockets('player')) this.send(socket, 'token.position', result.value);
+      }
+      return resultResponse(result);
+    }
+
+    if (request.method === 'POST' && url.pathname === '/camera-focus') {
+      const credential = bearer(request); const input = validateCameraFocusPayload(await requestJson(request));
+      if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Focus camera non valido.'), 400);
+      const result = await model.authorizeCameraFocus(credential, input.boardId);
+      if (result.ok) for (const socket of this.state.getWebSockets('player')) this.send(socket, 'camera.focus', input);
       return resultResponse(result);
     }
 
@@ -475,7 +558,48 @@ export class LiveSession {
       this.sendPlayerSnapshot(model, webSocket);
       return;
     }
-    this.send(webSocket, 'request.rejected', { error: { code: 'PERMISSION_DENIED', message: 'Comando non disponibile in questa versione.' } });
+
+    if (identity.role !== 'player' || !identity.participantId) {
+      this.reject(webSocket, inbound.requestId, { code: 'PERMISSION_DENIED', message: 'Comando non disponibile per questo ruolo.' });
+      return;
+    }
+
+    if (inbound.type === 'token.move.preview') {
+      const input = validateTokenMovePayload(inbound.payload);
+      if (!input) { this.reject(webSocket, inbound.requestId, { code: 'PAYLOAD_INVALID', message: 'Preview token non valida.' }); return; }
+      if (!this.allowRate(`preview:${identity.participantId}`, 40, 1000)) return;
+      const allowed = model.authorizePlayerTokenPreview(identity.participantId, input);
+      if (!allowed.ok) { if (inbound.requestId) this.reject(webSocket, inbound.requestId, allowed.error.error, { authoritativePosition: model.tokenPosition(input.boardId, input.tokenId) }); return; }
+      for (const socket of this.state.getWebSockets('player')) this.send(socket, 'token.move.preview', input);
+      return;
+    }
+
+    if (inbound.type === 'token.move.commit') {
+      const input = validateTokenMovePayload(inbound.payload);
+      if (!inbound.requestId || !input) { this.reject(webSocket, inbound.requestId, { code: 'PAYLOAD_INVALID', message: 'Commit token non valido.' }); return; }
+      if (!this.allowRate(`commit:${identity.participantId}`, 16, 1000)) { this.reject(webSocket, inbound.requestId, { code: 'RATE_LIMITED', message: 'Troppi movimenti ravvicinati.' }, { authoritativePosition: model.tokenPosition(input.boardId, input.tokenId) }); return; }
+      const result = model.commitPlayerTokenMove(identity.participantId, input);
+      if (!result.ok) { this.reject(webSocket, inbound.requestId, result.error.error, { authoritativePosition: model.tokenPosition(input.boardId, input.tokenId) }); return; }
+      await this.persist(model);
+      this.accept(webSocket, inbound.requestId, { stateSeq: result.value.stateSeq });
+      this.hostSnapshot(model);
+      for (const socket of this.state.getWebSockets('player')) this.send(socket, 'token.position', result.value);
+      return;
+    }
+
+    if (inbound.type === 'ping.create') {
+      const input = validatePingPayload(inbound.payload);
+      if (!inbound.requestId || !input) { this.reject(webSocket, inbound.requestId, { code: 'PAYLOAD_INVALID', message: 'Ping non valido.' }); return; }
+      if (!this.allowRate(`ping:${identity.participantId}`, 4, 3000)) { this.reject(webSocket, inbound.requestId, { code: 'RATE_LIMITED', message: 'Troppi ping ravvicinati.' }); return; }
+      const allowed = model.authorizePing(identity.participantId, input.boardId);
+      if (!allowed.ok) { this.reject(webSocket, inbound.requestId, allowed.error.error); return; }
+      this.accept(webSocket, inbound.requestId);
+      for (const socket of this.state.getWebSockets('player')) this.send(socket, 'ping.show', { ...input, participantId: identity.participantId });
+      for (const socket of this.state.getWebSockets('host')) this.send(socket, 'ping.show', { ...input, participantId: identity.participantId });
+      return;
+    }
+
+    this.reject(webSocket, inbound.requestId, { code: 'PERMISSION_DENIED', message: 'Comando non disponibile in questa versione.' });
   }
 
   async webSocketClose(webSocket: WebSocket): Promise<void> {
@@ -612,6 +736,30 @@ export default {
       const input = validateHideElementRequest(await requestJson(request));
       if (!input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
       return forwardSession(env, liveSessionId, '/hide', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/token-controller/assign') {
+      const input = validateTokenAssignRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Assegnazione token non valida.'), 400);
+      return forwardSession(env, liveSessionId, '/token-controller/assign', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/token-controller/clear') {
+      const input = validateTokenClearRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Rimozione controller non valida.'), 400);
+      return forwardSession(env, liveSessionId, '/token-controller/clear', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/token-move-host') {
+      const input = validateTokenMovePayload(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Movimento token non valido.'), 400);
+      return forwardSession(env, liveSessionId, '/token-move-host', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/camera-focus') {
+      const input = validateCameraFocusPayload(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Focus camera non valido.'), 400);
+      return forwardSession(env, liveSessionId, '/camera-focus', request, input);
     }
 
     if (request.method === 'POST' && tail === '/rotate-code') {

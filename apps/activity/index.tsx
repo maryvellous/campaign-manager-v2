@@ -2,9 +2,12 @@ import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPoi
 import { createRoot } from 'react-dom/client';
 import {
   envelope,
+  validateCameraFocusPayload,
   validateEnvelope,
   validateLiveBoardElement,
-  validateLiveBoardPayload,
+  validateLiveBoardSnapshot,
+  validatePingPayload,
+  validateTokenMovePayload,
   type JoinSessionResponse,
   type LiveApiError,
   type LiveBoardElement,
@@ -88,11 +91,7 @@ async function api<T>(path: string, body: unknown): Promise<{ ok: true; value: T
 }
 
 function validSnapshot(value: unknown): LiveBoardSnapshot | undefined {
-  if (!value || typeof value !== 'object' || Array.isArray(value)) return undefined;
-  const record = value as Record<string, unknown>;
-  if (typeof record.stateSeq !== 'number' || !Number.isSafeInteger(record.stateSeq) || record.stateSeq < 0) return undefined;
-  const board = validateLiveBoardPayload({ boardId: record.boardId, title: record.title, elements: record.elements });
-  return board ? { ...board, stateSeq: record.stateSeq } : undefined;
+  return validateLiveBoardSnapshot(value);
 }
 
 function endpointPoint(board: LiveBoardSnapshot, endpoint: LiveBoardEndpoint): { x: number; y: number } {
@@ -114,9 +113,32 @@ function BoardElementView({ element, sessionId, credential }: { element: Exclude
   return <div className="player-board-card"><span>{element.cardKind === 'excerpt' ? 'Estratto' : 'Nota'}</span><strong>{element.sourceTitle}</strong>{element.cardKind === 'excerpt' && <p>{element.excerpt}</p>}</div>;
 }
 
-function PlayerBoard({ board, sessionId, credential, connected }: { board: LiveBoardSnapshot; sessionId: string; credential: string; connected: boolean }) {
+function PlayerBoard({
+  board,
+  sessionId,
+  credential,
+  interactive,
+  previewPositions,
+  pings,
+  focusNonce,
+  onPreview,
+  onCommit,
+  onPing
+}: {
+  board: LiveBoardSnapshot;
+  sessionId: string;
+  credential: string;
+  interactive: boolean;
+  previewPositions: Record<string, { x: number; y: number }>;
+  pings: Array<{ id: string; x: number; y: number }>;
+  focusNonce: number;
+  onPreview: (tokenId: string, x: number, y: number) => void;
+  onCommit: (tokenId: string, x: number, y: number) => void;
+  onPing: (x: number, y: number) => void;
+}) {
   const viewport = useRef<HTMLDivElement>(null);
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 1 });
+  const [pingMode, setPingMode] = useState(false);
 
   const fit = useCallback(() => {
     const rect = viewport.current?.getBoundingClientRect(); if (!rect) return;
@@ -131,11 +153,18 @@ function PlayerBoard({ board, sessionId, credential, connected }: { board: LiveB
     setCamera({ x: rect.width / 2 - (left + width / 2) * zoom, y: rect.height / 2 - (top + height / 2) * zoom, zoom });
   }, [board]);
 
-  useEffect(() => { requestAnimationFrame(fit); }, [board.boardId, fit]);
+  useEffect(() => { requestAnimationFrame(fit); }, [board.boardId]);
+  useEffect(() => { if (focusNonce > 0) requestAnimationFrame(fit); }, [focusNonce]);
 
   function pan(event: ReactPointerEvent<HTMLDivElement>) {
     if (event.button !== 0 && event.button !== 1) return;
     event.preventDefault();
+    if (pingMode && event.button === 0) {
+      const rect = viewport.current?.getBoundingClientRect(); if (!rect) return;
+      onPing((event.clientX - rect.left - camera.x) / camera.zoom, (event.clientY - rect.top - camera.y) / camera.zoom);
+      setPingMode(false);
+      return;
+    }
     const target = event.currentTarget; target.setPointerCapture(event.pointerId);
     const start = { x: event.clientX, y: event.clientY, camera };
     const move = (nativeEvent: PointerEvent) => setCamera({ ...start.camera, x: start.camera.x + nativeEvent.clientX - start.x, y: start.camera.y + nativeEvent.clientY - start.y });
@@ -154,8 +183,39 @@ function PlayerBoard({ board, sessionId, credential, connected }: { board: LiveB
     setCamera({ x: px - worldX * nextZoom, y: py - worldY * nextZoom, zoom: nextZoom });
   }
 
+  function dragToken(event: ReactPointerEvent<HTMLDivElement>, element: Extract<LiveBoardElement, { type: 'token' }>) {
+    if (!interactive || !board.controlledTokenIds?.includes(element.elementId) || event.button !== 0) return;
+    event.preventDefault(); event.stopPropagation();
+    const target = event.currentTarget;
+    target.setPointerCapture(event.pointerId);
+    const shown = previewPositions[element.elementId] ?? { x: element.x, y: element.y };
+    const start = { clientX: event.clientX, clientY: event.clientY, x: shown.x, y: shown.y };
+    let lastPreview = 0;
+    let latest = { x: shown.x, y: shown.y };
+    const move = (nativeEvent: PointerEvent) => {
+      latest = {
+        x: start.x + (nativeEvent.clientX - start.clientX) / camera.zoom,
+        y: start.y + (nativeEvent.clientY - start.clientY) / camera.zoom
+      };
+      const now = performance.now();
+      if (now - lastPreview >= 35) {
+        lastPreview = now;
+        onPreview(element.elementId, latest.x, latest.y);
+      }
+    };
+    const up = () => {
+      target.removeEventListener('pointermove', move);
+      target.removeEventListener('pointerup', up);
+      target.removeEventListener('pointercancel', up);
+      onCommit(element.elementId, latest.x, latest.y);
+    };
+    target.addEventListener('pointermove', move);
+    target.addEventListener('pointerup', up);
+    target.addEventListener('pointercancel', up);
+  }
+
   return <section className="player-board-shell">
-    <header className="player-board-header"><div><span className="eyebrow">SCENA CONDIVISA</span><strong>{board.title}</strong></div><div><span className={`connection-dot ${connected ? 'online' : ''}`} /><button onClick={fit}>Centra</button><small>{Math.round(camera.zoom * 100)}%</small></div></header>
+    <header className="player-board-header"><div><span className="eyebrow">SCENA CONDIVISA</span><strong>{board.title}</strong></div><div><span className={`connection-dot ${interactive ? 'online' : ''}`} /><button className={pingMode ? 'active' : ''} disabled={!interactive} onClick={() => setPingMode(value => !value)}>{pingMode ? 'Clicca sulla scena' : 'Ping'}</button><button onClick={fit}>Centra</button><small>{Math.round(camera.zoom * 100)}%</small></div></header>
     <div ref={viewport} className="player-board-viewport" onPointerDown={pan} onWheel={zoom}>
       <div className="player-board-stage" style={{ transform: `translate(${camera.x}px,${camera.y}px) scale(${camera.zoom})` }}>
         {board.elements.slice().sort((a, b) => a.z - b.z).map(element => {
@@ -164,8 +224,11 @@ function PlayerBoard({ board, sessionId, credential, connected }: { board: LiveB
             const markerId = `activity-arrow-${element.elementId}`;
             return <svg key={element.elementId} className="player-link-layer" style={{ zIndex: element.z }} aria-hidden="true"><defs><marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" /></marker></defs><line x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd={element.arrow === 'end' ? `url(#${markerId})` : undefined} /></svg>;
           }
-          return <div key={element.elementId} className={`player-board-element type-${element.type}`} style={{ left: element.x, top: element.y, width: element.width, height: element.height, zIndex: element.z }}><BoardElementView element={element} sessionId={sessionId} credential={credential} /></div>;
+          const preview = previewPositions[element.elementId];
+          const controlled = element.type === 'token' && !!board.controlledTokenIds?.includes(element.elementId);
+          return <div key={element.elementId} className={`player-board-element type-${element.type} ${controlled ? 'controlled' : ''}`} style={{ left: preview?.x ?? element.x, top: preview?.y ?? element.y, width: element.width, height: element.height, zIndex: element.z }} onPointerDown={element.type === 'token' && controlled ? event => dragToken(event, element) : undefined}><BoardElementView element={element} sessionId={sessionId} credential={credential} /></div>;
         })}
+        {pings.map(ping => <span key={ping.id} className="player-board-ping" style={{ left: ping.x, top: ping.y }} />)}
       </div>
     </div>
   </section>;
@@ -182,6 +245,10 @@ function App() {
   const [connected, setConnected] = useState(false);
   const [board, setBoard] = useState<LiveBoardSnapshot>();
   const boardRef = useRef<LiveBoardSnapshot | undefined>(undefined);
+  const [previewPositions, setPreviewPositions] = useState<Record<string, { x: number; y: number }>>({});
+  const [pings, setPings] = useState<Array<{ id: string; x: number; y: number }>>([]);
+  const [focusNonce, setFocusNonce] = useState(0);
+  const pendingRequests = useRef(new Set<string>());
   const seqRef = useRef(0);
   const socketRef = useRef<WebSocket | undefined>(undefined);
   const retryTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
@@ -199,8 +266,28 @@ function App() {
     if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(envelope('snapshot.request', {})));
   }, []);
 
+  const sendPreview = useCallback((type: string, payload: unknown) => {
+    const socket = socketRef.current;
+    if (socket?.readyState === WebSocket.OPEN) socket.send(JSON.stringify(envelope(type, payload)));
+  }, []);
+
+  const sendMutation = useCallback((type: string, payload: unknown) => {
+    const socket = socketRef.current;
+    if (socket?.readyState !== WebSocket.OPEN) { setError({ code: 'HOST_OFFLINE', message: 'Connessione non disponibile.' }); return; }
+    const requestId = `req_${crypto.randomUUID()}`;
+    pendingRequests.current.add(requestId);
+    setError(undefined);
+    socket.send(JSON.stringify(envelope(type, payload, requestId)));
+  }, []);
+
+  const showPing = useCallback((x: number, y: number) => {
+    const id = crypto.randomUUID();
+    setPings(current => [...current, { id, x, y }]);
+    window.setTimeout(() => setPings(current => current.filter(ping => ping.id !== id)), 1600);
+  }, []);
+
   const applySnapshot = useCallback((snapshot: LiveBoardSnapshot) => {
-    boardRef.current = snapshot; setBoard(snapshot); seqRef.current = snapshot.stateSeq; setScreen('board');
+    boardRef.current = snapshot; setBoard(snapshot); setPreviewPositions({}); seqRef.current = snapshot.stateSeq; setScreen('board');
   }, []);
 
   const applyIncrement = useCallback((seq: number, mutate: (current: LiveBoardSnapshot) => LiveBoardSnapshot | undefined) => {
@@ -240,7 +327,7 @@ function App() {
         const payload = message.payload as { stateSeq?: number; lifecycle?: SessionLifecycle };
         if (payload.lifecycle) setLifecycle(payload.lifecycle);
         if (typeof payload.stateSeq === 'number') seqRef.current = payload.stateSeq;
-        boardRef.current = undefined; setBoard(undefined); setScreen('waiting');
+        boardRef.current = undefined; setBoard(undefined); setPreviewPositions({}); setPings([]); setScreen('waiting');
       } else if (message.type === 'element.revealed' && message.payload && typeof message.payload === 'object') {
         const payload = message.payload as { boardId?: unknown; element?: unknown; stateSeq?: unknown };
         const element = validateLiveBoardElement(payload.element);
@@ -254,7 +341,48 @@ function App() {
         const payload = message.payload as { boardId?: unknown; elementIds?: unknown; stateSeq?: unknown };
         if (typeof payload.boardId !== 'string' || !Array.isArray(payload.elementIds) || !payload.elementIds.every(value => typeof value === 'string') || typeof payload.stateSeq !== 'number') { requestSnapshot(); return; }
         const elementIds = payload.elementIds as string[];
-        applyIncrement(payload.stateSeq, current => current.boardId === payload.boardId ? { ...current, elements: current.elements.filter(item => !elementIds.includes(item.elementId)) } : undefined);
+        applyIncrement(payload.stateSeq, current => current.boardId === payload.boardId ? {
+          ...current,
+          elements: current.elements.filter(item => !elementIds.includes(item.elementId)),
+          controlledTokenIds: (current.controlledTokenIds ?? []).filter(tokenId => !elementIds.includes(tokenId))
+        } : undefined);
+        setPreviewPositions(previews => Object.fromEntries(Object.entries(previews).filter(([tokenId]) => !elementIds.includes(tokenId))));
+      } else if (message.type === 'token.move.preview') {
+        const move = validateTokenMovePayload(message.payload);
+        if (move && boardRef.current?.boardId === move.boardId) setPreviewPositions(current => ({ ...current, [move.tokenId]: { x: move.x, y: move.y } }));
+      } else if (message.type === 'token.position' && message.payload && typeof message.payload === 'object') {
+        const payload = message.payload as { boardId?: unknown; tokenId?: unknown; x?: unknown; y?: unknown; stateSeq?: unknown };
+        const move = validateTokenMovePayload(payload);
+        if (!move || typeof payload.stateSeq !== 'number') { requestSnapshot(); return; }
+        applyIncrement(payload.stateSeq, current => {
+          if (current.boardId !== move.boardId) return undefined;
+          const elements = current.elements.map(element => element.elementId === move.tokenId && element.type === 'token' ? { ...element, x: move.x, y: move.y } : element);
+          setPreviewPositions(previews => { const next = { ...previews }; delete next[move.tokenId]; return next; });
+          return { ...current, elements };
+        });
+      } else if (message.type === 'token.controller' && message.payload && typeof message.payload === 'object') {
+        const payload = message.payload as { boardId?: unknown; tokenId?: unknown; controlled?: unknown; stateSeq?: unknown };
+        if (typeof payload.boardId !== 'string' || typeof payload.tokenId !== 'string' || typeof payload.controlled !== 'boolean' || typeof payload.stateSeq !== 'number') { requestSnapshot(); return; }
+        applyIncrement(payload.stateSeq, current => {
+          if (current.boardId !== payload.boardId) return undefined;
+          const controlledTokenIds = new Set(current.controlledTokenIds ?? []);
+          if (payload.controlled) controlledTokenIds.add(payload.tokenId as string); else controlledTokenIds.delete(payload.tokenId as string);
+          return { ...current, controlledTokenIds: [...controlledTokenIds] };
+        });
+      } else if (message.type === 'ping.show' && message.payload && typeof message.payload === 'object') {
+        const ping = validatePingPayload(message.payload);
+        if (ping && boardRef.current?.boardId === ping.boardId) showPing(ping.x, ping.y);
+      } else if (message.type === 'camera.focus') {
+        const focus = validateCameraFocusPayload(message.payload);
+        if (focus && boardRef.current?.boardId === focus.boardId) setFocusNonce(value => value + 1);
+      } else if (message.type === 'request.accepted' && message.requestId) {
+        pendingRequests.current.delete(message.requestId);
+      } else if (message.type === 'request.rejected' && message.requestId && pendingRequests.current.has(message.requestId)) {
+        pendingRequests.current.delete(message.requestId);
+        const payload = message.payload as { error?: ApiFailure };
+        if (payload?.error) setError(payload.error);
+        setPreviewPositions({});
+        requestSnapshot();
       } else if (message.type === 'session.state' && message.payload && typeof message.payload === 'object') {
         const payload = message.payload as { lifecycle?: SessionLifecycle; stateSeq?: number; presentation?: string };
         if (payload.lifecycle) {
@@ -272,6 +400,8 @@ function App() {
     socket.addEventListener('close', () => {
       if (socketRef.current !== socket) return;
       socketRef.current = undefined;
+      pendingRequests.current.clear();
+      setPreviewPositions({});
       setConnected(false);
       if (stopped.current || !resumeRef.current) return;
       const current = resumeRef.current;
@@ -296,7 +426,7 @@ function App() {
       };
       retry();
     });
-  }, [applyIncrement, applySnapshot, requestSnapshot, setResumeState]);
+  }, [applyIncrement, applySnapshot, requestSnapshot, setResumeState, showPing]);
 
   useEffect(() => {
     const prior = storedResume();
@@ -335,7 +465,7 @@ function App() {
   }
 
   function leaveLocalResume() {
-    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setScreen('join'); setError(undefined); setJoinCode(''); setBoard(undefined); boardRef.current = undefined; seqRef.current = 0;
+    stopped.current = true; socketRef.current?.close(); setResumeState(undefined); setScreen('join'); setError(undefined); setJoinCode(''); setBoard(undefined); boardRef.current = undefined; setPreviewPositions({}); setPings([]); seqRef.current = 0;
   }
 
   return <main className={`player-shell ${screen === 'board' ? 'has-board' : ''}`}>
@@ -358,9 +488,9 @@ function App() {
       <p>{lifecycle === 'host_reconnecting' ? 'Il master si sta riconnettendo. La sessione riprenderà quando torna online.' : 'Il master non sta condividendo una board in questo momento.'}</p>
       <small>Puoi lasciare aperta questa pagina.</small>
     </section>}
-    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} credential={resume.resumeCredential} connected={connected} />}
+    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} credential={resume.resumeCredential} interactive={connected && lifecycle === 'open'} previewPositions={previewPositions} pings={pings} focusNonce={focusNonce} onPreview={(tokenId, x, y) => { setPreviewPositions(current => ({ ...current, [tokenId]: { x, y } })); sendPreview('token.move.preview', { boardId: board.boardId, tokenId, x, y }); }} onCommit={(tokenId, x, y) => sendMutation('token.move.commit', { boardId: board.boardId, tokenId, x, y })} onPing={(x, y) => sendMutation('ping.create', { boardId: board.boardId, x, y })} />}
     {screen === 'ended' && <section className="waiting-card"><h1>Sessione non disponibile.</h1><p>{error?.message ?? 'Questa sessione è terminata.'}</p><button onClick={leaveLocalResume}>Inserisci un altro codice</button></section>}
-    {error && screen === 'join' && <div className="player-error" role="alert">{error.message}</div>}
+    {error && (screen === 'join' || screen === 'board') && <div className="player-error" role="alert">{error.message}</div>}
   </main>;
 }
 
