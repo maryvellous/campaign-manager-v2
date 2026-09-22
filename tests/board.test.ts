@@ -49,6 +49,37 @@ test('board save refuses stale revision and preserves external change', async ()
   } finally { await fixture.cleanup(); }
 });
 
+test('board rename never overwrites an existing destination', async () => {
+  const fixture = await campaignFixture();
+  try {
+    const repo = new BoardRepository(fixture.root, fixture.campaignId);
+    const first = await repo.createBoard('Prima');
+    const second = await repo.createBoard('Seconda');
+    await assert.rejects(() => repo.renameBoard(first.path, 'Seconda'), (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'collision');
+      return true;
+    });
+    const preserved = await repo.readBoard(second.path);
+    assert.equal(preserved.document.boardId, second.document.boardId);
+    assert.equal((await repo.readBoard(first.path)).document.boardId, first.document.boardId);
+  } finally { await fixture.cleanup(); }
+});
+
+test('case-only board rename preserves board identity', async () => {
+  const fixture = await campaignFixture();
+  try {
+    const repo = new BoardRepository(fixture.root, fixture.campaignId);
+    const created = await repo.createBoard('Scena');
+    const renamed = await repo.renameBoard(created.path, 'SCENA');
+    assert.equal(renamed.path, 'Boards/SCENA.board.json');
+    assert.equal(renamed.document.boardId, created.document.boardId);
+    await assert.rejects(() => repo.readBoard(created.path), (error: unknown) => {
+      assert.equal((error as { code?: string }).code, 'case_collision');
+      return true;
+    });
+  } finally { await fixture.cleanup(); }
+});
+
 test('stale recovery is detectable against a newer disk revision', async () => {
   const fixture = await campaignFixture();
   const localRoot = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-board-stale-'));
