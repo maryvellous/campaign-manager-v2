@@ -801,6 +801,7 @@ async function forwardSession(env: Env, liveSessionId: string, path: string, req
 export default {
   async fetch(request: Request, env: Env): Promise<Response> {
     const url = new URL(request.url);
+    if (url.pathname.startsWith('/.proxy/api/')) url.pathname = url.pathname.slice('/.proxy'.length);
 
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
