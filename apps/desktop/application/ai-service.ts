@@ -6,11 +6,13 @@ import {
   OPENAI_MODELS,
   OpenAiProvider,
   type AiMessage,
+  type AiPreparedContext,
   type AiProvider,
   type AiProviderErrorCode,
   type OpenAiModel,
 } from '../../../packages/ai/src/index';
 import { LocalStore, type AiPreferences } from '../infrastructure/local-store';
+import { aiInstructions } from './ai-context';
 
 export type AiStatus =
   | 'not_configured'
@@ -21,7 +23,8 @@ export type AiStatus =
   | 'auth/provider_key_invalid'
   | 'rate_limited'
   | 'provider_error'
-  | 'context_too_large';
+  | 'context_too_large'
+  | 'source_missing';
 
 export interface AiState {
   status: AiStatus;
@@ -157,6 +160,25 @@ export class AiService {
     return this.state;
   }
 
+  private providerMessages(messages: AiMessage[]): AiMessage[] {
+    const selected: AiMessage[] = [];
+    let chars = 0;
+    for (let index = messages.length - 1; index >= 0 && selected.length < 24; index--) {
+      const message = messages[index];
+      if (selected.length && chars + message.content.length > 48_000) break;
+      selected.unshift(message);
+      chars += message.content.length;
+    }
+    return selected;
+  }
+
+  contextError(code: 'context_too_large' | 'source_missing', message: string): AiState {
+    this.state.status = code;
+    this.state.error = message;
+    this.onChange();
+    return this.state;
+  }
+
   cancel(): AiState {
     this.controller?.abort();
     this.controller = undefined;
@@ -165,7 +187,7 @@ export class AiService {
     return this.state;
   }
 
-  async send(prompt: string): Promise<AiState> {
+  async send(prompt: string, context: AiPreparedContext): Promise<AiState> {
     if (!this.campaignId) throw new CampaignError('not_found', 'Apri una campagna prima di usare l’assistente.');
     const content = prompt.trim();
     if (!content || content.length > 20000) throw new CampaignError('invalid_path', 'Messaggio non valido.');
@@ -186,14 +208,21 @@ export class AiService {
     try {
       const answer = await this.provider.complete(this.codec.decrypt(this.preferences.encryptedKey), {
         model: this.preferences.model,
-        messages: this.state.messages,
+        messages: this.providerMessages(this.state.messages),
+        instructions: aiInstructions(context),
         signal: controller.signal,
       });
       if (controller.signal.aborted) {
         this.state.status = 'cancelled';
         return this.state;
       }
-      const assistant: AiMessage = { id: randomUUID(), role: 'assistant', content: answer, createdAt: new Date().toISOString() };
+      const assistant: AiMessage = {
+        id: randomUUID(),
+        role: 'assistant',
+        content: answer,
+        createdAt: new Date().toISOString(),
+        ...(context.sources.length ? { sources: context.sources } : {}),
+      };
       this.state.messages = [...this.state.messages, assistant];
       this.state.status = 'ready';
       await this.store.writeAiThread(this.campaignId, { messages: this.state.messages });
