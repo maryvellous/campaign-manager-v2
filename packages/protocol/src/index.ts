@@ -60,6 +60,18 @@ export interface LiveBoardSnapshot extends LiveBoardPayload {
   stateSeq: number;
 }
 
+export interface ElementRevealedEvent {
+  boardId: string;
+  element: LiveBoardElement;
+  stateSeq: number;
+}
+
+export interface ElementHiddenEvent {
+  boardId: string;
+  elementIds: string[];
+  stateSeq: number;
+}
+
 export interface LiveBoardSummary {
   boardId: string;
   title: string;
@@ -213,6 +225,28 @@ export function validateLiveBoardPayload(value: unknown): LiveBoardPayload | und
     for (const endpoint of [element.from, element.to]) if (endpoint.kind === 'element' && !ids.has(endpoint.elementId)) return undefined;
   }
   return { boardId: value.boardId, title: value.title, elements };
+}
+
+export function validateLiveBoardSnapshot(value: unknown): LiveBoardSnapshot | undefined {
+  if (!object(value) || !Number.isSafeInteger(value.stateSeq) || (value.stateSeq as number) < 0) return undefined;
+  const board = validateLiveBoardPayload(value);
+  return board ? { ...board, stateSeq: value.stateSeq as number } : undefined;
+}
+
+export function validateElementRevealedEvent(value: unknown): ElementRevealedEvent | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !Number.isSafeInteger(value.stateSeq) || (value.stateSeq as number) < 0) return undefined;
+  const element = validateLiveBoardElement(value.element);
+  return element ? { boardId: value.boardId, element, stateSeq: value.stateSeq as number } : undefined;
+}
+
+export function validateElementHiddenEvent(value: unknown): ElementHiddenEvent | undefined {
+  if (!object(value) || !opaqueId(value.boardId) || !Number.isSafeInteger(value.stateSeq) || (value.stateSeq as number) < 0 || !Array.isArray(value.elementIds) || value.elementIds.length > 5000) return undefined;
+  const elementIds: string[] = [];
+  for (const raw of value.elementIds) {
+    if (!opaqueId(raw) || elementIds.includes(raw)) return undefined;
+    elementIds.push(raw);
+  }
+  return { boardId: value.boardId, elementIds, stateSeq: value.stateSeq as number };
 }
 
 export function validateJoinRequest(value: unknown): JoinSessionRequest | undefined {
