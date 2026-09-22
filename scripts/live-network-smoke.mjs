@@ -1,5 +1,5 @@
 import assert from 'node:assert/strict';
-import { spawn } from 'node:child_process';
+import { spawn, spawnSync } from 'node:child_process';
 import { clearTimeout as cancelTimer, setTimeout as schedule } from 'node:timers';
 import { setTimeout as sleep } from 'node:timers/promises';
 
@@ -8,7 +8,8 @@ const origin = `http://127.0.0.1:${port}`;
 const npx = process.platform === 'win32' ? 'npx.cmd' : 'npx';
 const wrangler = spawn(npx, ['--yes', 'wrangler@4.136.1', 'dev', '--port', String(port)], {
   stdio: ['ignore', 'pipe', 'pipe'],
-  env: { ...process.env, NO_COLOR: '1' }
+  env: { ...process.env, NO_COLOR: '1' },
+  detached: process.platform !== 'win32'
 });
 
 let logs = '';
@@ -85,6 +86,28 @@ function message(type, payload, requestId) {
     payload,
     ...(requestId ? { requestId } : {})
   });
+}
+
+async function stopWranglerTree() {
+  if (wrangler.exitCode !== null || !wrangler.pid) return;
+
+  if (process.platform === 'win32') {
+    spawnSync('taskkill', ['/pid', String(wrangler.pid), '/T', '/F'], { stdio: 'ignore' });
+  } else {
+    try { process.kill(-wrangler.pid, 'SIGTERM'); } catch { /* process group may already be gone */ }
+  }
+
+  const exited = new Promise(resolve => wrangler.once('exit', resolve));
+  await Promise.race([exited, sleep(2_000)]);
+
+  if (wrangler.exitCode === null && process.platform !== 'win32') {
+    try { process.kill(-wrangler.pid, 'SIGKILL'); } catch { /* process group may already be gone */ }
+    await Promise.race([new Promise(resolve => wrangler.once('exit', resolve)), sleep(1_000)]);
+  }
+
+  wrangler.stdout.destroy();
+  wrangler.stderr.destroy();
+  wrangler.unref();
 }
 
 const sockets = [];
@@ -174,9 +197,5 @@ try {
   for (const socket of sockets) {
     try { socket.close(); } catch { /* readiness/close errors are expected in smoke cleanup */ }
   }
-  if (wrangler.exitCode === null) wrangler.kill('SIGTERM');
-  await Promise.race([
-    new Promise(resolve => wrangler.once('exit', resolve)),
-    sleep(5_000)
-  ]);
+  await stopWranglerTree();
 }
