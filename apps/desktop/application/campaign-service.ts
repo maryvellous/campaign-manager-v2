@@ -317,7 +317,7 @@ export class CampaignService {
     doc.draft.manualTitle = name; doc.error = undefined; if (doc.state !== 'clean') doc.state = 'dirty'; await this.protect();
   }
   async setView(view: View): Promise<void> {
-    if (!['notes', 'search', 'graph', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
+    if (!['notes', 'search', 'graph', 'boards', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
     if (!(await this.leaveCurrent())) throw new CampaignError('conflict', 'Risolvi le modifiche prima di cambiare vista.');
     this.state.ui.view = view; await this.persistUi();
   }
