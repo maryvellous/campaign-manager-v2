@@ -21,6 +21,7 @@ import {
   type SessionLifecycle
 } from '../../packages/protocol/src/index';
 import { activityApiPath, discordActivityContext, readyDiscordActivity, type DiscordActivityContext, type ReadyDiscordActivity } from './discord-adapter';
+import { discordAuthFailure, type DiscordAuthStage } from './discord-diagnostics';
 import './style.css';
 
 interface StoredResume {
@@ -637,6 +638,7 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       return;
     }
 
+    let authStage: DiscordAuthStage = 'authorize';
     try {
       const authorization = await ready.sdk.commands.authorize({
         client_id: currentConfig.clientId,
@@ -647,16 +649,18 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       });
       if (!authorization?.code) throw new Error('Discord non ha restituito un codice OAuth.');
 
+      authStage = 'join';
       const joined = await activityFetch<ActivityJoinResponse>('/api/activity/join', {
         method: 'POST',
         body: JSON.stringify({ instanceId: instanceId.current, code: authorization.code })
       });
       if (!joined.ok) {
-        setError(joined.error.message);
+        setError(discordAuthFailure(authStage, joined.error));
         setStatus('error');
         return;
       }
 
+      authStage = 'authenticate';
       const authenticated = await ready.sdk.commands.authenticate({ access_token: joined.value.accessToken });
       if (!authenticated) throw new Error('Discord non ha completato authenticate.');
 
@@ -671,7 +675,7 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
       saveActivityResume(resume);
       setSession({ resume, ticket: joined.value.ticket });
     } catch (failure) {
-      setError(failure instanceof Error ? failure.message : 'Autenticazione Discord non riuscita.');
+      setError(discordAuthFailure(authStage, failure));
       setStatus('error');
     }
   }, []);
