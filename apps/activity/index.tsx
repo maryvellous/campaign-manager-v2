@@ -69,7 +69,9 @@ function App() {
   }, []);
 
   const connect = useCallback((liveSessionId: string, ticket: string) => {
-    socketRef.current?.close();
+    const previous = socketRef.current;
+    socketRef.current = undefined;
+    previous?.close();
     const socket = new WebSocket(websocketUrl(liveSessionId), ['cmv2.v1', `cmv2.ticket.${ticket}`]);
     socketRef.current = socket;
     setScreen('connecting'); setConnected(false);
@@ -104,25 +106,31 @@ function App() {
     });
 
     socket.addEventListener('close', () => {
+      if (socketRef.current !== socket) return;
+      socketRef.current = undefined;
       setConnected(false);
       if (stopped.current || !resumeRef.current) return;
       const current = resumeRef.current;
-      const delay = Math.min(5000, 700 * 2 ** Math.min(retryCount.current++, 3));
-      retryTimer.current = setTimeout(() => {
-        void api<{ ticket: string }>('/api/resume', current).then(result => {
-          if (stopped.current) return;
-          if (!result.ok) {
-            if (result.error.code === 'SESSION_ENDED' || result.error.code === 'AUTH_FAILED') {
-              stopped.current = true; setResumeState(undefined); setScreen('ended'); setError(result.error);
-            } else {
-              setError({ ...result.error, message: 'Connessione persa. Riprovo automaticamente.' });
-              retryTimer.current = setTimeout(() => socketRef.current?.dispatchEvent(new Event('close')), delay);
+      const retry = () => {
+        if (stopped.current || resumeRef.current?.participantId !== current.participantId) return;
+        const delay = Math.min(5000, 700 * 2 ** Math.min(retryCount.current++, 3));
+        retryTimer.current = setTimeout(() => {
+          void api<{ ticket: string }>('/api/resume', current).then(result => {
+            if (stopped.current) return;
+            if (!result.ok) {
+              if (result.error.code === 'SESSION_ENDED' || result.error.code === 'AUTH_FAILED') {
+                stopped.current = true; setResumeState(undefined); setScreen('ended'); setError(result.error);
+              } else {
+                setError({ ...result.error, message: 'Connessione persa. Riprovo automaticamente.' });
+                retry();
+              }
+              return;
             }
-            return;
-          }
-          connect(current.liveSessionId, result.value.ticket);
-        });
-      }, delay);
+            connect(current.liveSessionId, result.value.ticket);
+          });
+        }, delay);
+      };
+      retry();
     });
   }, [setResumeState]);
 
