@@ -1,5 +1,6 @@
 import { randomUUID } from 'node:crypto';
 import { CampaignError, validateNoteId, validateRelativePath } from '../../../packages/core/src/index';
+import type { FinalTokenPositionsResponse } from '../../../packages/protocol/src/index';
 import { BoardRepository } from '../infrastructure/board-repository';
 import { LocalStore } from '../infrastructure/local-store';
 import { isBoardBoxElement, parseBoardDocument, validateBoardPath, type BoardCardElement, type BoardDocument } from './board-types';
@@ -214,6 +215,40 @@ export class BoardService {
 
   async liveAsset(assetPath: string) {
     return this.required().repo.readAssetBinary(assetPath);
+  }
+
+  async applyLiveTokenPositions(finalPositions: FinalTokenPositionsResponse) {
+    const { repo, campaign } = this.required();
+    const listed = await repo.discover();
+    const recoveries = await this.store.listBoardRecovery(campaign.campaignId);
+    const recoveryPaths = new Set(recoveries.map(item => item.draft.boardPath));
+    const plans: Array<{ path: string; revision: string; document: BoardDocument; changed: number }> = [];
+
+    for (const boardPositions of finalPositions.boards) {
+      if (!boardPositions.tokens.length) continue;
+      const listedBoard = listed.find(board => board.boardId === boardPositions.boardId);
+      if (!listedBoard) throw new CampaignError('not_found', `La board locale "${boardPositions.title}" non è più disponibile.`);
+      if (recoveryPaths.has(listedBoard.path)) throw new CampaignError('conflict', `Salva o scarta le modifiche locali di "${listedBoard.title}" prima di applicare le posizioni live.`);
+
+      const snapshot = await repo.readBoard(listedBoard.path);
+      const positions = new Map(boardPositions.tokens.map(token => [token.tokenId, token]));
+      let changed = 0;
+      const elements = snapshot.document.elements.map(element => {
+        if (element.type !== 'token') return element;
+        const position = positions.get(element.elementId);
+        if (!position || (position.x === element.x && position.y === element.y)) return element;
+        changed += 1;
+        return { ...element, x: position.x, y: position.y };
+      });
+      if (changed) plans.push({ path: listedBoard.path, revision: snapshot.revision, document: { ...snapshot.document, elements }, changed });
+    }
+
+    const updated: Array<{ path: string; changedTokens: number }> = [];
+    for (const plan of plans) {
+      await repo.saveBoard(plan.path, plan.document, plan.revision);
+      updated.push({ path: plan.path, changedTokens: plan.changed });
+    }
+    return { updated, changedTokens: updated.reduce((sum, item) => sum + item.changedTokens, 0) };
   }
 
 }
