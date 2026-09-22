@@ -191,6 +191,12 @@ export class BoardRepository {
           }
         } else {
           await this.target(newPath, true);
+          try {
+            await fs.lstat(destination);
+            throw new CampaignError('collision', 'Esiste già una board con questo nome.');
+          } catch (error) {
+            if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error;
+          }
           await fs.rename(source, destination);
         }
         return await this.readBoard(newPath);
