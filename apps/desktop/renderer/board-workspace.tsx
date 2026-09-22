@@ -299,7 +299,7 @@ export function BoardWorkspace({
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardOpenReply;
     setSession({ snapshot: data.snapshot, state: 'clean', recovery: data.recovery });
-    setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMessage(undefined);
+    setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setExcerptEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMessage(undefined);
     history.current = { past: [], future: [] };
   }, [command, save, setSelection]);
 
@@ -759,7 +759,7 @@ export function BoardWorkspace({
         return;
       }
       if (event.key === 'Escape') {
-        setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMarquee(undefined); setMessage(undefined); setTool('select');
+        setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setExcerptEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMarquee(undefined); setMessage(undefined); setTool('select');
       }
     };
     window.addEventListener('keydown', handler); return () => window.removeEventListener('keydown', handler);
@@ -771,6 +771,7 @@ export function BoardWorkspace({
   const selection = selectedElements();
   const sameGroup = selection.length > 0 && !!selection[0].groupId && selection.every(element => element.groupId === selection[0].groupId);
   const allLocked = selection.length > 0 && selection.every(element => element.locked);
+  const allVisible = selection.length > 0 && selection.every(element => element.visibleByDefault === true);
   const saveLabel = session?.state === 'clean' ? 'Salvata' : session?.state === 'saving' ? 'Salvataggio…' : session?.state === 'conflict' ? 'Conflitto' : session?.state === 'error' ? 'Errore' : 'Da salvare';
   const toolLabels: Record<Tool, string> = { select: 'Seleziona', hand: 'Mano', text: 'Testo', image: 'Immagine', token: 'Token', link: 'Collegamento' };
 
@@ -779,6 +780,13 @@ export function BoardWorkspace({
       <div className="boards-list-heading"><div><span className="eyebrow">V0.2</span><h2>Board</h2></div><button title="Aggiorna elenco" onClick={() => void refreshList()}>↻</button></div>
       <form className="board-new" onSubmit={event => { event.preventDefault(); void createBoard(); }}><input aria-label="Nome nuova board" placeholder="Nuova board…" value={newTitle} onChange={event => setNewTitle(event.target.value)} /><button type="submit" disabled={!newTitle.trim()}>+</button></form>
       <nav>{boards.map(board => <button key={board.boardId} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => void openBoard(board.path)}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
+      <section className="board-note-sources">
+        <div className="board-note-sources-heading"><strong>Note</strong><small>Trascina sulla board</small></div>
+        <div className="board-note-source-list">
+          {noteIds.map(noteId => <button key={noteId} draggable onDragStart={event => { event.dataTransfer.setData('application/x-campaign-note', noteId); event.dataTransfer.effectAllowed = 'copy'; }} title={noteId}><span>{noteTitle(noteId)}</span><small>{noteId}</small></button>)}
+          {!noteIds.length && <p>Nessuna nota salvata.</p>}
+        </div>
+      </section>
     </aside>
     <section className="board-main">
       {!session ? <div className="board-empty"><span>◇</span><h1>Prepara una scena</h1><p>Le board restano nella cartella della campagna e funzionano offline.</p></div> : <>
@@ -800,6 +808,7 @@ export function BoardWorkspace({
               <button onClick={duplicateSelection} title="Duplica (Ctrl+D)">Duplica</button>
               <button onClick={() => groupSelection(sameGroup)} disabled={!sameGroup && selection.length < 2} title={sameGroup ? 'Separa gruppo (Ctrl+Shift+G)' : 'Raggruppa (Ctrl+G)'}>{sameGroup ? 'Separa' : 'Raggruppa'}</button>
               <button onClick={toggleLock}>{allLocked ? 'Sblocca' : 'Blocca'}</button>
+              <button aria-pressed={allVisible} onClick={toggleVisibility}>{allVisible ? 'Privata' : 'Visibile ai giocatori'}</button>
               <button onClick={() => zOrder('back')}>Sfondo</button><button onClick={() => zOrder('backward')}>Indietro</button><button onClick={() => zOrder('forward')}>Avanti</button><button onClick={() => zOrder('front')}>Primo piano</button>
               {currentElement?.type === 'token' && <button onClick={() => tokenAvatarInput.current?.click()}>Avatar…</button>}
               {currentElement?.type === 'link' && <button onClick={() => changeElement(currentElement.elementId, element => element.type === 'link' ? { ...element, arrow: element.arrow === 'end' ? 'none' : 'end' } : element)}>{currentElement.arrow === 'end' ? 'Togli freccia' : 'Aggiungi freccia'}</button>}
@@ -811,8 +820,17 @@ export function BoardWorkspace({
         <input ref={imageInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importImageElement(file); event.currentTarget.value = ''; }} />
         <input ref={tokenAvatarInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importTokenAvatar(file); event.currentTarget.value = ''; }} />
         <div ref={viewport} className={`board-viewport tool-${tool}`} onPointerDown={viewportPointerDown} onWheel={zoom}
-          onDragOver={event => { if ([...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
-          onDrop={event => { const file = event.dataTransfer.files?.[0]; if (!file) return; event.preventDefault(); void importImageElement(file, worldPoint(event.clientX, event.clientY)); }}>
+          onDragOver={event => { if (event.dataTransfer.types.includes('application/x-campaign-note') || [...event.dataTransfer.items].some(item => item.kind === 'file')) event.preventDefault(); }}
+          onDrop={event => {
+            const noteId = event.dataTransfer.getData('application/x-campaign-note');
+            if (noteId && noteIds.includes(noteId)) {
+              event.preventDefault();
+              placeCard({ kind: 'note', sourceNoteId: noteId, title: noteTitle(noteId) }, worldPoint(event.clientX, event.clientY));
+              return;
+            }
+            const file = event.dataTransfer.files?.[0]; if (!file) return;
+            event.preventDefault(); void importImageElement(file, worldPoint(event.clientX, event.clientY));
+          }}>
           <div className="board-stage" style={{ transform: `translate(${session.snapshot.document.camera.x}px, ${session.snapshot.document.camera.y}px) scale(${session.snapshot.document.camera.zoom})` }}>
             {session.snapshot.document.elements.slice().sort(byZ).map(element => {
               if (element.type === 'link') return <BoardLinkVisual key={element.elementId} element={element} document={session.snapshot.document} selected={selectedIds.includes(element.elementId)} selectable={tool === 'select'}
@@ -832,11 +850,29 @@ export function BoardWorkspace({
                     : <div className="board-text-content" onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTextEditing({ elementId: element.elementId, text: element.text }); }}>{element.text}</div>
                   : element.type === 'image'
                     ? <BoardImage element={element} command={command} />
-                    : tokenEditing?.elementId === element.elementId
-                      ? <input className="board-token-editor" autoFocus value={tokenEditing.name} onPointerDown={event => event.stopPropagation()} onChange={event => setTokenEditing({ elementId: element.elementId, name: event.target.value })} onBlur={commitTokenEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTokenEditing(undefined); } if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
-                      : <div onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTokenEditing({ elementId: element.elementId, name: element.name }); }}><BoardToken element={element} command={command} /></div>}
+                    : element.type === 'token'
+                      ? tokenEditing?.elementId === element.elementId
+                        ? <input className="board-token-editor" autoFocus value={tokenEditing.name} onPointerDown={event => event.stopPropagation()} onChange={event => setTokenEditing({ elementId: element.elementId, name: event.target.value })} onBlur={commitTokenEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTokenEditing(undefined); } if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+                        : <div onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setTokenEditing({ elementId: element.elementId, name: element.name }); }}><BoardToken element={element} command={command} /></div>
+                      : element.type === 'note-card'
+                        ? <div className="board-card-content">
+                            <span className="board-card-kind">Nota collegata</span>
+                            <strong>{element.title}</strong>
+                            <small>{element.sourceNoteId}</small>
+                            {!noteIds.includes(element.sourceNoteId) && <span className="board-card-warning">Sorgente non disponibile</span>}
+                            {noteIds.includes(element.sourceNoteId) && <button className="board-card-open" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onOpenNote?.(element.sourceNoteId); }}>Apri nota</button>}
+                          </div>
+                        : <div className="board-card-content board-card-excerpt-content">
+                            <span className="board-card-kind">Estratto · {element.sourceTitle}</span>
+                            {!noteIds.includes(element.sourceNoteId) && <span className="board-card-warning">Sorgente non disponibile</span>}
+                            {excerptEditing?.elementId === element.elementId
+                              ? <textarea className="board-excerpt-editor" autoFocus value={excerptEditing.text} onPointerDown={event => event.stopPropagation()} onChange={event => setExcerptEditing({ elementId: element.elementId, text: event.target.value })} onBlur={commitExcerptEdit} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setExcerptEditing(undefined); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />
+                              : <div className="board-card-excerpt" onDoubleClick={event => { event.stopPropagation(); if (!element.locked) setExcerptEditing({ elementId: element.elementId, text: element.excerpt }); }}>{element.excerpt}</div>}
+                            {noteIds.includes(element.sourceNoteId) && <button className="board-card-open" onPointerDown={event => event.stopPropagation()} onClick={event => { event.stopPropagation(); onOpenNote?.(element.sourceNoteId); }}>Apri sorgente</button>}
+                          </div>}
                 {selected && selectedIds.length === 1 && !element.locked && <button className="board-resize" aria-label="Ridimensiona elemento" onPointerDown={event => beginResize(event, element)} />}
                 {element.locked && <span className="board-lock-badge">Bloccato</span>}
+                {element.visibleByDefault === true && <span className="board-visibility-badge">Visibile</span>}
               </div>;
             })}
             {marquee && <div className="board-marquee" style={{ left: Math.min(marquee.start.x, marquee.end.x), top: Math.min(marquee.start.y, marquee.end.y), width: Math.abs(marquee.end.x - marquee.start.x), height: Math.abs(marquee.end.y - marquee.start.y) }} />}
