@@ -7,6 +7,8 @@ import path from 'node:path';
 import type { FSWatcher } from 'node:fs';
 import { CampaignError, type RecoveryDraft, type RecoveryTarget, type NoteSnapshot, type VaultEntry } from '../../../packages/core/src/index';
 import { CampaignRepository, ioError } from '../infrastructure/campaign-repository';
+import { BoardRepository } from '../infrastructure/board-repository';
+import { remapBoardNoteSources } from './board-types';
 import { LocalStore, type Preferences } from '../infrastructure/local-store';
 export interface DocumentSession { sessionId?: string; draft?: { id: string; parentFolder: string; manualTitle?: string }; noteId: string; markdown: string; baseRevision: string; state: 'clean' | 'dirty' | 'saving' | 'error' | 'conflict' | 'missing'; recoveryKey?: string; recoveryTarget?: RecoveryTarget; protected: boolean; error?: string; disk?: NoteSnapshot }
 export interface WorkspaceTab { id: string; document?: DocumentSession; history: string[]; historyIndex: number }
@@ -374,6 +376,13 @@ export class CampaignService {
     await this.refresh(); await this.persistUi();
   }
   private async remap(oldId: string, newId: string): Promise<void> {
+    const repo = this.requiredRepo();
+    const boardRepo = new BoardRepository(repo.root, repo.metadata.campaignId);
+    await boardRepo.remapNoteSources(oldId, newId);
+    for (const item of await this.store.listBoardRecovery(repo.metadata.campaignId)) {
+      const document = remapBoardNoteSources(item.draft.document, oldId, newId);
+      if (document !== item.draft.document) await this.store.putBoardRecovery({ ...item.draft, document });
+    }
     const map = (id: string) => remapPath(id, oldId, newId);
     for (const tab of this.state.tabs) { if (tab.document && !tab.document.draft) tab.document.noteId = map(tab.document.noteId); if (tab.document?.draft) tab.document.draft.parentFolder = map(tab.document.draft.parentFolder); tab.history = tab.history.map(map); }
     for (const key of ['favorites', 'recentNotes', 'expandedFolders'] as const) this.state.ui[key] = this.state.ui[key].map(map);
