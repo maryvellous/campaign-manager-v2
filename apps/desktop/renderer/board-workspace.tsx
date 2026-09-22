@@ -400,6 +400,14 @@ export function BoardWorkspace({
     applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => selected.has(element.elementId) ? { ...element, locked: !allLocked } : element) });
   }, [applyDocument]);
 
+  const toggleVisibility = useCallback(() => {
+    const current = sessionRef.current; if (!current || !selectedRef.current.length) return;
+    const selected = new Set(selectedRef.current);
+    const chosen = current.snapshot.document.elements.filter(element => selected.has(element.elementId));
+    const allVisible = chosen.length > 0 && chosen.every(element => element.visibleByDefault === true);
+    applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => selected.has(element.elementId) ? { ...element, visibleByDefault: !allVisible } : element) });
+  }, [applyDocument]);
+
   const groupSelection = useCallback((ungroup = false) => {
     const current = sessionRef.current; if (!current || selectedRef.current.length < (ungroup ? 1 : 2)) return;
     const selected = new Set(selectedRef.current);
@@ -536,6 +544,14 @@ export function BoardWorkspace({
     changeElement(edit.elementId, element => element.type === 'text' ? { ...element, text: edit.text.trim() } : element);
   };
 
+  const commitExcerptEdit = () => {
+    const edit = excerptEditing; if (!edit) return;
+    setExcerptEditing(undefined);
+    const existing = sessionRef.current?.snapshot.document.elements.find(element => element.elementId === edit.elementId);
+    if (!existing || existing.type !== 'excerpt-card' || existing.excerpt === edit.text) return;
+    changeElement(edit.elementId, element => element.type === 'excerpt-card' ? { ...element, excerpt: edit.text } : element);
+  };
+
   const commitTokenEdit = () => {
     const edit = tokenEditing; if (!edit) return;
     setTokenEditing(undefined);
@@ -581,6 +597,41 @@ export function BoardWorkspace({
     const camera = current.snapshot.document.camera;
     return { x: (clientX - rect.left - camera.x) / camera.zoom, y: (clientY - rect.top - camera.y) / camera.zoom };
   };
+
+  const placeCard = useCallback((card: BoardIncomingCard, world?: Point): boolean => {
+    const current = sessionRef.current; if (!current) return false;
+    const rect = viewport.current?.getBoundingClientRect();
+    const camera = current.snapshot.document.camera;
+    const center = rect
+      ? { x: (rect.width / 2 - camera.x) / camera.zoom, y: (rect.height / 2 - camera.y) / camera.zoom }
+      : { x: 180, y: 160 };
+    const point = world ?? center;
+    const common = {
+      elementId: crypto.randomUUID(),
+      x: point.x - 140,
+      y: point.y - (card.kind === 'excerpt' ? 85 : 55),
+      width: 280,
+      height: card.kind === 'excerpt' ? 170 : 110,
+      z: nextZ(current.snapshot.document),
+      locked: false,
+      visibleByDefault: false
+    };
+    const element: BoardNoteCardElement | BoardExcerptCardElement = card.kind === 'note'
+      ? { ...common, type: 'note-card', sourceNoteId: card.sourceNoteId, title: card.title }
+      : { ...common, type: 'excerpt-card', sourceNoteId: card.sourceNoteId, sourceTitle: card.sourceTitle, excerpt: card.excerpt };
+    applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
+    setSelection([element.elementId]); setTool('select'); setMessage(undefined);
+    return true;
+  }, [applyDocument, setSelection]);
+
+  useEffect(() => {
+    if (!incomingCard) return;
+    if (!sessionRef.current) {
+      setMessage('Apri o crea una board per aggiungere la card.');
+      return;
+    }
+    if (placeCard(incomingCard)) onIncomingConsumed?.();
+  }, [incomingCard, onIncomingConsumed, placeCard, session?.snapshot.path]);
 
   const linkEndpoint = (endpoint: BoardLinkEndpoint) => {
     const current = sessionRef.current; if (!current) return;
