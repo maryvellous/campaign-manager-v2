@@ -5,5 +5,5 @@
     "esModuleInterop": true, "skipLibCheck": true, "noEmit": true,
     "types": ["node"]
   },
-  "include": ["apps", "packages", "tests"]
+  "include": ["apps", "packages", "services", "tests"]
 }
