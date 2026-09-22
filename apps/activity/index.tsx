@@ -50,6 +50,28 @@ function assetUrl(liveSessionId: string, publishedAssetId: string): string {
   return `/api/sessions/${encodeURIComponent(liveSessionId)}/assets/${encodeURIComponent(publishedAssetId)}`;
 }
 
+function useAuthorizedAsset(liveSessionId: string, publishedAssetId: string | undefined, credential: string) {
+  const [url, setUrl] = useState<string>();
+  const [failed, setFailed] = useState(false);
+  useEffect(() => {
+    let alive = true;
+    let objectUrl: string | undefined;
+    setUrl(undefined); setFailed(false);
+    if (!publishedAssetId) return () => { alive = false; };
+    void fetch(assetUrl(liveSessionId, publishedAssetId), { headers: { authorization: `Bearer ${credential}` } }).then(async response => {
+      if (!response.ok) throw new Error('asset unavailable');
+      const blob = await response.blob();
+      if (!alive) return;
+      objectUrl = URL.createObjectURL(blob); setUrl(objectUrl);
+    }).catch(() => { if (alive) setFailed(true); });
+    return () => {
+      alive = false;
+      if (objectUrl) URL.revokeObjectURL(objectUrl);
+    };
+  }, [credential, liveSessionId, publishedAssetId]);
+  return { url, failed };
+}
+
 async function api<T>(path: string, body: unknown): Promise<{ ok: true; value: T } | { ok: false; error: ApiFailure }> {
   try {
     const response = await fetch(path, {
@@ -80,17 +102,19 @@ function endpointPoint(board: LiveBoardSnapshot, endpoint: LiveBoardEndpoint): {
   return { x: target.x + target.width / 2, y: target.y + target.height / 2 };
 }
 
-function BoardElementView({ element, sessionId }: { element: Exclude<LiveBoardElement, { type: 'link' }>; sessionId: string }) {
+function BoardElementView({ element, sessionId, credential }: { element: Exclude<LiveBoardElement, { type: 'link' }>; sessionId: string; credential: string }) {
+  const assetId = element.type === 'image' ? element.publishedAssetId : element.type === 'token' ? element.publishedAssetId : undefined;
+  const asset = useAuthorizedAsset(sessionId, assetId, credential);
   if (element.type === 'text') return <div className="player-board-text">{element.text}</div>;
-  if (element.type === 'image') return <img className="player-board-image" draggable={false} src={assetUrl(sessionId, element.publishedAssetId)} alt="" />;
+  if (element.type === 'image') return asset.url ? <img className="player-board-image" draggable={false} src={asset.url} alt="" /> : <div className="player-board-asset-state">{asset.failed ? 'Immagine non disponibile' : 'Caricamento…'}</div>;
   if (element.type === 'token') {
     const initials = element.name.trim().split(/\s+/u).slice(0, 2).map(part => part[0]?.toUpperCase()).join('') || '•';
-    return <div className="player-board-token">{element.publishedAssetId ? <img draggable={false} src={assetUrl(sessionId, element.publishedAssetId)} alt="" /> : <span>{initials}</span>}<small>{element.name}</small></div>;
+    return <div className="player-board-token">{asset.url ? <img draggable={false} src={asset.url} alt="" /> : <span title={asset.failed ? 'Avatar non disponibile' : undefined}>{initials}</span>}<small>{element.name}</small></div>;
   }
   return <div className="player-board-card"><span>{element.cardKind === 'excerpt' ? 'Estratto' : 'Nota'}</span><strong>{element.sourceTitle}</strong>{element.cardKind === 'excerpt' && <p>{element.excerpt}</p>}</div>;
 }
 
-function PlayerBoard({ board, sessionId, connected }: { board: LiveBoardSnapshot; sessionId: string; connected: boolean }) {
+function PlayerBoard({ board, sessionId, credential, connected }: { board: LiveBoardSnapshot; sessionId: string; credential: string; connected: boolean }) {
   const viewport = useRef<HTMLDivElement>(null);
   const [camera, setCamera] = useState<Camera>({ x: 40, y: 40, zoom: 1 });
 
@@ -140,7 +164,7 @@ function PlayerBoard({ board, sessionId, connected }: { board: LiveBoardSnapshot
             const markerId = `activity-arrow-${element.elementId}`;
             return <svg key={element.elementId} className="player-link-layer" style={{ zIndex: element.z }} aria-hidden="true"><defs><marker id={markerId} markerWidth="9" markerHeight="9" refX="8" refY="4.5" orient="auto"><path d="M0,0 L9,4.5 L0,9 z" /></marker></defs><line x1={from.x} y1={from.y} x2={to.x} y2={to.y} markerEnd={element.arrow === 'end' ? `url(#${markerId})` : undefined} /></svg>;
           }
-          return <div key={element.elementId} className={`player-board-element type-${element.type}`} style={{ left: element.x, top: element.y, width: element.width, height: element.height, zIndex: element.z }}><BoardElementView element={element} sessionId={sessionId} /></div>;
+          return <div key={element.elementId} className={`player-board-element type-${element.type}`} style={{ left: element.x, top: element.y, width: element.width, height: element.height, zIndex: element.z }}><BoardElementView element={element} sessionId={sessionId} credential={credential} /></div>;
         })}
       </div>
     </div>
@@ -333,7 +357,7 @@ function App() {
       <p>{lifecycle === 'host_reconnecting' ? 'Il master si sta riconnettendo. La sessione riprenderà quando torna online.' : 'Il master non sta condividendo una board in questo momento.'}</p>
       <small>Puoi lasciare aperta questa pagina.</small>
     </section>}
-    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} connected={connected} />}
+    {screen === 'board' && board && resume && <PlayerBoard board={board} sessionId={resume.liveSessionId} credential={resume.resumeCredential} connected={connected} />}
     {screen === 'ended' && <section className="waiting-card"><h1>Sessione non disponibile.</h1><p>{error?.message ?? 'Questa sessione è terminata.'}</p><button onClick={leaveLocalResume}>Inserisci un altro codice</button></section>}
     {error && screen === 'join' && <div className="player-error" role="alert">{error.message}</div>}
   </main>;
