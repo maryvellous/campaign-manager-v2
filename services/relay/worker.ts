@@ -14,6 +14,9 @@ import {
   validateTokenMovePayload,
   validatePingPayload,
   validateCameraFocusPayload,
+  validateActivityPairRequest,
+  type ActivityBindingStatus,
+  type ActivityPairingResponse,
   type ConnectionReadyPayload,
   type LiveApiError,
   type LiveBoardElement,
@@ -23,6 +26,7 @@ import {
 import {
   createResponse,
   LiveSessionModel,
+  randomActivityPairingCode,
   randomJoinCode,
   randomOpaque,
   SessionDirectoryModel,
@@ -69,6 +73,7 @@ export interface Env {
   SESSION_DIRECTORY: DurableObjectNamespaceLike;
   LIVE_ASSETS: R2BucketLike;
   ASSETS: AssetBinding;
+  DISCORD_CLIENT_ID?: string;
 }
 
 declare const WebSocketPair: {
@@ -185,11 +190,45 @@ async function reserveCode(env: Env, liveSessionId: string): Promise<string> {
   throw new Error('Unable to reserve join code');
 }
 
+async function reserveActivityPairing(env: Env, liveSessionId: string): Promise<ActivityPairingResponse> {
+  for (let attempt = 0; attempt < 8; attempt++) {
+    const pairingCode = randomActivityPairingCode();
+    const response = await directoryCall(env, '/pairing-reserve', { pairingCode, liveSessionId });
+    if (!response.ok) continue;
+    const value = await response.json() as { expiresAt?: unknown };
+    if (typeof value.expiresAt === 'number' && Number.isSafeInteger(value.expiresAt)) return { pairingCode, expiresAt: value.expiresAt };
+  }
+  throw new Error('Unable to reserve activity pairing code');
+}
+
 export class SessionDirectory {
+  private pairAttempts = new Map<string, { startedAt: number; count: number }>();
+
   constructor(private readonly state: DurableObjectStateLike) {}
 
   private async model(): Promise<SessionDirectoryModel> {
-    return new SessionDirectoryModel(await this.state.storage.get<Record<string, string>>('codes') ?? {});
+    return new SessionDirectoryModel(
+      await this.state.storage.get<Record<string, string>>('codes') ?? {},
+      await this.state.storage.get('pairings') ?? {},
+      await this.state.storage.get('activityBindings') ?? {}
+    );
+  }
+
+  private async persist(model: SessionDirectoryModel): Promise<void> {
+    await this.state.storage.put('codes', model.codes);
+    await this.state.storage.put('pairings', model.pairings);
+    await this.state.storage.put('activityBindings', model.activityBindings);
+  }
+
+  private allowPairAttempt(instanceId: string, now = Date.now()): boolean {
+    const current = this.pairAttempts.get(instanceId);
+    if (!current || now - current.startedAt >= 60_000) {
+      this.pairAttempts.set(instanceId, { startedAt: now, count: 1 });
+      return true;
+    }
+    if (current.count >= 8) return false;
+    current.count += 1;
+    return true;
   }
 
   async fetch(request: Request): Promise<Response> {
@@ -202,6 +241,20 @@ export class SessionDirectory {
       return liveSessionId ? json({ liveSessionId }) : json(safeError('CODE_INVALID', 'Codice sessione non valido.'), 404);
     }
 
+    if (request.method === 'GET' && url.pathname === '/activity-binding') {
+      const instanceId = url.searchParams.get('instanceId') ?? '';
+      const binding = instanceId ? model.activityBinding(instanceId) : undefined;
+      const status: ActivityBindingStatus = binding ? { bound: true, pairedAt: binding.pairedAt } : { bound: false };
+      return json(status);
+    }
+
+    if (request.method === 'GET' && url.pathname === '/activity-binding-session') {
+      const liveSessionId = url.searchParams.get('liveSessionId') ?? '';
+      const binding = liveSessionId ? model.activityBindingForSession(liveSessionId) : undefined;
+      const status: ActivityBindingStatus = binding ? { bound: true, instanceId: binding.instanceId, pairedAt: binding.pairedAt } : { bound: false };
+      return json(status);
+    }
+
     if (request.method !== 'POST') return json(safeError('PAYLOAD_INVALID', 'Metodo non supportato.'), 405);
     const body = await requestJson(request);
     if (!body || typeof body !== 'object' || Array.isArray(body)) return json(safeError('PAYLOAD_INVALID', 'Richiesta non valida.'), 400);
@@ -211,13 +264,32 @@ export class SessionDirectory {
 
     if (url.pathname === '/reserve') {
       if (!joinCode || !liveSessionId || !model.reserve(joinCode, liveSessionId)) return json(safeError('CODE_INVALID', 'Codice non disponibile.'), 409);
-      await this.state.storage.put('codes', model.codes);
+      await this.persist(model);
       return json({ ok: true });
+    }
+
+    if (url.pathname === '/pairing-reserve') {
+      const pairingCode = typeof data.pairingCode === 'string' ? data.pairingCode : '';
+      const pairing = pairingCode && liveSessionId ? model.reserveActivityPairing(pairingCode, liveSessionId) : undefined;
+      if (!pairing) return json(safeError('CODE_INVALID', 'Codice pairing non disponibile.'), 409);
+      await this.persist(model);
+      return json({ expiresAt: pairing.expiresAt });
+    }
+
+    if (url.pathname === '/pairing-consume') {
+      const pairingCode = typeof data.pairingCode === 'string' ? data.pairingCode : '';
+      const instanceId = typeof data.instanceId === 'string' ? data.instanceId : '';
+      if (!pairingCode || !instanceId) return json(safeError('PAYLOAD_INVALID', 'Pairing non valido.'), 400);
+      if (!this.allowPairAttempt(instanceId)) return json(safeError('RATE_LIMITED', 'Troppi tentativi di pairing.'), 429);
+      const binding = model.consumeActivityPairing(pairingCode, instanceId);
+      if (!binding) return json(safeError('CODE_INVALID', 'Pairing scaduto, già usato o non valido.'), 400);
+      await this.persist(model);
+      return json({ bound: true });
     }
 
     if (url.pathname === '/remove') {
       model.remove(joinCode, liveSessionId);
-      await this.state.storage.put('codes', model.codes);
+      await this.persist(model);
       return json({ ok: true });
     }
 
