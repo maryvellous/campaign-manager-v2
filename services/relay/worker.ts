@@ -1,6 +1,7 @@
 import {
   envelope,
   safeError,
+  validateEnvelope,
   validateJoinPolicy,
   validateJoinRequest,
   validateResumeRequest,
@@ -332,7 +333,12 @@ export class LiveSession {
     }
     let value: unknown;
     try { value = JSON.parse(message); } catch { value = undefined; }
-    if (!value || typeof value !== 'object') {
+    if (value && typeof value === 'object' && !Array.isArray(value) && 'protocolVersion' in value && (value as { protocolVersion?: unknown }).protocolVersion !== 1) {
+      this.send(webSocket, 'request.rejected', { error: { code: 'PROTOCOL_VERSION_UNSUPPORTED', message: 'Versione protocollo non supportata.' } });
+      return;
+    }
+    const inbound = validateEnvelope(value);
+    if (!inbound) {
       this.send(webSocket, 'request.rejected', { error: { code: 'PAYLOAD_INVALID', message: 'Messaggio non valido.' } });
       return;
     }
