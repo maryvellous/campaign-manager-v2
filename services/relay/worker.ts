@@ -225,12 +225,22 @@ export class LiveSession {
     for (const socket of this.state.getWebSockets('host')) this.send(socket, 'session.state', summary);
   }
 
+  private sendPlayerSnapshot(model: LiveSessionModel, socket: WebSocket): void {
+    const snapshot = model.playerSnapshot();
+    if (snapshot.presentation === 'board') this.send(socket, 'board.snapshot', snapshot.board);
+    else this.send(socket, 'presentation.waiting', snapshot);
+  }
+
+  private broadcastPlayerSnapshot(model: LiveSessionModel): void {
+    for (const socket of this.state.getWebSockets('player')) this.sendPlayerSnapshot(model, socket);
+  }
+
   private playersLifecycle(model: LiveSessionModel): void {
     const summary = model.summary();
     for (const socket of this.state.getWebSockets('player')) {
       this.send(socket, 'session.state', {
         lifecycle: summary.lifecycle,
-        presentation: 'waiting',
+        presentation: summary.presentation,
         stateSeq: summary.stateSeq
       });
     }
@@ -242,12 +252,12 @@ export class LiveSession {
       role: identity.role,
       lifecycle: summary.lifecycle,
       stateSeq: summary.stateSeq,
-      presentation: 'waiting',
+      presentation: summary.presentation,
       ...(identity.participantId ? { participantId: identity.participantId } : {})
     };
     this.send(socket, 'connection.ready', payload);
     if (identity.role === 'host') this.send(socket, 'session.state', summary);
-    else this.send(socket, 'presentation.waiting', { lifecycle: summary.lifecycle, presentation: 'waiting', stateSeq: summary.stateSeq, acceptingJoins: summary.acceptingJoins });
+    else this.sendPlayerSnapshot(model, socket);
   }
 
   async fetch(request: Request): Promise<Response> {
