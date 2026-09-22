@@ -95,7 +95,7 @@ export interface SessionSummary {
 const object = (value: unknown): value is Record<string, unknown> => !!value && typeof value === 'object' && !Array.isArray(value);
 const cleanString = (value: unknown, max: number): value is string => typeof value === 'string' && value.length > 0 && value.length <= max && value.trim() === value;
 const opaqueId = (value: unknown): value is string => cleanString(value, 128) && /^[A-Za-z0-9_-]+$/u.test(value);
-const displayName = (value: unknown): value is string => cleanString(value, 80) && !/[\u0000-\u001f\u007f]/u.test(value);
+const displayName = (value: unknown): value is string => cleanString(value, 80) && [...value].every(character => { const code = character.charCodeAt(0); return code > 31 && code !== 127; });
 const joinCode = (value: unknown): value is string => cleanString(value, 32) && /^[A-Z2-9]{4}(?:-[A-Z2-9]{4})?$/u.test(value);
 
 export function validateJoinRequest(value: unknown): JoinSessionRequest | undefined {
