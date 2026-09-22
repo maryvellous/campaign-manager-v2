@@ -363,6 +363,12 @@ export class LiveSession {
       return resultResponse(await model.authorizeAssetUpload(credential));
     }
 
+    if (request.method === 'GET' && url.pathname === '/asset-read-authorize') {
+      const credential = bearer(request);
+      if (!credential) return json(safeError('AUTH_FAILED', 'Credenziale asset mancante.'), 401);
+      return resultResponse(await model.authorizeAssetRead(credential));
+    }
+
     if (request.method === 'POST' && url.pathname === '/publish-board') {
       const credential = bearer(request); const input = validatePublishBoardRequest(await requestJson(request));
       if (!credential || !input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
@@ -547,13 +553,16 @@ export default {
 
     const assetMatch = tail.match(/^\/assets\/([A-Za-z0-9_-]+)$/u);
     if (request.method === 'GET' && assetMatch) {
+      const authorized = await forwardSession(env, liveSessionId, '/asset-read-authorize', request);
+      if (!authorized.ok) return authorized;
       const publishedAssetId = assetMatch[1];
       const object = await env.LIVE_ASSETS.get(`${liveSessionId}/${publishedAssetId}`);
       if (!object?.body) return json(safeError('ASSET_UNAVAILABLE', 'Asset live non disponibile.'), 404);
       return new Response(object.body, {
         headers: {
           'content-type': object.httpMetadata?.contentType ?? 'application/octet-stream',
-          'cache-control': 'private, max-age=3600'
+          'cache-control': 'private, max-age=3600',
+          'x-content-type-options': 'nosniff'
         }
       });
     }
