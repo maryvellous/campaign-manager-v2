@@ -79,11 +79,16 @@ function json(value: unknown, status = 200): Response {
 function errorStatus(error: LiveApiError): number {
   switch (error.error.code) {
     case 'AUTH_FAILED': return 401;
-    case 'PERMISSION_DENIED': return 403;
+    case 'PERMISSION_DENIED':
+    case 'TOKEN_NOT_CONTROLLABLE': return 403;
     case 'SESSION_NOT_FOUND': return 404;
     case 'SESSION_ENDED': return 410;
     case 'JOIN_LOCKED':
-    case 'HOST_OFFLINE': return 409;
+    case 'HOST_OFFLINE':
+    case 'BOARD_NOT_ACTIVE':
+    case 'ASSET_UNAVAILABLE':
+    case 'STALE_STATE': return 409;
+    case 'RATE_LIMITED': return 429;
     case 'CODE_INVALID':
     case 'PAYLOAD_INVALID': return 400;
     default: return 500;
@@ -540,9 +545,65 @@ export default {
       return sessionStub(env, liveSessionId).fetch(request);
     }
 
+    const assetMatch = tail.match(/^\/assets\/([A-Za-z0-9_-]+)$/u);
+    if (request.method === 'GET' && assetMatch) {
+      const publishedAssetId = assetMatch[1];
+      const object = await env.LIVE_ASSETS.get(`${liveSessionId}/${publishedAssetId}`);
+      if (!object?.body) return json(safeError('ASSET_UNAVAILABLE', 'Asset live non disponibile.'), 404);
+      return new Response(object.body, {
+        headers: {
+          'content-type': object.httpMetadata?.contentType ?? 'application/octet-stream',
+          'cache-control': 'private, max-age=3600'
+        }
+      });
+    }
+
+    if (request.method === 'POST' && tail === '/assets') {
+      const authorized = await forwardSession(env, liveSessionId, '/asset-authorize', request);
+      if (!authorized.ok) return authorized;
+      const declared = (request.headers.get('content-type') ?? '').split(';', 1)[0].trim().toLowerCase();
+      if (!['image/png', 'image/jpeg', 'image/webp'].includes(declared)) return json(safeError('PAYLOAD_INVALID', 'Formato asset live non supportato.'), 400);
+      const contentLength = Number(request.headers.get('content-length') ?? '0');
+      if (Number.isFinite(contentLength) && contentLength > 20 * 1024 * 1024) return json(safeError('PAYLOAD_INVALID', 'Asset live troppo grande.'), 413);
+      const bytes = new Uint8Array(await request.arrayBuffer());
+      const mime = imageMime(bytes, declared);
+      if (!bytes.length || bytes.length > 20 * 1024 * 1024 || !mime) return json(safeError('PAYLOAD_INVALID', 'Asset live non valido.'), 400);
+      const publishedAssetId = randomOpaque('asset', 18);
+      await env.LIVE_ASSETS.put(`${liveSessionId}/${publishedAssetId}`, bytes, { httpMetadata: { contentType: mime } });
+      return json({ publishedAssetId }, 201);
+    }
+
     if (request.method === 'GET' && !tail) return forwardSession(env, liveSessionId, '/summary', request);
     if (request.method === 'POST' && tail === '/host-ticket') return forwardSession(env, liveSessionId, '/host-ticket', request);
     if (request.method === 'POST' && tail === '/join-policy') return forwardSession(env, liveSessionId, '/join-policy', request, await requestJson(request));
+
+    if (request.method === 'POST' && (tail === '/publish-board' || tail === '/reset-board')) {
+      const input = validatePublishBoardRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      if (!await assetsAvailable(env, liveSessionId, assetIdsFromBoard(input.board))) return json(safeError('ASSET_UNAVAILABLE', 'Uno o più asset della board non sono disponibili.'), 409);
+      return forwardSession(env, liveSessionId, tail, request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/switch-board') {
+      const input = validateBoardIdRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Board live non valida.'), 400);
+      return forwardSession(env, liveSessionId, '/switch-board', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/unpublish') return forwardSession(env, liveSessionId, '/unpublish', request);
+
+    if (request.method === 'POST' && tail === '/reveal') {
+      const input = validateRevealElementRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      if (!await assetsAvailable(env, liveSessionId, assetIdsFromElement(input.element))) return json(safeError('ASSET_UNAVAILABLE', 'Asset dell’elemento non disponibile.'), 409);
+      return forwardSession(env, liveSessionId, '/reveal', request, input);
+    }
+
+    if (request.method === 'POST' && tail === '/hide') {
+      const input = validateHideElementRequest(await requestJson(request));
+      if (!input) return json(safeError('PAYLOAD_INVALID', 'Elemento live non valido.'), 400);
+      return forwardSession(env, liveSessionId, '/hide', request, input);
+    }
 
     if (request.method === 'POST' && tail === '/rotate-code') {
       const authorization = bearer(request);
