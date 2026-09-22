@@ -114,7 +114,11 @@ export function BoardWorkspace({ command }: { command: Command }) {
     void protect(current);
   }, [protect, save]);
 
-  useEffect(() => () => { if (autosaveTimer.current) clearTimeout(autosaveTimer.current); }, []);
+  useEffect(() => () => {
+    if (autosaveTimer.current) clearTimeout(autosaveTimer.current);
+    const current = sessionRef.current;
+    if (current && current.state === 'dirty') void command({ action: 'board:save', path: current.snapshot.path, baseRevision: current.snapshot.revision, document: current.snapshot.document });
+  }, [command]);
 
   const applyDocument = useCallback((document: BoardDocument, remember = true) => {
     const current = sessionRef.current;
@@ -128,8 +132,9 @@ export function BoardWorkspace({ command }: { command: Command }) {
     setSession(next); sessionRef.current = next; scheduleSave(next);
   }, [scheduleSave]);
 
-  const openBoard = useCallback(async (path: string) => {
+  const openBoard = useCallback(async (path: string, force = false) => {
     const current = sessionRef.current;
+    if (current?.snapshot.path === path && !force) return;
     if (current && current.snapshot.path !== path && current.state !== 'clean') {
       const saved = await save(current);
       if (!saved || saved.state !== 'clean') return;
@@ -192,7 +197,9 @@ export function BoardWorkspace({ command }: { command: Command }) {
 
   const reloadDisk = async () => {
     const current = sessionRef.current; if (!current) return;
-    await openBoard(current.snapshot.path);
+    const discarded = await command({ action: 'board:discardRecovery', path: current.snapshot.path });
+    if (!discarded.ok) { setMessage(discarded.error?.message); return; }
+    await openBoard(current.snapshot.path, true);
   };
 
   const overwriteAfterConflict = async () => {
