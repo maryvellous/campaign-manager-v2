@@ -267,7 +267,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     }
     const next = new Set(selectedIds);
     const remove = targets.every(id => next.has(id));
-    for (const id of targets) remove ? next.delete(id) : next.add(id);
+    for (const id of targets) { if (remove) next.delete(id); else next.add(id); }
     const expanded = expandGroupedSelection(sessionRef.current?.snapshot.document.elements ?? [], next);
     setSelectedIds(expanded); setSelectedConnector(undefined);
     return expanded;
@@ -636,7 +636,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); undo(true); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); return; }
-      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g') { event.preventDefault(); event.shiftKey ? ungroupSelected() : groupSelected(); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g') { event.preventDefault(); if (event.shiftKey) ungroupSelected(); else groupSelected(); return; }
       if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelected(); return; }
       if (event.key === 'Escape') {
         setSelectedIds([]); setSelectedConnector(undefined); setConnectionStart(undefined); setMarquee(undefined); setTextDraft(undefined); setTextEditing(undefined); setTokenEditing(undefined); setTool('select'); return;
