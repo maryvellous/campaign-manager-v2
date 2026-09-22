@@ -4,11 +4,29 @@ export type OpenAiModel = 'gpt-5.6-luna' | 'gpt-5.6-terra' | 'gpt-5.6-sol';
 export const OPENAI_MODELS: readonly OpenAiModel[] = ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol'] as const;
 export const DEFAULT_OPENAI_MODEL: OpenAiModel = 'gpt-5.6-luna';
 
+export interface AiSource {
+  noteId: string;
+  title: string;
+  relativePath: string;
+}
+
+export type AiContextSelection =
+  | { kind: 'campaign' }
+  | { kind: 'note'; noteId: string }
+  | { kind: 'selection'; noteId: string; selection: string };
+
+export interface AiPreparedContext {
+  label: string;
+  text: string;
+  sources: AiSource[];
+}
+
 export interface AiMessage {
   id: string;
   role: 'user' | 'assistant';
   content: string;
   createdAt: string;
+  sources?: AiSource[];
 }
 
 export interface AiThread {
@@ -33,6 +51,7 @@ export class AiProviderError extends Error {
 export interface AiCompletionRequest {
   model: OpenAiModel;
   messages: AiMessage[];
+  instructions?: string;
   signal?: AbortSignal;
 }
 
@@ -90,6 +109,7 @@ export class OpenAiProvider implements AiProvider {
         body: JSON.stringify({
           model: request.model,
           input: request.messages.map(message => ({ role: message.role, content: message.content })),
+          ...(request.instructions ? { instructions: request.instructions } : {}),
           store: false,
         }),
         signal: request.signal,
