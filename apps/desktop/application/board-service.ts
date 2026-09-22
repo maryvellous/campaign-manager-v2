@@ -228,7 +228,6 @@ export class BoardService {
       if (!boardPositions.tokens.length) continue;
       const listedBoard = listed.find(board => board.boardId === boardPositions.boardId);
       if (!listedBoard) throw new CampaignError('not_found', `La board locale "${boardPositions.title}" non è più disponibile.`);
-      if (recoveryPaths.has(listedBoard.path)) throw new CampaignError('conflict', `Salva o scarta le modifiche locali di "${listedBoard.title}" prima di applicare le posizioni live.`);
 
       const snapshot = await repo.readBoard(listedBoard.path);
       const positions = new Map(boardPositions.tokens.map(token => [token.tokenId, token]));
@@ -240,7 +239,10 @@ export class BoardService {
         changed += 1;
         return { ...element, x: position.x, y: position.y };
       });
-      if (changed) plans.push({ path: listedBoard.path, revision: snapshot.revision, document: { ...snapshot.document, elements }, changed });
+      if (changed) {
+        if (recoveryPaths.has(listedBoard.path)) throw new CampaignError('conflict', `Salva o scarta le modifiche locali di "${listedBoard.title}" prima di applicare le posizioni live.`);
+        plans.push({ path: listedBoard.path, revision: snapshot.revision, document: { ...snapshot.document, elements }, changed });
+      }
     }
 
     const updated: Array<{ path: string; changedTokens: number }> = [];
