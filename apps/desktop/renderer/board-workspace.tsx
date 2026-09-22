@@ -177,11 +177,15 @@ export function BoardWorkspace({
   noteIds,
   characterTokenRequest,
   onCharacterTokenRequestHandled,
+  activeBoardPath,
+  onActiveBoardPathChange,
 }: {
   command: Command;
   noteIds: string[];
   characterTokenRequest?: CharacterTokenRequest;
   onCharacterTokenRequestHandled?: () => void;
+  activeBoardPath?: string;
+  onActiveBoardPathChange?: (boardPath?: string) => void;
 }) {
   const [boards, setBoards] = useState<BoardListItem[]>([]);
   const [recoveries, setRecoveries] = useState<RecoveryItem[]>([]);
@@ -310,10 +314,16 @@ export function BoardWorkspace({
     const data = reply.data as BoardOpenReply;
     const next: BoardSession = { snapshot: data.snapshot, state: 'clean', recovery: data.recovery };
     setSession(next); sessionRef.current = next;
+    onActiveBoardPathChange?.(boardPath);
     setSelection([]); setTextDraft(undefined); setTextEditing(undefined); setTokenDraft(undefined); setTokenEditing(undefined); setLinkStart(undefined); setMessage(undefined);
     history.current = { past: [], future: [] };
     return true;
-  }, [command, save, setSelection]);
+  }, [command, onActiveBoardPathChange, save, setSelection]);
+
+  useEffect(() => {
+    if (characterTokenRequest || !activeBoardPath || sessionRef.current) return;
+    void openBoard(activeBoardPath).then(opened => { if (!opened) onActiveBoardPathChange?.(undefined); });
+  }, [activeBoardPath, characterTokenRequest, onActiveBoardPathChange, openBoard]);
 
   useEffect(() => {
     let alive = true;
@@ -339,7 +349,8 @@ export function BoardWorkspace({
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardCreateReply;
     setBoards(data.boards); setRecoveries(data.recoveries); setNewTitle('');
-    setSession({ snapshot: data.snapshot, state: 'clean' }); setSelection([]); history.current = { past: [], future: [] };
+    const next: BoardSession = { snapshot: data.snapshot, state: 'clean' };
+    setSession(next); sessionRef.current = next; onActiveBoardPathChange?.(data.snapshot.path); setSelection([]); history.current = { past: [], future: [] };
   };
 
   const renameBoard = async () => {
@@ -350,7 +361,8 @@ export function BoardWorkspace({
     const reply = await command({ action: 'board:rename', path: latest.snapshot.path, title: renameTitle.trim() });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardCreateReply;
-    setBoards(data.boards); setRecoveries(data.recoveries); setSession({ snapshot: data.snapshot, state: 'clean' }); setRenaming(false);
+    const next: BoardSession = { snapshot: data.snapshot, state: 'clean' };
+    setBoards(data.boards); setRecoveries(data.recoveries); setSession(next); sessionRef.current = next; onActiveBoardPathChange?.(data.snapshot.path); setRenaming(false);
   };
 
   const restoreRecovery = () => {
@@ -701,6 +713,7 @@ export function BoardWorkspace({
     const current = sessionRef.current; if (!current) return;
     const point = worldPoint(event.clientX, event.clientY);
     if (characterTokenPlacement && current.snapshot.path === characterTokenPlacement.boardPath) {
+      if (event.button !== 0) return;
       const element: BoardTokenElement = {
         type: 'token',
         elementId: crypto.randomUUID(),
@@ -812,7 +825,7 @@ export function BoardWorkspace({
 
   return <div className="boards-workspace">
     <aside className="boards-list">
-      <div className="boards-list-heading"><div><span className="eyebrow">V0.2</span><h2>Board</h2></div><button title="Aggiorna elenco" onClick={() => void refreshList()}>↻</button></div>
+      <div className="boards-list-heading"><div><span className="eyebrow">V0.6</span><h2>Board</h2></div><button title="Aggiorna elenco" onClick={() => void refreshList()}>↻</button></div>
       <form className="board-new" onSubmit={event => { event.preventDefault(); void createBoard(); }}><input aria-label="Nome nuova board" placeholder="Nuova board…" value={newTitle} onChange={event => setNewTitle(event.target.value)} /><button type="submit" disabled={!newTitle.trim()}>+</button></form>
       <nav>{boards.map(board => <button key={board.boardId} className={session?.snapshot.path === board.path ? 'active' : ''} onClick={() => { if (characterTokenPlacement) { setCharacterTokenPlacement(undefined); onCharacterTokenRequestHandled?.(); } void openBoard(board.path); }}><span>{board.title}</span>{recoveries.some(item => item.draft.boardPath === board.path) && <small>Recovery</small>}</button>)}{!boards.length && <p>Nessuna board. Creane una per preparare una scena.</p>}</nav>
     </aside>
