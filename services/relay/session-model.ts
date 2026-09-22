@@ -191,11 +191,11 @@ export class LiveSessionModel {
   }
 
   private controlledVisibleTokenIds(participantId: string): string[] {
-    return this.record.boards.flatMap(board =>
+    return [...new Set(this.record.boards.flatMap(board =>
       Object.entries(board.tokenControllers)
         .filter(([tokenId, controller]) => controller === participantId && !!this.visibleToken(board, tokenId))
         .map(([tokenId]) => tokenId)
-    );
+    ))];
   }
 
   controllerForToken(boardId: string, tokenId: string): string | undefined {
