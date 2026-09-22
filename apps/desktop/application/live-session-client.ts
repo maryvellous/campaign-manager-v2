@@ -20,6 +20,7 @@ export interface DesktopLiveState {
   stateSeq: number;
   presentation: SessionSummary['presentation'];
   activeBoardId?: string;
+  activeElementIds: string[];
   liveBoards: SessionSummary['liveBoards'];
   error?: string;
 }
@@ -34,6 +35,7 @@ const initialState = (): DesktopLiveState => ({
   participants: [],
   stateSeq: 0,
   presentation: 'waiting',
+  activeElementIds: [],
   liveBoards: []
 });
 
@@ -111,6 +113,7 @@ export class LiveSessionClient {
       stateSeq: summary.stateSeq,
       presentation: summary.presentation,
       ...(summary.activeBoardId ? { activeBoardId: summary.activeBoardId } : { activeBoardId: undefined }),
+      activeElementIds: summary.activeElementIds ?? [],
       liveBoards: summary.liveBoards,
       error: undefined
     };
