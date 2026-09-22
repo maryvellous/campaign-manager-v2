@@ -22,7 +22,7 @@ test('board create/save/reopen keeps stable id and content', async () => {
     const repo = new BoardRepository(fixture.root, fixture.campaignId);
     const created = await repo.createBoard('Taverna');
     assert.equal(created.path, 'Boards/Taverna.board.json');
-    const element: BoardTextElement = { type: 'text', elementId: randomUUID(), text: 'Porta chiusa', x: 40, y: 80, width: 240, height: 100, z: 1, locked: false };
+    const element: BoardTextElement = { type: 'text', elementId: randomUUID(), text: 'Porta chiusa', x: 40, y: 80, width: 240, height: 100, z: 1, locked: false, visibleByDefault: false };
     const document = { ...created.document, camera: { x: 22, y: -14, zoom: 1.25 }, elements: [element] };
     const saved = await repo.saveBoard(created.path, document, created.revision);
     const reopened = await repo.readBoard(created.path);
