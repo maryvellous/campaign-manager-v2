@@ -128,6 +128,21 @@ else {
               const result = await liveService.hideElement(liveService.state.activeBoardId, text(command.elementId, 160));
               return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
             }
+            case 'live:assignToken': {
+              if (!liveService.state.activeBoardId) throw new CampaignError('not_found', 'Nessuna board live attiva.');
+              const result = await liveService.assignTokenController(liveService.state.activeBoardId, text(command.tokenId, 160), text(command.participantId, 160));
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:clearToken': {
+              if (!liveService.state.activeBoardId) throw new CampaignError('not_found', 'Nessuna board live attiva.');
+              const result = await liveService.clearTokenController(liveService.state.activeBoardId, text(command.tokenId, 160));
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:focusPlayers': {
+              if (!liveService.state.activeBoardId) throw new CampaignError('not_found', 'Nessuna board live attiva.');
+              const result = await liveService.focusPlayers(liveService.state.activeBoardId);
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
             case 'boards:list': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.list() };
             case 'board:create': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.create(text(command.title, 250)) };
             case 'board:open': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.open(text(command.path, 2000)) };
