@@ -366,7 +366,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (tool === 'link') {
       event.stopPropagation(); chooseConnectionEndpoint({ kind: 'element', elementId: element.elementId }); return;
     }
-    if (tool !== 'select') return;
+    if (tool !== 'select') { event.stopPropagation(); return; }
     event.stopPropagation();
     if (event.shiftKey) { selectElement(element, true); return; }
     const current = sessionRef.current; if (!current) return;
@@ -491,10 +491,69 @@ export function BoardWorkspace({ command }: { command: Command }) {
 
   const viewportPointerDown = (event: ReactPointerEvent<HTMLDivElement>) => {
     const current = sessionRef.current; if (!current) return;
-    if (tool === 'text') {
-      const point = worldPoint(event.clientX, event.clientY); setTextDraft({ ...point, text: '' }); setSelected(undefined); return;
+    const point = worldPoint(event.clientX, event.clientY);
+
+    if (tool === 'text' && event.button === 0) {
+      setTextDraft({ ...point, text: '' }); setSelectedIds([]); setSelectedConnector(undefined); return;
     }
-    if (tool !== 'hand' && event.button !== 1) { setSelected(undefined); return; }
+    if (tool === 'token' && event.button === 0) {
+      const element: BoardTokenElement = {
+        type: 'token',
+        elementId: crypto.randomUUID(),
+        name: 'Token',
+        x: point.x - 48,
+        y: point.y - 48,
+        width: 96,
+        height: 96,
+        z: nextZ(current.snapshot.document),
+        locked: false,
+        visibleByDefault: false
+      };
+      applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
+      setSelectedIds([element.elementId]); setSelectedConnector(undefined); setTool('select');
+      return;
+    }
+    if (tool === 'link' && event.button === 0) {
+      chooseConnectionEndpoint({ kind: 'point', x: point.x, y: point.y }); return;
+    }
+
+    if (tool === 'select' && event.button === 0) {
+      event.preventDefault();
+      const camera = current.snapshot.document.camera;
+      const target = event.currentTarget;
+      const bounds = target.getBoundingClientRect();
+      const startPoint = point;
+      const existing = event.shiftKey ? selectedIds : [];
+      let moved = false;
+      target.setPointerCapture(event.pointerId);
+      const toWorld = (clientX: number, clientY: number) => ({
+        x: (clientX - bounds.left - camera.x) / camera.zoom,
+        y: (clientY - bounds.top - camera.y) / camera.zoom
+      });
+      const move = (pointer: PointerEvent) => {
+        const next = toWorld(pointer.clientX, pointer.clientY);
+        const x = Math.min(startPoint.x, next.x), y = Math.min(startPoint.y, next.y);
+        const width = Math.abs(next.x - startPoint.x), height = Math.abs(next.y - startPoint.y);
+        moved = width > 3 / camera.zoom || height > 3 / camera.zoom;
+        setMarquee(moved ? { x, y, width, height } : undefined);
+      };
+      const up = (pointer: PointerEvent) => {
+        target.removeEventListener('pointermove', move); target.removeEventListener('pointerup', up); target.removeEventListener('pointercancel', up);
+        setMarquee(undefined); setSelectedConnector(undefined);
+        if (!moved) {
+          if (!event.shiftKey) setSelectedIds([]);
+          return;
+        }
+        const next = toWorld(pointer.clientX, pointer.clientY);
+        const rect = { x: Math.min(startPoint.x, next.x), y: Math.min(startPoint.y, next.y), width: Math.abs(next.x - startPoint.x), height: Math.abs(next.y - startPoint.y) };
+        const hits = marqueeSelection(sessionRef.current?.snapshot.document.elements ?? [], rect);
+        setSelectedIds(expandGroupedSelection(sessionRef.current?.snapshot.document.elements ?? [], [...existing, ...hits]));
+      };
+      target.addEventListener('pointermove', move); target.addEventListener('pointerup', up); target.addEventListener('pointercancel', up);
+      return;
+    }
+
+    if (tool !== 'hand' && event.button !== 1) return;
     event.preventDefault();
     const before = clone(current.snapshot.document);
     const start = { x: event.clientX, y: event.clientY, cameraX: before.camera.x, cameraY: before.camera.y };
