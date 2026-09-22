@@ -194,10 +194,30 @@ function App() {
     if (!reply.ok) { setError(reply.error); return; }
     const boards = ((reply.data as { boards?: Array<{ path: string; title: string }> } | undefined)?.boards ?? []);
     if (!boards.length) { setError({ code: 'not_found', message: 'Crea prima una board.' }); return; }
-    setBoardTransfer({ noteId, ...(excerpt === undefined ? {} : { excerpt }), boards });
+    setBoardTransfer({ kind: 'card', noteId, ...(excerpt === undefined ? {} : { excerpt }), boards });
+  }
+  async function chooseBoardForCharacterToken(noteId: string) {
+    if (!noteId || !noteIds.includes(noteId)) return;
+    const reply = await window.campaign.command({ action: 'boards:list' });
+    if (!reply.ok) { setError(reply.error); return; }
+    const boards = ((reply.data as { boards?: Array<{ path: string; title: string }> } | undefined)?.boards ?? []);
+    if (!boards.length) { setError({ code: 'not_found', message: 'Crea prima una board.' }); return; }
+    setBoardTransfer({ kind: 'character-token', noteId, boards });
   }
   async function sendToBoard(path: string) {
     if (!boardTransfer) return;
+    if (boardTransfer.kind === 'character-token') {
+      setCharacterTokenRequest({
+        requestId: crypto.randomUUID(),
+        boardPath: path,
+        noteId: boardTransfer.noteId,
+        name: stem(boardTransfer.noteId)
+      });
+      setBoardTransfer(undefined);
+      setSelectedText('');
+      await command({ action: 'view', view: 'boards' });
+      return;
+    }
     const reply = await window.campaign.command({ action: 'board:addCard', path, noteId: boardTransfer.noteId, ...(boardTransfer.excerpt === undefined ? {} : { excerpt: boardTransfer.excerpt }) });
     if (!reply.ok) { setError(reply.error); return; }
     setBoardTransfer(undefined); setSelectedText('');
