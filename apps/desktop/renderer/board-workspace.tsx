@@ -265,7 +265,7 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!additive) { setSelection(groupSelection); return; }
     const existing = new Set(selectedRef.current);
     const allSelected = groupSelection.every(id => existing.has(id));
-    for (const id of groupSelection) allSelected ? existing.delete(id) : existing.add(id);
+    for (const id of groupSelection) { if (allSelected) existing.delete(id); else existing.add(id); }
     setSelection([...existing]);
   }, [setSelection]);
 
