@@ -1,7 +1,8 @@
 import { useCallback, useEffect, useRef, useState, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
-import type { BoardDocument, BoardElement, BoardImageElement, BoardRecoveryDraft, BoardSnapshot, BoardTextElement } from '../application/board-types';
+import type { BoardConnectionEndpoint, BoardConnector, BoardDocument, BoardElement, BoardImageElement, BoardRecoveryDraft, BoardSnapshot, BoardTextElement, BoardTokenElement } from '../application/board-types';
+import { connectorsWithoutElements, contentBounds, endpointPoint, expandGroupedSelection, marqueeSelection, reorderElements, type BoardOrderDirection, type BoardRect } from '../application/board-operations';
 
-type Tool = 'select' | 'hand' | 'text' | 'image';
+type Tool = 'select' | 'hand' | 'text' | 'image' | 'token' | 'link';
 type CommandReply = { ok: boolean; data?: unknown; error?: { code: string; message: string } };
 type Command = (input: Record<string, unknown>) => Promise<CommandReply>;
 type BoardListItem = { path: string; title: string; boardId: string };
@@ -38,22 +39,22 @@ async function imageSize(file: File): Promise<{ width: number; height: number }>
   } finally { URL.revokeObjectURL(url); }
 }
 
-function BoardImage({ element, command }: { element: BoardImageElement; command: Command }) {
+function BoardAsset({ assetPath, command, alt = '' }: { assetPath: string; command: Command; alt?: string }) {
   const [src, setSrc] = useState<string>();
   const [missing, setMissing] = useState(false);
   useEffect(() => {
     let alive = true;
-    setMissing(false);
-    void command({ action: 'board:asset', assetPath: element.assetPath }).then(reply => {
+    setMissing(false); setSrc(undefined);
+    void command({ action: 'board:asset', assetPath }).then(reply => {
       if (!alive) return;
       if (!reply.ok) { setMissing(true); return; }
       setSrc((reply.data as { dataUrl: string }).dataUrl);
     }).catch(() => { if (alive) setMissing(true); });
     return () => { alive = false; };
-  }, [command, element.assetPath]);
+  }, [command, assetPath]);
   return missing
-    ? <div className="board-missing-asset"><strong>Immagine mancante</strong><small>{element.assetPath}</small></div>
-    : src ? <img draggable={false} src={src} alt="" /> : <div className="board-image-loading">Caricamento…</div>;
+    ? <div className="board-missing-asset"><strong>Immagine mancante</strong><small>{assetPath}</small></div>
+    : src ? <img draggable={false} src={src} alt={alt} /> : <div className="board-image-loading">Caricamento…</div>;
 }
 
 export function BoardWorkspace({ command }: { command: Command }) {
@@ -62,16 +63,23 @@ export function BoardWorkspace({ command }: { command: Command }) {
   const [session, setSession] = useState<BoardSession>();
   const sessionRef = useRef(session); sessionRef.current = session;
   const [tool, setTool] = useState<Tool>('select');
-  const [selected, setSelected] = useState<string>();
+  const [selectedIds, setSelectedIds] = useState<string[]>([]);
+  const [selectedConnector, setSelectedConnector] = useState<string>();
   const [newTitle, setNewTitle] = useState('');
   const [renaming, setRenaming] = useState(false);
   const [renameTitle, setRenameTitle] = useState('');
   const [message, setMessage] = useState<string>();
   const [textDraft, setTextDraft] = useState<{ x: number; y: number; text: string }>();
   const [textEditing, setTextEditing] = useState<{ elementId: string; text: string }>();
+  const [tokenEditing, setTokenEditing] = useState<{ elementId: string; name: string }>();
+  const [connectionStart, setConnectionStart] = useState<BoardConnectionEndpoint>();
+  const [linkStyle, setLinkStyle] = useState<'line' | 'arrow'>('arrow');
+  const [marquee, setMarquee] = useState<BoardRect>();
+  const renameCancelled = useRef(false);
   const history = useRef<{ past: BoardDocument[]; future: BoardDocument[] }>({ past: [], future: [] });
   const autosaveTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const input = useRef<HTMLInputElement>(null);
+  const avatarInput = useRef<HTMLInputElement>(null);
   const viewport = useRef<HTMLDivElement>(null);
 
   const refreshList = useCallback(async () => {
