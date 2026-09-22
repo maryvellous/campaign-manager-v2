@@ -271,6 +271,15 @@ export class LiveSessionModel {
     return ok(this.finish('explicit', now));
   }
 
+  compactEndedRuntime(): void {
+    if (this.record.lifecycle !== 'ended') return;
+    this.record.hostCredentialHash = 'ended';
+    this.record.participants = [];
+    this.record.tickets = [];
+    this.record.boards = [];
+    this.record.activeBoardId = undefined;
+  }
+
   boardSnapshot(boardId = this.record.activeBoardId, participantId?: string): LiveBoardSnapshot | undefined {
     if (!boardId) return undefined;
     const board = this.board(boardId);
