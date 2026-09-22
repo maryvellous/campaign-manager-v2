@@ -1,5 +1,5 @@
 import { externalUrl } from '../../packages/core/src/safe-url';
-import { app, BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, safeStorage, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as fs from 'node:fs/promises';
@@ -10,11 +10,13 @@ import { LocalStore } from './infrastructure/local-store';
 import { CampaignError } from '../../packages/core/src/index';
 import { ioError } from './infrastructure/campaign-repository';
 import { LiveSessionClient } from './application/live-session-client';
+import { AiService } from './application/ai-service';
 
 let window: BrowserWindow;
 let service: CampaignService;
 let boardService: BoardService;
 let liveService: LiveSessionClient;
+let aiService: AiService;
 let selectedPath: string | undefined;
 let allowClose = false;
 let closeRequested = false;
@@ -61,6 +63,11 @@ else {
     const store = new LocalStore(path.join(app.getPath('userData'), 'local'));
     boardService = new BoardService(store);
     liveService = new LiveSessionClient(process.env.CAMPAIGN_MANAGER_RELAY_URL ?? 'http://127.0.0.1:8787');
+    aiService = new AiService(store, {
+      available: () => safeStorage.isEncryptionAvailable(),
+      encrypt: value => safeStorage.encryptString(value).toString('base64'),
+      decrypt: value => safeStorage.decryptString(Buffer.from(value, 'base64')),
+    });
     service = new CampaignService(store, async (oldId, newId) => {
       boardService.bind(service.state.campaign);
       await boardService.remapNoteReferences(oldId, newId);
@@ -73,6 +80,7 @@ else {
     window.webContents.session.setPermissionCheckHandler(() => false);
     service.onChange = () => { if (!window.isDestroyed()) window.webContents.send('campaign:state', service.state); };
     liveService.onChange = () => { if (!window.isDestroyed()) window.webContents.send('live:state', liveService.state); };
+    aiService.onChange = () => { if (!window.isDestroyed()) window.webContents.send('ai:state', aiService.state); };
     ipcMain.handle('campaign:command', async (event, input: unknown) => {
       if (!trusted(event)) return { ok: false, error: { code: 'permission_denied', message: 'Origine non autorizzata.' } };
       return service.run(async () => {
@@ -85,6 +93,38 @@ else {
             case 'search': return { ok: true, data: await service.searchNotes(text(command.query, 2000)) };
             case 'rebuildSearch': await service.rebuildSearch(); break;
             case 'graph': return { ok: true, data: await service.graphProjection() };
+            case 'ai:state': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: aiService.state };
+            }
+            case 'ai:configure': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.configure(text(command.apiKey, 1000), text(command.model, 64) as Parameters<AiService['configure']>[1]) };
+            }
+            case 'ai:setModel': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.setModel(text(command.model, 64) as Parameters<AiService['setModel']>[0]) };
+            }
+            case 'ai:acceptPrivacy': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.acceptPrivacy() };
+            }
+            case 'ai:clearConfiguration': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.clearConfiguration() };
+            }
+            case 'ai:newConversation': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.newConversation() };
+            }
+            case 'ai:cancel': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: aiService.cancel() };
+            }
+            case 'ai:send': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.send(text(command.prompt, 20000)) };
+            }
             case 'live:state': return { ok: true, data: liveService.state };
             case 'live:start': {
               if (!service.state.campaign) throw new CampaignError('not_found', 'Apri una campagna prima di avviare una sessione.');
@@ -248,7 +288,7 @@ else {
             case 'draftTitle': await service.setDraftTitle(text(command.title, 250)); break;
             case 'view': {
               const view = text(command.view, 30);
-              if (!['notes', 'search', 'graph', 'boards', 'live', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
+              if (!['notes', 'search', 'graph', 'boards', 'live', 'assistant', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
               await service.setView(view as Parameters<CampaignService['setView']>[0]); break;
             }
             case 'ui': {
@@ -328,7 +368,8 @@ else {
         window.webContents.send('campaign:before-close');
       }
     });
-    window.on('closed', () => { liveService.dispose(); service.dispose(); });
+    window.on('closed', () => { aiService.dispose(); liveService.dispose(); service.dispose(); });
+    await aiService.initialize();
     await service.initialize(); selectedPath = service.state.preferences.lastPath; await window.loadFile(path.join(__dirname, 'index.html')); window.show();
   });
 }

@@ -6,8 +6,10 @@ import { randomUUID, createHash } from 'node:crypto';
 import { CampaignError, type RecoveryDraft } from '../../../packages/core/src/index';
 import { ioError } from './campaign-repository';
 import { parseBoardDocument, validateBoardPath, type BoardRecoveryDraft } from '../application/board-types';
+import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS, type AiThread, type OpenAiModel } from '../../../packages/ai/src/index';
 export interface RecentCampaign { campaignId: string; path: string; name: string }
 export interface Preferences { recent: RecentCampaign[]; lastPath?: string }
+export interface AiPreferences { provider: 'openai'; model: OpenAiModel; encryptedKey?: string; privacyAccepted: boolean }
 export class LocalStore {
   warning?: string;
   constructor(readonly root: string) {}
@@ -44,7 +46,7 @@ export class LocalStore {
       const value = JSON.parse(await fs.readFile(path.join(this.recoveryDirectory(campaignId), '..', 'ui.json'), 'utf8'));
       if (!value || !value.ui || !value.workspace || !Array.isArray(value.workspace.tabs)) throw new Error('Invalid UI');
       for (const key of ['favorites', 'recentNotes', 'expandedFolders'] as const) if (Array.isArray(value.ui[key]) && value.ui[key].every((v: unknown) => typeof v === 'string')) result.ui[key] = value.ui[key];
-      if (['notes', 'search', 'graph', 'boards', 'live', 'compendium', 'recent', 'favorites', 'settings'].includes(value.ui.view)) result.ui.view = value.ui.view;
+      if (['notes', 'search', 'graph', 'boards', 'live', 'assistant', 'compendium', 'recent', 'favorites', 'settings'].includes(value.ui.view)) result.ui.view = value.ui.view;
       if (typeof value.ui.selectedFolder === 'string') result.ui.selectedFolder = value.ui.selectedFolder;
       for (const key of ['sidebarCollapsed', 'inspectorCollapsed'] as const) if (typeof value.ui[key] === 'boolean') result.ui[key] = value.ui[key];
       for (const key of ['sidebarWidth', 'inspectorWidth'] as const) if (typeof value.ui[key] === 'number' && Number.isFinite(value.ui[key])) result.ui[key] = Math.max(key === 'sidebarWidth' ? 200 : 240, Math.min(360, value.ui[key]));
@@ -134,6 +136,57 @@ export class LocalStore {
   async removeBoardRecovery(campaignId: string, boardPath: string): Promise<void> {
     const key = this.boardRecoveryKey(boardPath);
     await fs.unlink(path.join(this.boardRecoveryDirectory(campaignId), `${key}.json`)).catch(error => {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw ioError(error);
+    });
+  }
+
+  async readAiPreferences(): Promise<AiPreferences> {
+    const fallback: AiPreferences = { provider: 'openai', model: DEFAULT_OPENAI_MODEL, privacyAccepted: false };
+    try {
+      const value: unknown = JSON.parse(await fs.readFile(path.join(this.root, 'ai', 'preferences.json'), 'utf8'));
+      if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid AI preferences');
+      const input = value as Partial<AiPreferences>;
+      if (input.provider !== 'openai' || typeof input.model !== 'string' || !OPENAI_MODELS.includes(input.model as OpenAiModel)) throw new Error('Invalid AI provider');
+      if (input.encryptedKey !== undefined && typeof input.encryptedKey !== 'string') throw new Error('Invalid AI credential');
+      if (typeof input.privacyAccepted !== 'boolean') throw new Error('Invalid AI privacy state');
+      return { provider: 'openai', model: input.model as OpenAiModel, ...(input.encryptedKey ? { encryptedKey: input.encryptedKey } : {}), privacyAccepted: input.privacyAccepted };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.warning = 'Le impostazioni IA locali non sono leggibili: il provider resta disattivato. La campagna è intatta.';
+      return fallback;
+    }
+  }
+
+  async writeAiPreferences(preferences: AiPreferences): Promise<void> {
+    if (preferences.provider !== 'openai' || !OPENAI_MODELS.includes(preferences.model)) throw new CampaignError('invalid_path', 'Impostazioni IA non valide.');
+    if (preferences.encryptedKey !== undefined && typeof preferences.encryptedKey !== 'string') throw new CampaignError('invalid_path', 'Credenziale IA non valida.');
+    await this.write(path.join(this.root, 'ai', 'preferences.json'), preferences);
+  }
+
+  private aiThreadFile(campaignId: string): string {
+    if (!/^[0-9a-f-]{36}$/iu.test(campaignId)) throw new CampaignError('invalid_path', 'Identità conversazione IA non valida.');
+    return path.join(this.root, 'campaigns', campaignId, 'ai', 'thread.json');
+  }
+
+  async readAiThread(campaignId: string): Promise<AiThread> {
+    try {
+      const value: unknown = JSON.parse(await fs.readFile(this.aiThreadFile(campaignId), 'utf8'));
+      if (!value || typeof value !== 'object' || !Array.isArray((value as AiThread).messages)) throw new Error('Invalid AI thread');
+      const messages = (value as AiThread).messages;
+      if (messages.some(message => !message || typeof message.id !== 'string' || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || typeof message.createdAt !== 'string')) throw new Error('Invalid AI message');
+      return { messages: messages.slice(-100) };
+    } catch (error) {
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.warning = 'La conversazione IA locale non è leggibile ed è stata ignorata. Le note sono intatte.';
+      return { messages: [] };
+    }
+  }
+
+  async writeAiThread(campaignId: string, thread: AiThread): Promise<void> {
+    if (!Array.isArray(thread.messages) || thread.messages.some(message => !message || typeof message.id !== 'string' || !['user', 'assistant'].includes(message.role) || typeof message.content !== 'string' || typeof message.createdAt !== 'string')) throw new CampaignError('invalid_path', 'Conversazione IA non valida.');
+    await this.write(this.aiThreadFile(campaignId), { messages: thread.messages.slice(-100) });
+  }
+
+  async clearAiThread(campaignId: string): Promise<void> {
+    await fs.unlink(this.aiThreadFile(campaignId)).catch(error => {
       if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw ioError(error);
     });
   }
