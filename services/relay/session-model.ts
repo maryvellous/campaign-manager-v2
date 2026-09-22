@@ -652,6 +652,9 @@ export class SessionDirectoryModel {
     const pairing = this.pairings[pairingCode];
     if (!pairing || this.activityBindings[instanceId]) return undefined;
     delete this.pairings[pairingCode];
+    for (const [boundInstanceId, binding] of Object.entries(this.activityBindings)) {
+      if (binding.liveSessionId === pairing.liveSessionId) delete this.activityBindings[boundInstanceId];
+    }
     const binding = { liveSessionId: pairing.liveSessionId, pairedAt: now };
     this.activityBindings[instanceId] = binding;
     return { ...binding };
