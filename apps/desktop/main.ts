@@ -1,5 +1,5 @@
 import { externalUrl } from '../../packages/core/src/safe-url';
-import { app, BrowserWindow, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
+import { app, BrowserWindow, clipboard, dialog, ipcMain, shell, type IpcMainInvokeEvent } from 'electron';
 import path from 'node:path';
 import { pathToFileURL } from 'node:url';
 import * as fs from 'node:fs/promises';
@@ -9,10 +9,12 @@ import type { BoardDocument } from './application/board-types';
 import { LocalStore } from './infrastructure/local-store';
 import { CampaignError } from '../../packages/core/src/index';
 import { ioError } from './infrastructure/campaign-repository';
+import { LiveSessionClient } from './application/live-session-client';
 
 let window: BrowserWindow;
 let service: CampaignService;
 let boardService: BoardService;
+let liveService: LiveSessionClient;
 let selectedPath: string | undefined;
 let allowClose = false;
 let closeRequested = false;
@@ -32,6 +34,7 @@ else {
   void app.whenReady().then(async () => {
     const store = new LocalStore(path.join(app.getPath('userData'), 'local'));
     boardService = new BoardService(store);
+    liveService = new LiveSessionClient(process.env.CAMPAIGN_MANAGER_RELAY_URL ?? 'http://127.0.0.1:8787');
     service = new CampaignService(store, async (oldId, newId) => {
       boardService.bind(service.state.campaign);
       await boardService.remapNoteReferences(oldId, newId);
@@ -43,6 +46,7 @@ else {
     window.webContents.session.setPermissionRequestHandler((_contents, _permission, callback) => callback(false));
     window.webContents.session.setPermissionCheckHandler(() => false);
     service.onChange = () => { if (!window.isDestroyed()) window.webContents.send('campaign:state', service.state); };
+    liveService.onChange = () => { if (!window.isDestroyed()) window.webContents.send('live:state', liveService.state); };
     ipcMain.handle('campaign:command', async (event, input: unknown) => {
       if (!trusted(event)) return { ok: false, error: { code: 'permission_denied', message: 'Origine non autorizzata.' } };
       return service.run(async () => {
@@ -55,6 +59,34 @@ else {
             case 'search': return { ok: true, data: await service.searchNotes(text(command.query, 2000)) };
             case 'rebuildSearch': await service.rebuildSearch(); break;
             case 'graph': return { ok: true, data: await service.graphProjection() };
+            case 'live:state': return { ok: true, data: liveService.state };
+            case 'live:start': {
+              if (!service.state.campaign) throw new CampaignError('not_found', 'Apri una campagna prima di avviare una sessione.');
+              const result = await liveService.start();
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:refresh': {
+              const result = await liveService.refresh();
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:setAccepting': {
+              if (typeof command.acceptingJoins !== 'boolean') throw new CampaignError('invalid_path', 'Stato ingressi non valido.');
+              const result = await liveService.setAcceptingJoins(command.acceptingJoins);
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:rotateCode': {
+              const result = await liveService.rotateJoinCode();
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:removeParticipant': {
+              const result = await liveService.removeParticipant(text(command.participantId, 160));
+              return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
+            }
+            case 'live:copyJoinCode': {
+              if (!liveService.state.joinCode) throw new CampaignError('not_found', 'Nessun codice sessione disponibile.');
+              clipboard.writeText(liveService.state.joinCode);
+              return { ok: true, data: liveService.state };
+            }
             case 'boards:list': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.list() };
             case 'board:create': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.create(text(command.title, 250)) };
             case 'board:open': boardService.bind(service.state.campaign); return { ok: true, data: await boardService.open(text(command.path, 2000)) };
@@ -94,7 +126,7 @@ else {
             case 'draftTitle': await service.setDraftTitle(text(command.title, 250)); break;
             case 'view': {
               const view = text(command.view, 30);
-              if (!['notes', 'search', 'graph', 'boards', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
+              if (!['notes', 'search', 'graph', 'boards', 'live', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
               await service.setView(view as Parameters<CampaignService['setView']>[0]); break;
             }
             case 'ui': {
@@ -172,7 +204,7 @@ else {
         window.webContents.send('campaign:before-close');
       }
     });
-    window.on('closed', () => service.dispose());
+    window.on('closed', () => { liveService.dispose(); service.dispose(); });
     await service.initialize(); selectedPath = service.state.preferences.lastPath; await window.loadFile(path.join(__dirname, 'index.html')); window.show();
   });
 }
