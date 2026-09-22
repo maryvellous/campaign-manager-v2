@@ -133,6 +133,7 @@ export interface JoinCodeResponse { joinCode: string }
 export interface PublishBoardRequest { board: LiveBoardPayload }
 export interface RevealElementRequest { boardId: string; element: LiveBoardElement }
 export interface HideElementRequest { boardId: string; elementId: string }
+export interface BoardIdRequest { boardId: string }
 
 export interface SessionSummary {
   liveSessionId: string;
@@ -243,6 +244,11 @@ export function validateRevealElementRequest(value: unknown): RevealElementReque
 export function validateHideElementRequest(value: unknown): HideElementRequest | undefined {
   if (!object(value) || !opaqueId(value.boardId) || !opaqueId(value.elementId)) return undefined;
   return { boardId: value.boardId, elementId: value.elementId };
+}
+
+export function validateBoardIdRequest(value: unknown): BoardIdRequest | undefined {
+  if (!object(value) || !opaqueId(value.boardId)) return undefined;
+  return { boardId: value.boardId };
 }
 
 export function validateEnvelope(value: unknown): ProtocolEnvelope | undefined {
