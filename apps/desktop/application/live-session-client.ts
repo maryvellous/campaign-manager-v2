@@ -347,6 +347,32 @@ export class LiveSessionClient {
     return { ok: true, value: this.state };
   }
 
+  async assignTokenController(boardId: string, tokenId: string, participantId: string): Promise<ApiResult<DesktopLiveState>> {
+    const response = await this.postBoardAction<SessionSummary>('/token-controller/assign', { boardId, tokenId, participantId });
+    if (!response.ok) return response;
+    this.applySummary(response.value);
+    return { ok: true, value: this.state };
+  }
+
+  async clearTokenController(boardId: string, tokenId: string): Promise<ApiResult<DesktopLiveState>> {
+    const response = await this.postBoardAction<SessionSummary>('/token-controller/clear', { boardId, tokenId });
+    if (!response.ok) return response;
+    this.applySummary(response.value);
+    return { ok: true, value: this.state };
+  }
+
+  async focusPlayers(boardId: string): Promise<ApiResult<DesktopLiveState>> {
+    const response = await this.postBoardAction<true>('/camera-focus', { boardId, mode: 'fit' });
+    return response.ok ? { ok: true, value: this.state } : response;
+  }
+
+  async moveTokenAsHost(boardId: string, tokenId: string, x: number, y: number): Promise<ApiResult<DesktopLiveState>> {
+    const response = await this.postBoardAction<unknown>('/token-move-host', { boardId, tokenId, x, y });
+    if (!response.ok) return response;
+    await this.refresh();
+    return { ok: true, value: this.state };
+  }
+
   dispose(): void {
     this.disposed = true;
     if (this.retryTimer) clearTimeout(this.retryTimer);
