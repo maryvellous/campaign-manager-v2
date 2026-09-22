@@ -1,0 +1,21 @@
+{
+  "name": "campaign-manager-live",
+  "main": "services/relay/worker.ts",
+  "compatibility_date": "2026-09-22",
+  "durable_objects": {
+    "bindings": [
+      { "name": "LIVE_SESSIONS", "class_name": "LiveSession" },
+      { "name": "SESSION_DIRECTORY", "class_name": "SessionDirectory" }
+    ]
+  },
+  "exports": {
+    "LiveSession": { "type": "durable-object", "storage": "sqlite" },
+    "SessionDirectory": { "type": "durable-object", "storage": "sqlite" }
+  },
+  "assets": {
+    "directory": "./dist/activity",
+    "binding": "ASSETS",
+    "not_found_handling": "single-page-application",
+    "run_worker_first": ["/api/*"]
+  }
+}
