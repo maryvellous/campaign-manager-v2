@@ -3,11 +3,16 @@ import {
   type CreateSessionResponse,
   type JoinSessionResponse,
   type LiveApiError,
+  type LiveBoardElement,
+  type LiveBoardPayload,
+  type LiveBoardSnapshot,
   type LiveParticipant,
   type LiveRole,
+  type PlayerBoardState,
   type SessionLifecycle,
   type SessionSummary,
-  type TicketResponse
+  type TicketResponse,
+  type WaitingSnapshot
 } from '../../packages/protocol/src/index';
 
 const alphabet = 'ABCDEFGHJKLMNPQRSTUVWXYZ23456789';
@@ -52,6 +57,12 @@ export interface StoredParticipant extends LiveParticipant {
   resumeCredentialHash: string;
 }
 
+export interface StoredLiveBoard {
+  boardId: string;
+  title: string;
+  elements: LiveBoardElement[];
+}
+
 export interface LiveSessionRecord {
   liveSessionId: string;
   joinCode: string;
@@ -62,6 +73,8 @@ export interface LiveSessionRecord {
   participants: StoredParticipant[];
   tickets: SessionTicket[];
   stateSeq: number;
+  activeBoardId?: string;
+  boards: StoredLiveBoard[];
 }
 
 export type SessionResult<T> = { ok: true; value: T } | { ok: false; error: LiveApiError };
@@ -89,14 +102,19 @@ export class LiveSessionModel {
       hostConnected: false,
       participants: [],
       tickets: [],
-      stateSeq: 0
+      stateSeq: 0,
+      boards: []
     });
     const ticket = await model.issueTicket('host', undefined, now);
     return { model, hostCredential, ticket };
   }
 
   static from(record: LiveSessionRecord): LiveSessionModel {
-    return new LiveSessionModel(structuredClone(record));
+    return new LiveSessionModel({
+      ...structuredClone(record),
+      boards: Array.isArray(record.boards) ? structuredClone(record.boards) : [],
+      ...(record.activeBoardId ? { activeBoardId: record.activeBoardId } : {})
+    });
   }
 
   private cleanupTickets(now: number): void {
@@ -126,12 +144,50 @@ export class LiveSessionModel {
       lifecycle: this.record.lifecycle,
       acceptingJoins: this.record.acceptingJoins,
       participants: this.record.participants.map(participant => ({ participantId: participant.participantId, displayName: participant.displayName, connected: participant.connected, tokenIds: [...participant.tokenIds] })),
-      stateSeq: this.record.stateSeq
+      stateSeq: this.record.stateSeq,
+      presentation: this.record.activeBoardId ? 'board' : 'waiting',
+      ...(this.record.activeBoardId ? { activeBoardId: this.record.activeBoardId } : {}),
+      liveBoards: this.record.boards.map(board => ({ boardId: board.boardId, title: board.title }))
     };
   }
 
   async authenticateHost(hostCredential: string): Promise<boolean> {
     return await secretHash(hostCredential) === this.record.hostCredentialHash;
+  }
+
+  private async authorizeHostMutation(hostCredential: string): Promise<SessionResult<true>> {
+    if (!(await this.authenticateHost(hostCredential))) return fail('AUTH_FAILED', 'Credenziale host non valida.');
+    if (this.record.lifecycle === 'ended') return fail('SESSION_ENDED', 'La sessione è terminata.');
+    if (this.record.lifecycle !== 'open' || !this.record.hostConnected) return fail('HOST_OFFLINE', 'Il master non è connesso alla sessione.');
+    return ok(true);
+  }
+
+  private board(boardId: string): StoredLiveBoard | undefined {
+    return this.record.boards.find(board => board.boardId === boardId);
+  }
+
+  boardSnapshot(boardId = this.record.activeBoardId): LiveBoardSnapshot | undefined {
+    if (!boardId) return undefined;
+    const board = this.board(boardId);
+    return board ? { boardId: board.boardId, title: board.title, elements: structuredClone(board.elements), stateSeq: this.record.stateSeq } : undefined;
+  }
+
+  playerSnapshot(): WaitingSnapshot | PlayerBoardState {
+    const board = this.boardSnapshot();
+    if (!board) {
+      return {
+        lifecycle: this.record.lifecycle,
+        presentation: 'waiting',
+        stateSeq: this.record.stateSeq,
+        acceptingJoins: this.record.acceptingJoins
+      };
+    }
+    return {
+      lifecycle: this.record.lifecycle,
+      presentation: 'board',
+      stateSeq: this.record.stateSeq,
+      board
+    };
   }
 
   async hostTicket(hostCredential: string, now = Date.now()): Promise<SessionResult<TicketResponse>> {
@@ -237,6 +293,78 @@ export class LiveSessionModel {
     this.record.tickets = this.record.tickets.filter(ticket => ticket.participantId !== participantId);
     this.bump();
     return ok(this.summary());
+  }
+
+  async publishBoard(hostCredential: string, payload: LiveBoardPayload): Promise<SessionResult<LiveBoardSnapshot>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    const existing = this.board(payload.boardId);
+    if (!existing) {
+      this.record.boards.push(structuredClone(payload));
+      this.record.activeBoardId = payload.boardId;
+      this.bump();
+    } else if (this.record.activeBoardId !== payload.boardId) {
+      this.record.activeBoardId = payload.boardId;
+      this.bump();
+    }
+    return ok(this.boardSnapshot(payload.boardId)!);
+  }
+
+  async resetBoard(hostCredential: string, payload: LiveBoardPayload): Promise<SessionResult<LiveBoardSnapshot>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    const index = this.record.boards.findIndex(board => board.boardId === payload.boardId);
+    if (index >= 0) this.record.boards[index] = structuredClone(payload);
+    else this.record.boards.push(structuredClone(payload));
+    this.record.activeBoardId = payload.boardId;
+    this.bump();
+    return ok(this.boardSnapshot(payload.boardId)!);
+  }
+
+  async switchBoard(hostCredential: string, boardId: string): Promise<SessionResult<LiveBoardSnapshot>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    if (!this.board(boardId)) return fail('SESSION_NOT_FOUND', 'Board live non trovata.');
+    if (this.record.activeBoardId !== boardId) {
+      this.record.activeBoardId = boardId;
+      this.bump();
+    }
+    return ok(this.boardSnapshot(boardId)!);
+  }
+
+  async unpublish(hostCredential: string): Promise<SessionResult<WaitingSnapshot>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    if (this.record.activeBoardId) {
+      this.record.activeBoardId = undefined;
+      this.bump();
+    }
+    return ok(this.playerSnapshot() as WaitingSnapshot);
+  }
+
+  async revealElement(hostCredential: string, boardId: string, element: LiveBoardElement): Promise<SessionResult<LiveBoardSnapshot>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    if (this.record.activeBoardId !== boardId) return fail('BOARD_NOT_ACTIVE', 'La board non è la scena attiva.');
+    const board = this.board(boardId); if (!board) return fail('SESSION_NOT_FOUND', 'Board live non trovata.');
+    if (element.type === 'link') {
+      const ids = new Set(board.elements.filter(item => item.type !== 'link').map(item => item.elementId));
+      for (const endpoint of [element.from, element.to]) if (endpoint.kind === 'element' && !ids.has(endpoint.elementId)) return fail('PERMISSION_DENIED', 'Il collegamento richiede un endpoint non visibile.');
+    }
+    const index = board.elements.findIndex(item => item.elementId === element.elementId);
+    if (index >= 0) board.elements[index] = structuredClone(element);
+    else board.elements.push(structuredClone(element));
+    this.bump();
+    return ok(this.boardSnapshot(boardId)!);
+  }
+
+  async hideElement(hostCredential: string, boardId: string, elementId: string): Promise<SessionResult<LiveBoardSnapshot>> {
+    const authorized = await this.authorizeHostMutation(hostCredential); if (!authorized.ok) return authorized;
+    if (this.record.activeBoardId !== boardId) return fail('BOARD_NOT_ACTIVE', 'La board non è la scena attiva.');
+    const board = this.board(boardId); if (!board) return fail('SESSION_NOT_FOUND', 'Board live non trovata.');
+    const before = board.elements.length;
+    board.elements = board.elements.filter(item => {
+      if (item.elementId === elementId) return false;
+      if (item.type !== 'link') return true;
+      return ![item.from, item.to].some(endpoint => endpoint.kind === 'element' && endpoint.elementId === elementId);
+    });
+    if (board.elements.length !== before) this.bump();
+    return ok(this.boardSnapshot(boardId)!);
   }
 }
 
