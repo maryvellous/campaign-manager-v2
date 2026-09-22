@@ -20,6 +20,7 @@ export const liveErrorCodes = [
 
 export type LiveErrorCode = typeof liveErrorCodes[number];
 export type SessionLifecycle = 'open' | 'host_reconnecting' | 'ending' | 'ended';
+export type SessionEndReason = 'explicit' | 'host_timeout';
 export type PlayerPresentation = 'waiting' | 'board';
 export type LiveRole = 'host' | 'player';
 
@@ -70,6 +71,27 @@ export interface TokenControllerEvent { boardId: string; tokenId: string; contro
 export interface PingPayload { boardId: string; x: number; y: number }
 export interface PingEvent extends PingPayload { participantId: string }
 export interface CameraFocusPayload { boardId: string; mode: 'fit' }
+
+export interface FinalTokenPosition {
+  tokenId: string;
+  x: number;
+  y: number;
+}
+
+export interface FinalBoardTokenPositions {
+  boardId: string;
+  title: string;
+  tokens: FinalTokenPosition[];
+}
+
+export interface FinalTokenPositionsResponse {
+  boards: FinalBoardTokenPositions[];
+}
+
+export interface SessionEndedEvent {
+  reason: SessionEndReason;
+  endedAt: number;
+}
 
 export interface ElementRevealedEvent {
   boardId: string;
@@ -169,6 +191,7 @@ export interface SessionSummary {
   participants: LiveParticipant[];
   stateSeq: number;
   presentation: PlayerPresentation;
+  hostGraceUntil?: number;
   activeBoardId?: string;
   activeElementIds?: string[];
   liveBoards: LiveBoardSummary[];
