@@ -179,7 +179,9 @@ export function BoardWorkspace({ command }: { command: Command }) {
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const data = reply.data as BoardCreateReply;
     setBoards(data.boards); setRecoveries(data.recoveries); setNewTitle('');
-    setSession({ snapshot: data.snapshot, state: 'clean' }); history.current = { past: [], future: [] };
+    setSession({ snapshot: data.snapshot, state: 'clean' });
+    setSelectedIds([]); setSelectedConnector(undefined); setConnectionStart(undefined); setTextDraft(undefined); setTextEditing(undefined); setTokenEditing(undefined);
+    history.current = { past: [], future: [] };
   };
 
   const renameBoard = async () => {
@@ -204,6 +206,8 @@ export function BoardWorkspace({ command }: { command: Command }) {
       error: conflicted ? 'La board su disco è cambiata dopo la recovery. Scegli esplicitamente quale versione mantenere.' : undefined
     };
     setSession(next); sessionRef.current = next;
+    setSelectedIds(ids => ids.filter(id => next.snapshot.document.elements.some(element => element.elementId === id)));
+    setSelectedConnector(id => id && next.snapshot.document.connectors.some(connector => connector.connectorId === id) ? id : undefined);
     if (!conflicted) scheduleSave(next);
   };
 
@@ -241,6 +245,8 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const to = redo ? history.current.past : history.current.future;
     const document = from.pop(); if (!document) return;
     to.push(clone(current.snapshot.document));
+    setSelectedIds(ids => ids.filter(id => document.elements.some(element => element.elementId === id)));
+    setSelectedConnector(id => id && document.connectors.some(connector => connector.connectorId === id) ? id : undefined);
     applyDocument(clone(document), false);
   };
 
@@ -637,6 +643,11 @@ export function BoardWorkspace({ command }: { command: Command }) {
       if (editing) return;
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'z') { event.preventDefault(); undo(event.shiftKey); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'y') { event.preventDefault(); undo(true); return; }
+      if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'a') {
+        event.preventDefault();
+        setSelectedIds(expandGroupedSelection(sessionRef.current.snapshot.document.elements, sessionRef.current.snapshot.document.elements.map(element => element.elementId)));
+        setSelectedConnector(undefined); return;
+      }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'd') { event.preventDefault(); duplicateSelected(); return; }
       if ((event.ctrlKey || event.metaKey) && event.key.toLowerCase() === 'g') { event.preventDefault(); if (event.shiftKey) ungroupSelected(); else groupSelected(); return; }
       if (event.key === 'Delete' || event.key === 'Backspace') { event.preventDefault(); deleteSelected(); return; }
