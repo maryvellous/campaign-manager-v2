@@ -3,6 +3,7 @@ import { CampaignError, validateNoteId, validateRelativePath } from '../../../pa
 import { BoardRepository } from '../infrastructure/board-repository';
 import { LocalStore } from '../infrastructure/local-store';
 import { isBoardBoxElement, parseBoardDocument, validateBoardPath, type BoardCardElement, type BoardDocument } from './board-types';
+import { projectBoardElementForPlayers, projectPreparedBoardForPlayers } from './board-privacy';
 
 export interface BoardCampaignContext {
   campaignId: string;
@@ -160,6 +161,59 @@ export class BoardService {
         capturedAt: new Date().toISOString()
       });
     }
+  }
+
+
+  async liveProjection(boardPath: string) {
+    const { repo } = this.required();
+    validateBoardPath(boardPath);
+    const snapshot = await repo.readBoard(boardPath);
+    return {
+      boardPath,
+      board: {
+        ...projectPreparedBoardForPlayers(snapshot.document),
+        title: snapshot.title
+      }
+    };
+  }
+
+  async liveElement(boardPath: string, elementId: string) {
+    const { repo } = this.required();
+    validateBoardPath(boardPath);
+    const snapshot = await repo.readBoard(boardPath);
+    const element = snapshot.document.elements.find(element => element.elementId === elementId);
+    if (!element) throw new CampaignError('not_found', 'Elemento board non trovato.');
+    return {
+      boardPath,
+      boardId: snapshot.document.boardId,
+      title: snapshot.title,
+      element: projectBoardElementForPlayers(element)
+    };
+  }
+
+  async liveElementList(boardPath: string) {
+    const { repo } = this.required();
+    validateBoardPath(boardPath);
+    const snapshot = await repo.readBoard(boardPath);
+    return {
+      boardPath,
+      boardId: snapshot.document.boardId,
+      title: snapshot.title,
+      elements: snapshot.document.elements.map(element => ({
+        elementId: element.elementId,
+        type: element.type,
+        visibleByDefault: element.visibleByDefault === true,
+        label: element.type === 'text' ? element.text.slice(0, 80)
+          : element.type === 'token' ? element.name
+          : element.type === 'card' ? element.sourceTitle
+          : element.type === 'image' ? element.assetPath.split('/').at(-1) ?? 'Immagine'
+          : 'Collegamento'
+      }))
+    };
+  }
+
+  async liveAsset(assetPath: string) {
+    return this.required().repo.readAssetBinary(assetPath);
   }
 
 }
