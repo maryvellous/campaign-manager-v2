@@ -61,6 +61,7 @@ function App() {
   const noteKey = noteIds.join('\n');
   const loadImage = useCallback(async (source: string) => { const reply = await window.campaign.command({ action: 'image', noteId: doc?.noteId, source }); return reply.ok && typeof reply.data === 'string' ? reply.data : undefined; }, [doc?.noteId, state?.campaign?.campaignId]);
   const activeTab = state?.tabs?.find(tab => tab.id === state.activeTabId);
+  const clearCharacterTokenRequest = useCallback(() => setCharacterTokenRequest(undefined), []);
   function remember() {
     if (currentId.current) { const area = document.querySelector('.center-scroll'); if (area) readingPositions.current.set(currentId.current + ':' + !!modesRef.current[stateRef.current?.activeTabId ?? ''], area.scrollTop); }
     if (editor.current && currentId.current) {
@@ -207,15 +208,17 @@ function App() {
   async function sendToBoard(path: string) {
     if (!boardTransfer) return;
     if (boardTransfer.kind === 'character-token') {
-      setCharacterTokenRequest({
+      const request: CharacterTokenRequest = {
         requestId: crypto.randomUUID(),
         boardPath: path,
         noteId: boardTransfer.noteId,
         name: stem(boardTransfer.noteId)
-      });
-      setBoardTransfer(undefined);
-      setSelectedText('');
-      await command({ action: 'view', view: 'boards' });
+      };
+      if (await command({ action: 'view', view: 'boards' })) {
+        setCharacterTokenRequest(request);
+        setBoardTransfer(undefined);
+        setSelectedText('');
+      }
       return;
     }
     const reply = await window.campaign.command({ action: 'board:addCard', path, noteId: boardTransfer.noteId, ...(boardTransfer.excerpt === undefined ? {} : { excerpt: boardTransfer.excerpt }) });
