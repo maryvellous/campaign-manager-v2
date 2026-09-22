@@ -144,6 +144,7 @@ export interface SessionSummary {
   stateSeq: number;
   presentation: PlayerPresentation;
   activeBoardId?: string;
+  activeElementIds?: string[];
   liveBoards: LiveBoardSummary[];
 }
 
