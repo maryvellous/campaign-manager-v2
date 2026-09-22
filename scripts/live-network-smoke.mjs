@@ -1,5 +1,6 @@
 import assert from 'node:assert/strict';
 import { spawn } from 'node:child_process';
+import { setTimeout as sleep } from 'node:timers/promises';
 
 const port = 8791;
 const origin = `http://127.0.0.1:${port}`;
@@ -12,16 +13,14 @@ const wrangler = spawn(npx, ['--yes', 'wrangler@4.136.1', 'dev', '--port', Strin
 let logs = '';
 for (const stream of [wrangler.stdout, wrangler.stderr]) stream.on('data', chunk => { logs += String(chunk); if (logs.length > 20_000) logs = logs.slice(-20_000); });
 
-const sleep = ms => new Promise(resolve => setTimeout(resolve, ms));
-
 async function waitForServer() {
   const deadline = Date.now() + 45_000;
   while (Date.now() < deadline) {
     if (wrangler.exitCode !== null) throw new Error(`wrangler exited early\n${logs}`);
     try {
-      const response = await fetch(origin);
+      const response = await globalThis.fetch(origin);
       if (response.ok) return;
-    } catch {}
+    } catch { /* readiness/close errors are expected in smoke cleanup */ }
     await sleep(250);
   }
   throw new Error(`wrangler did not become ready\n${logs}`);
@@ -31,7 +30,7 @@ async function jsonRequest(path, { method = 'POST', body, credential } = {}) {
   const headers = { accept: 'application/json' };
   if (body !== undefined) headers['content-type'] = 'application/json';
   if (credential) headers.authorization = `Bearer ${credential}`;
-  const response = await fetch(origin + path, {
+  const response = await globalThis.fetch(origin + path, {
     method,
     headers,
     ...(body === undefined ? {} : { body: JSON.stringify(body) })
@@ -47,10 +46,10 @@ function socketUrl(sessionId) {
 
 function connectSocket(sessionId, ticket) {
   return new Promise((resolve, reject) => {
-    const socket = new WebSocket(socketUrl(sessionId), ['cmv2.v1', `cmv2.ticket.${ticket}`]);
+    const socket = new globalThis.WebSocket(socketUrl(sessionId), ['cmv2.v1', `cmv2.ticket.${ticket}`]);
     const inbox = [];
     socket.addEventListener('message', event => {
-      try { inbox.push({ at: performance.now(), value: JSON.parse(String(event.data)) }); } catch {}
+      try { inbox.push({ at: globalThis.performance.now(), value: JSON.parse(String(event.data)) }); } catch { /* readiness/close errors are expected in smoke cleanup */ }
     });
     socket.addEventListener('open', () => resolve({ socket, inbox }));
     socket.addEventListener('error', () => reject(new Error('websocket connection failed')));
@@ -58,8 +57,8 @@ function connectSocket(sessionId, ticket) {
 }
 
 async function waitMessage(client, predicate, timeout = 5_000) {
-  const deadline = performance.now() + timeout;
-  while (performance.now() < deadline) {
+  const deadline = globalThis.performance.now() + timeout;
+  while (globalThis.performance.now() < deadline) {
     const index = client.inbox.findIndex(item => predicate(item.value));
     if (index >= 0) return client.inbox.splice(index, 1)[0];
     await sleep(10);
@@ -79,7 +78,7 @@ function message(type, payload, requestId) {
 const sockets = [];
 try {
   await waitForServer();
-  assert.equal(typeof WebSocket, 'function', 'Node runtime must expose WebSocket');
+  assert.equal(typeof globalThis.WebSocket, 'function', 'Node runtime must expose WebSocket');
 
   const created = await jsonRequest('/api/sessions', { body: {} });
   assert.ok(created.liveSessionId);
@@ -122,9 +121,9 @@ try {
   // Measure that cadence against the real local Worker + Durable Object with 8 connected players.
   const previewDurationMs = 2_000;
   const previewIntervalMs = 35;
-  const previewStartedAt = performance.now();
+  const previewStartedAt = globalThis.performance.now();
   let previewSent = 0;
-  while (performance.now() - previewStartedAt < previewDurationMs) {
+  while (globalThis.performance.now() - previewStartedAt < previewDurationMs) {
     previewSent += 1;
     players[0].client.socket.send(message('token.move.preview', { boardId, tokenId, x: 10 + previewSent, y: 20 + previewSent }));
     await sleep(previewIntervalMs);
@@ -132,7 +131,7 @@ try {
 
   const requestId = 'req_network_smoke_commit';
   const finalPosition = { x: 420, y: 315 };
-  const commitStartedAt = performance.now();
+  const commitStartedAt = globalThis.performance.now();
   players[0].client.socket.send(message('token.move.commit', { boardId, tokenId, ...finalPosition }, requestId));
   const accepted = await waitMessage(players[0].client, value => value.type === 'request.accepted' && value.requestId === requestId);
   const commitAckMs = accepted.at - commitStartedAt;
@@ -161,7 +160,7 @@ try {
   await jsonRequest(`/api/sessions/${created.liveSessionId}/end`, { credential: created.hostCredential, body: {} });
 } finally {
   for (const socket of sockets) {
-    try { socket.close(); } catch {}
+    try { socket.close(); } catch { /* readiness/close errors are expected in smoke cleanup */ }
   }
   if (wrangler.exitCode === null) wrangler.kill('SIGTERM');
   await Promise.race([
