@@ -599,8 +599,8 @@ function DiscordPairingApp({ initialContext }: { initialContext: DiscordActivity
   const [pairing, setPairing] = useState(false);
   const [session, setSession] = useState<ActivitySessionBootstrap>();
   const instanceId = useRef(initialContext.instanceId);
-  const readySdk = useRef<ReadyDiscordActivity>();
-  const config = useRef<ActivityConfig>();
+  const readySdk = useRef<ReadyDiscordActivity | undefined>(undefined);
+  const config = useRef<ActivityConfig | undefined>(undefined);
 
   const enterBoundActivity = useCallback(async () => {
     const ready = readySdk.current;
