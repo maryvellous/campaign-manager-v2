@@ -28,7 +28,7 @@ interface DurableObjectStateLike {
   getWebSockets(tag?: string): WebSocket[];
 }
 
-interface DurableObjectIdLike {}
+type DurableObjectIdLike = object;
 interface DurableObjectStubLike { fetch(input: Request | string, init?: RequestInit): Promise<Response> }
 interface DurableObjectNamespaceLike {
   idFromName(name: string): DurableObjectIdLike;
@@ -374,7 +374,7 @@ export default {
     if (!url.pathname.startsWith('/api/')) return env.ASSETS.fetch(request);
 
     if (request.method === 'POST' && url.pathname === '/api/sessions') {
-      let created = await LiveSessionModel.create();
+      const created = await LiveSessionModel.create();
       const joinCode = await reserveCode(env, created.model.record.liveSessionId);
       created.model.record.joinCode = joinCode;
       const stub = sessionStub(env, created.model.record.liveSessionId);
