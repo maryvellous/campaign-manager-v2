@@ -1,5 +1,5 @@
 import { MarkdownView } from './markdown-view';
-import { BoardWorkspace } from './board-workspace';
+import { BoardWorkspace, type BoardIncomingCard } from './board-workspace';
 import { parseWikiLinks, resolveWikiLink } from '../../../packages/core/src/markdown';
 import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
 import { createRoot } from 'react-dom/client';
@@ -36,6 +36,7 @@ function App() {
   const [panels, setPanels] = useState({ sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false });
   const [viewport, setViewport] = useState(window.innerWidth); const panelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [dropTarget, setDropTarget] = useState<string>(); const [conflictExpanded, setConflictExpanded] = useState(true);
+  const [pendingBoardCard, setPendingBoardCard] = useState<BoardIncomingCard>();
   const editor = useRef<HTMLTextAreaElement>(null); const pending = useRef(0); const unsynced = useRef(false); const localBuffer = useRef('');
   const editing = useRef<Promise<unknown>>(Promise.resolve()); const currentId = useRef<string | undefined>(undefined);
   const positions = useRef(new Map<string, { start: number; end: number; scroll: number }>());
@@ -120,6 +121,34 @@ function App() {
     setModes(previous => ({ ...previous, [id]: !previous[id] }));
     requestAnimationFrame(() => { const area = document.querySelector('.center-scroll'); if (area) area.scrollTop = readingPositions.current.get(currentId.current + ':' + !!modesRef.current[id]) ?? 0; if (modesRef.current[id]) (document.querySelector('.markdown-view') as HTMLElement | null)?.focus({ preventScroll: true }); const p = currentId.current && positions.current.get(currentId.current); if (editor.current) { editor.current.focus(); if (p) { editor.current.setSelectionRange(p.start, p.end); editor.current.scrollTop = p.scroll; } } });
   }
+  function selectedNoteText(): string {
+    if (!doc || doc.draft) return '';
+    if (!reading) {
+      const area = editor.current;
+      if (!area || area.selectionStart === area.selectionEnd) return '';
+      return area.value.slice(area.selectionStart, area.selectionEnd);
+    }
+    const selection = window.getSelection();
+    const root = document.querySelector('.markdown-view');
+    if (!selection || selection.isCollapsed || !root || !selection.anchorNode || !selection.focusNode) return '';
+    if (!root.contains(selection.anchorNode) || !root.contains(selection.focusNode)) return '';
+    return selection.toString();
+  }
+
+  async function sendCurrentNoteToBoard() {
+    const current = stateRef.current?.document;
+    if (!current || current.draft) return;
+    const excerpt = selectedNoteText();
+    const card: BoardIncomingCard = excerpt.trim()
+      ? { kind: 'excerpt', sourceNoteId: current.noteId, sourceTitle: stem(current.noteId), excerpt }
+      : { kind: 'note', sourceNoteId: current.noteId, title: stem(current.noteId) };
+    if (await command({ action: 'ui', patch: { view: 'boards' } })) setPendingBoardCard(card);
+  }
+
+  async function openNoteFromBoard(noteId: string) {
+    if (await command({ action: 'note', noteId })) await command({ action: 'ui', patch: { view: 'notes' } });
+  }
+
   function openWiki(target: string) {
     const resolution = resolveWikiLink(target, noteIds);
     if (resolution.status === 'resolved') { setWiki(undefined); void command({ action: 'note', noteId: resolution.candidates[0] }); }
@@ -214,12 +243,12 @@ function App() {
         <div className="center-scroll">
         {!!state.repairs?.length && <section className="notice"><h2>Operazioni da completare</h2>{state.repairs.map(r => <div key={r.operationId}><p>{r.oldPath} → {r.newPath}</p><button onClick={() => void command({ action: 'repair', id: r.operationId })}>Verifica e ripara</button></div>)}</section>}
         {!!state.recoveries.length && <section className="notice recovery"><h2>Bozze da recuperare</h2>{state.recoveries.map(item => <div key={item.key}><p>{item.draft.target.kind === 'existing' ? item.draft.target.noteId : 'Nuova bozza'}</p><div className="actions"><button onClick={() => void command({ action: 'recovery', key: item.key, choice: 'restore' })}>Ripristina</button><button onClick={() => void command({ action: 'export', key: item.key })}>Esporta</button><button onClick={() => void command({ action: 'recovery', key: item.key, choice: 'discard' })}>Scarta</button></div></div>)}</section>}
-        {view === 'boards' ? <BoardWorkspace command={window.campaign.command} /> : ['notes', 'recent', 'favorites'].includes(view) ? doc ? <>
+        {view === 'boards' ? <BoardWorkspace command={window.campaign.command} noteIds={noteIds} incomingCard={pendingBoardCard} onIncomingConsumed={() => setPendingBoardCard(undefined)} onOpenNote={noteId => void openNoteFromBoard(noteId)} /> : ['notes', 'recent', 'favorites'].includes(view) ? doc ? <>
           <div className="document-header"><div className="document-context"><Icon name="note" size={14} /><span>{doc.draft ? 'Bozza · nessun file ancora creato' : doc.noteId}</span></div><div className="document-title">{titleEditing ? <input aria-label="Titolo della nota" autoFocus value={titleText} onChange={e => setTitleText(e.target.value)} onBlur={() => void commitTitle()} onKeyDown={e => { if (e.key === 'Enter') { e.preventDefault(); void commitTitle(); } if (e.key === 'Escape') { e.preventDefault(); titleCommit.current = true; setTitleEditing(false); queueMicrotask(() => { titleCommit.current = false; }); } }} /> : <button className="title-button" title="Rinomina nota" onClick={() => { setTitleText(doc.draft ? doc.draft.manualTitle || '' : stem(doc.noteId)); setTitleEditing(true); }}><h1>{title(doc)}</h1><Icon name="rename" size={17} /></button>}<div className="actions"><button className="icon-button" aria-label={ui.favorites.includes(doc.noteId) ? 'Rimuovi dai preferiti' : 'Aggiungi ai preferiti'} disabled={!!doc.draft} onClick={() => void command({ action: 'favorite', noteId: doc.noteId })}><Icon name="star" /></button><button disabled={busy || state.rootMissing || (!doc.draft && ['clean', 'conflict', 'missing'].includes(doc.state))} onClick={() => void command({ action: 'save' })}>Salva <kbd>Ctrl S</kbd></button></div></div></div>
           {doc.error && <section className="notice" role="alert">{doc.error}{doc.draft && <button onClick={() => { setTitleText(doc.draft?.manualTitle || ''); setTitleEditing(true); }}>Modifica titolo</button>}</section>}
           {doc.state === 'conflict' && <section className="notice"><strong>La nota è cambiata anche sul disco.</strong>{conflictExpanded ? <><p>Confronta le versioni prima di scegliere quale salvare.</p><details><summary>Versione su disco</summary><pre>{doc.disk?.markdown ?? 'Versione non disponibile; aggiorna i file.'}</pre></details><div className="actions"><button onClick={() => void command({ action: 'resolve', choice: 'local', revision: doc.disk?.revision })}>Usa versione locale</button><button onClick={() => void command({ action: 'resolve', choice: 'disk' })}>Usa versione su disco</button><button onClick={() => begin('saveAs', '')}>Salva locale come nuova nota</button><button onClick={() => setConflictExpanded(false)}>Annulla</button></div></> : <button onClick={() => setConflictExpanded(true)}>Risolvi conflitto</button>}</section>}
           {doc.state === 'missing' && !doc.draft && <section className="notice"><p>Il file originale non esiste più. Il contenuto resta disponibile.</p><button disabled={state.rootMissing} onClick={() => setOperation({ kind: 'saveAs', id: '', value: doc.noteId })}>Ricrea o salva come nuova nota</button></section>}
-          <div className="editor-tools"><button aria-pressed={reading} onClick={() => void toggleReading()} disabled={busy}>{reading ? 'Modifica' : 'Leggi'} <kbd>Ctrl E</kbd></button>{!reading && <><button onClick={() => undo()} disabled={busy}>Annulla modifica</button><button onClick={() => undo(true)} disabled={busy}>Ripeti modifica</button></>}<span>{reading ? 'Lettura' : 'Markdown'}</span></div>
+          <div className="editor-tools"><button aria-pressed={reading} onClick={() => void toggleReading()} disabled={busy}>{reading ? 'Modifica' : 'Leggi'} <kbd>Ctrl E</kbd></button>{!reading && <><button onClick={() => undo()} disabled={busy}>Annulla modifica</button><button onClick={() => undo(true)} disabled={busy}>Ripeti modifica</button></>}<button disabled={busy || !!doc.draft} onClick={() => void sendCurrentNoteToBoard()}>Porta sulla board…</button><span>{reading ? 'Lettura' : 'Markdown'}</span></div>
           {wiki && <section className="notice wiki-picker" aria-label="Destinazione collegamento"><strong>{resolveWikiLink(wiki, noteIds).status === 'ambiguous' ? 'Più note corrispondono a questo collegamento' : 'Questa nota non esiste ancora'}</strong><p>[[{wiki}]]</p>{resolveWikiLink(wiki, noteIds).candidates.map(id => <button key={id} onClick={async () => { if (await command({ action: 'note', noteId: id })) setWiki(undefined); }}><strong>{stem(id)}</strong><small>{id}</small></button>)}{resolveWikiLink(wiki, noteIds).status === 'missing' && <><p>Verrà creata {wiki.includes('/') ? wiki : [parent(doc.noteId), wiki].filter(Boolean).join('/')}. Le eventuali cartelle mancanti verranno create insieme alla nota.</p><button disabled={busy} onClick={async () => { if (await command({ action: 'createLinkedNote', target: wiki })) { setWiki(undefined); setModes(previous => ({ ...previous, [stateRef.current?.activeTabId ?? '']: false })); } }}>Crea nota</button></>}<button onClick={() => { setWiki(undefined); requestAnimationFrame(() => editor.current?.focus()); }}>Annulla collegamento</button></section>}
           {reading ? <MarkdownView markdown={content} noteId={doc.noteId} noteIds={noteIds} onWiki={openWiki} onExternal={url => void command({ action: 'external', url })} loadImage={loadImage} /> : <textarea ref={editor} className="editor" aria-label="Contenuto Markdown" placeholder="Comincia a scrivere la tua storia…" spellCheck={false} readOnly={busy} value={content} onSelect={remember} onScroll={remember} onChange={e => edit(e.target.value)} />}
 
