@@ -77,6 +77,9 @@ export class BoardRepository {
     let cursor = this.root;
     const segments = relative.split('/');
     for (let index = 0; index < segments.length; index++) {
+      const names = await fs.readdir(cursor);
+      const equivalent = names.find(name => name.toLowerCase() === segments[index].toLowerCase());
+      if (equivalent && equivalent !== segments[index]) throw new CampaignError('case_collision', 'Il percorso board differisce soltanto per maiuscole/minuscole.');
       cursor = path.join(cursor, segments[index]);
       try {
         const stat = await fs.lstat(cursor);
@@ -154,11 +157,14 @@ export class BoardRepository {
         temp = path.join(path.dirname(target), `.cmv2-board-${randomUUID()}`);
         const handle = await fs.open(temp, 'wx');
         try { await handle.writeFile(payload, 'utf8'); await handle.sync(); } finally { await handle.close(); }
+        await this.target(boardPath, expectedRevision === null);
         await verify();
         if (expectedRevision === null) { await fs.link(temp, target); await fs.unlink(temp); }
         else await fs.rename(temp, target);
         temp = undefined;
-        return await this.readBoard(boardPath);
+        const saved = await this.readBoard(boardPath);
+        if (saved.revision !== digest(Buffer.from(payload, 'utf8'))) throw new CampaignError('conflict', 'Il contenuto della board è cambiato durante il salvataggio.');
+        return saved;
       } catch (error) { throw ioError(error); }
       finally { if (temp) await fs.unlink(temp).catch(() => undefined); }
     });
@@ -171,10 +177,22 @@ export class BoardRepository {
     return serialized(`${this.root}/boards-rename`, async () => {
       try {
         const source = await this.target(oldPath);
-        const destination = await this.target(newPath, true);
-        try { await fs.lstat(destination); throw new CampaignError('collision', 'Esiste già una board con questo nome.'); }
-        catch (error) { if ((error as NodeJS.ErrnoException).code !== 'ENOENT') throw error; }
-        await fs.rename(source, destination);
+        const destination = path.join(this.root, ...newPath.split('/'));
+        if (oldPath.toLowerCase() === newPath.toLowerCase()) {
+          const temporary = path.join(path.dirname(source), `.cmv2-board-rename-${randomUUID()}`);
+          await fs.rename(source, temporary);
+          try {
+            const basename = path.basename(destination);
+            if ((await fs.readdir(path.dirname(destination))).some(name => name.toLowerCase() === basename.toLowerCase())) throw new CampaignError('collision', 'La destinazione è stata creata durante la rinomina.');
+            await fs.rename(temporary, destination);
+          } catch (error) {
+            await fs.rename(temporary, source).catch(() => undefined);
+            throw error;
+          }
+        } else {
+          await this.target(newPath, true);
+          await fs.rename(source, destination);
+        }
         return await this.readBoard(newPath);
       } catch (error) { throw ioError(error); }
     });
@@ -188,10 +206,13 @@ export class BoardRepository {
       const directory = await this.ensureDirectory('Assets/Board');
       const rawStem = path.basename(originalName, extension).trim().replace(/[<>:"/\\|?*\u0000-\u001f]/gu, '-').replace(/[. ]+$/u, '') || 'immagine';
       const stem = rawStem.slice(0, 100);
-      let name = `${stem}${extension}`;
-      for (let suffix = 2; ; suffix++) {
+      const occupied = new Set((await fs.readdir(directory)).map(name => name.toLowerCase()));
+      let suffix = 1;
+      for (;;) {
+        const name = suffix === 1 ? `${stem}${extension}` : `${stem}-${suffix}${extension}`;
         const relative = `Assets/Board/${name}`;
         validateBoardAssetPath(relative);
+        if (occupied.has(name.toLowerCase())) { suffix++; continue; }
         const target = path.join(directory, name);
         try {
           const handle = await fs.open(target, 'wx');
@@ -199,7 +220,7 @@ export class BoardRepository {
           return relative;
         } catch (error) {
           if ((error as NodeJS.ErrnoException).code !== 'EEXIST') throw error;
-          name = `${stem}-${suffix}${extension}`;
+          occupied.add(name.toLowerCase()); suffix++;
         }
       }
     } catch (error) { throw ioError(error); }
@@ -209,10 +230,15 @@ export class BoardRepository {
     try {
       validateBoardAssetPath(assetPath);
       const target = await this.target(assetPath);
-      const bytes = await fs.readFile(target);
-      const { mime } = supportedImage(assetPath);
-      if (!validImage(bytes, mime)) throw new CampaignError('invalid_path', 'Asset board non valido.');
-      return `data:${mime};base64,${bytes.toString('base64')}`;
+      const handle = await fs.open(target, 'r');
+      try {
+        const stat = await handle.stat();
+        if (!stat.isFile() || stat.size > 20 * 1024 * 1024) throw new CampaignError('invalid_path', 'Asset board non valido o troppo grande (massimo 20 MB).');
+        const bytes = await handle.readFile();
+        const { mime } = supportedImage(assetPath);
+        if (!validImage(bytes, mime)) throw new CampaignError('invalid_path', 'Asset board non valido.');
+        return `data:${mime};base64,${bytes.toString('base64')}`;
+      } finally { await handle.close(); }
     } catch (error) { throw ioError(error); }
   }
 }
