@@ -373,11 +373,12 @@ export function BoardWorkspace({ command }: { command: Command }) {
     const current = sessionRef.current; if (!current) return;
     const activeIds = selectedIds.includes(element.elementId) ? expandGroupedSelection(current.snapshot.document.elements, selectedIds) : selectionForElement(element);
     setSelectedIds(activeIds); setSelectedConnector(undefined);
-    if (element.locked || event.button !== 0) return;
+    const activeElements = current.snapshot.document.elements.filter(item => activeIds.includes(item.elementId));
+    if (event.button !== 0 || activeElements.some(item => item.locked)) return;
     const before = clone(current.snapshot.document);
     const start = { x: event.clientX, y: event.clientY };
     const zoom = current.snapshot.document.camera.zoom;
-    const bases = new Map(current.snapshot.document.elements.filter(item => activeIds.includes(item.elementId) && !item.locked).map(item => [item.elementId, { x: item.x, y: item.y }]));
+    const bases = new Map(activeElements.map(item => [item.elementId, { x: item.x, y: item.y }]));
     let moved = false;
     const target = event.currentTarget as HTMLElement;
     target.setPointerCapture(event.pointerId);
@@ -622,8 +623,9 @@ export function BoardWorkspace({ command }: { command: Command }) {
 
   const moveSelectionBy = (dx: number, dy: number) => {
     const current = sessionRef.current; if (!current || !selectedIds.length) return;
-    const movable = new Set(current.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId) && !element.locked).map(element => element.elementId));
-    if (!movable.size) return;
+    const chosen = current.snapshot.document.elements.filter(element => selectedIds.includes(element.elementId));
+    if (!chosen.length || chosen.some(element => element.locked)) return;
+    const movable = new Set(chosen.map(element => element.elementId));
     applyDocument({ ...current.snapshot.document, elements: current.snapshot.document.elements.map(element => movable.has(element.elementId) ? { ...element, x: element.x + dx, y: element.y + dy } : element) });
   };
 
