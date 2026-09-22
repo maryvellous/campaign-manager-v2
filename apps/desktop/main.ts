@@ -218,13 +218,19 @@ else {
               break;
             }
             case 'choose': {
+              if (liveService.state.liveSessionId) throw new CampaignError('conflict', 'Termina la sessione live prima di aprire un’altra campagna.');
               const selection = await dialog.showOpenDialog(window, { title: command.relink ? 'Individua cartella campagna' : 'Apri cartella campagna', properties: ['openDirectory'] });
               if (!selection.canceled && selection.filePaths[0]) { selectedPath = selection.filePaths[0]; await service.open(selectedPath, false, command.preserve === true, command.relink === true); }
               break;
             }
-            case 'retry': if (selectedPath) await service.open(selectedPath, false, command.preserve === true); break;
-            case 'independent': if (selectedPath) await service.open(selectedPath, true, command.preserve === true); break;
+            case 'retry':
+              if (liveService.state.liveSessionId) throw new CampaignError('conflict', 'Termina la sessione live prima di riaprire la campagna.');
+              if (selectedPath) await service.open(selectedPath, false, command.preserve === true); break;
+            case 'independent':
+              if (liveService.state.liveSessionId) throw new CampaignError('conflict', 'Termina la sessione live prima di aprire una copia indipendente.');
+              if (selectedPath) await service.open(selectedPath, true, command.preserve === true); break;
             case 'recent': {
+              if (liveService.state.liveSessionId) throw new CampaignError('conflict', 'Termina la sessione live prima di aprire un’altra campagna.');
               const recent = service.state.preferences.recent.find(r => r.campaignId === text(command.campaignId, 100));
               if (!recent) throw new CampaignError('not_found', 'Campagna non trovata.');
               selectedPath = recent.path; await service.open(recent.path, false, command.preserve === true); break;
