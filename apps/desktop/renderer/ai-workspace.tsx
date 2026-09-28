@@ -1,40 +1,67 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { AiState } from '../application/ai-service';
-import { OPENAI_MODELS, type AiContextSelection, type AiProposal, type OpenAiModel } from '../../../packages/ai/src/index';
+import { AI_PROVIDER_MODELS, DEFAULT_AI_MODELS, type AiContextSelection, type AiModel, type AiProposal, type AiProviderId } from '../../../packages/ai/src/index';
 
 type Reply = { ok: boolean; data?: unknown; error?: { code: string; message: string } };
 type Command = (input: Record<string, unknown>) => Promise<Reply>;
 
-const modelLabel: Record<OpenAiModel, string> = {
+const providerLabel: Record<AiProviderId, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google Gemini',
+  deepseek: 'DeepSeek',
+};
+
+const modelLabel: Record<AiModel, string> = {
   'gpt-5.6-luna': 'GPT-5.6 Luna',
   'gpt-5.6-terra': 'GPT-5.6 Terra',
   'gpt-5.6-sol': 'GPT-5.6 Sol',
+  'claude-sonnet-5': 'Claude Sonnet 5',
+  'claude-opus-5-5': 'Claude Opus 5.5',
+  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+  'gemini-3.8-flash': 'Gemini 3.8 Flash',
+  'gemini-3.5-flash-lite': 'Gemini 3.5 Flash-Lite',
+  'deepseek-flash': 'DeepSeek Flash',
+  'deepseek-v4-pro': 'DeepSeek V4 Pro',
 };
 
 export function AiSettingsPanel({ state, command }: { state: AiState; command: Command }) {
   const [key, setKey] = useState('');
-  const [model, setModel] = useState<OpenAiModel>(state.model);
+  const [provider, setProvider] = useState<AiProviderId>(state.provider);
+  const [model, setModel] = useState<AiModel>(state.model);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
 
-  useEffect(() => setModel(state.model), [state.model]);
+  useEffect(() => {
+    setProvider(state.provider);
+    setModel(state.model);
+  }, [state.provider, state.model]);
 
-  async function configure(event: FormEvent) {
-    event.preventDefault();
+  const configuredSelected = state.configured && provider === state.provider;
+  const models = AI_PROVIDER_MODELS[provider];
+
+  function chooseProvider(next: AiProviderId) {
+    setProvider(next);
+    setModel(next === state.provider ? state.model : DEFAULT_AI_MODELS[next]);
+    setKey('');
+    setMessage(undefined);
+  }
+
+  async function configure() {
     if (!key.trim()) return;
     setBusy(true); setMessage(undefined);
     try {
-      const reply = await command({ action: 'ai:configure', apiKey: key, model });
+      const reply = await command({ action: 'ai:configure', provider, apiKey: key, model });
       if (!reply.ok) setMessage(reply.error?.message ?? 'Configurazione non riuscita.');
-      else { setKey(''); setMessage('Provider configurato.'); }
+      else { setKey(''); setMessage(`${providerLabel[provider]} configurato.`); }
     } catch {
       setMessage('Configurazione non riuscita.');
     } finally { setBusy(false); }
   }
 
-  async function changeModel(next: OpenAiModel) {
+  async function changeModel(next: AiModel) {
     setModel(next);
-    if (!state.configured) return;
+    if (!configuredSelected) return;
     const reply = await command({ action: 'ai:setModel', model: next });
     if (!reply.ok) setMessage(reply.error?.message ?? 'Modello non aggiornato.');
     else setMessage('Modello aggiornato.');
@@ -51,21 +78,26 @@ export function AiSettingsPanel({ state, command }: { state: AiState; command: C
 
   return <section className="ai-settings">
     <div className="ai-settings-heading">
-      <div><h2>Assistente IA</h2><p className="muted">Provider supportato: OpenAI. La chiave resta nel profilo locale dell’app e non viene scritta nella campagna.</p></div>
-      <span className={'status-pill' + (state.configured ? ' ready' : '')}>{state.configured ? 'Configurato' : 'Non configurato'}</span>
+      <div><h2>Assistente IA</h2><p className="muted">Provider supportati: OpenAI, Anthropic, Google Gemini e DeepSeek. La chiave resta nel profilo locale dell’app e non viene scritta nella campagna.</p></div>
+      <span className={'status-pill' + (state.configured ? ' ready' : '')}>{state.configured ? `Configurato · ${providerLabel[state.provider]}` : 'Non configurato'}</span>
     </div>
-    {state.configured ? <div className="ai-settings-form">
-      <label><span>Modello</span><select value={model} onChange={event => void changeModel(event.target.value as OpenAiModel)}>{OPENAI_MODELS.map(value => <option value={value} key={value}>{modelLabel[value]}</option>)}</select></label>
-      <button type="button" disabled={busy} onClick={() => void clear()}>Rimuovi configurazione</button>
-    </div> : <form className="ai-settings-form" onSubmit={configure}>
-      <label><span>API key OpenAI</span><input type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)} placeholder="Incolla la chiave API" /></label>
-      <label><span>Modello</span><select value={model} onChange={event => setModel(event.target.value as OpenAiModel)}>{OPENAI_MODELS.map(value => <option value={value} key={value}>{modelLabel[value]}</option>)}</select></label>
-      <button className="primary" type="submit" disabled={busy || !key.trim()}>{busy ? 'Salvataggio…' : 'Configura OpenAI'}</button>
-    </form>}
+    <div className="ai-settings-form">
+      <label><span>Provider</span><select value={provider} onChange={event => chooseProvider(event.target.value as AiProviderId)}>
+        <option value="openai">OpenAI</option>
+        <option value="anthropic">Anthropic</option>
+        <option value="google">Google Gemini</option>
+        <option value="deepseek">DeepSeek</option>
+      </select></label>
+      <label><span>Modello</span><select value={model} onChange={event => void changeModel(event.target.value as AiModel)}>{models.map(value => <option value={value} key={value}>{modelLabel[value]}</option>)}</select></label>
+      {configuredSelected ? <button type="button" disabled={busy} onClick={() => void clear()}>Rimuovi configurazione</button> : <>
+        <label><span>API key {providerLabel[provider]}</span><input type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)} placeholder="Incolla la chiave API" /></label>
+        <button className="primary" type="button" disabled={busy || !key.trim()} onClick={() => void configure()}>{busy ? 'Salvataggio…' : `Configura ${providerLabel[provider]}`}</button>
+      </>}
+    </div>
+    {state.configured && !configuredSelected && <p className="muted">Attualmente è attivo {providerLabel[state.provider]}. Configurando {providerLabel[provider]} diventerà il provider attivo.</p>}
     {message && <p className="ai-settings-message" role="status">{message}</p>}
   </section>;
 }
-
 const statusText: Partial<Record<AiState['status'], string>> = {
   thinking: 'Sto preparando la risposta…',
   cancelled: 'Richiesta annullata.',
@@ -235,7 +267,7 @@ export function AiWorkspace({
 
   return <section className="ai-workspace">
     <header className="ai-header">
-      <div><span className="eyebrow">ASSISTENTE IA</span><h1>Assistente</h1><p>OpenAI · {modelLabel[state.model]}</p></div>
+      <div><span className="eyebrow">ASSISTENTE IA</span><h1>Assistente</h1><p>{providerLabel[state.provider]} · {modelLabel[state.model]}</p></div>
       <button disabled={state.status === 'thinking' || state.messages.length === 0} onClick={() => void newConversation()}>Nuova conversazione</button>
     </header>
 
@@ -247,7 +279,7 @@ export function AiWorkspace({
 
     {!state.privacyAccepted && <section className="ai-privacy" role="note">
       <strong>Prima del primo invio</strong>
-      <p>Il testo necessario alla richiesta e le sole note recuperate o scelte verranno inviati a OpenAI. Campaign Manager non invia automaticamente l’intero vault, asset, recovery o credenziali.</p>
+      <p>Il testo necessario alla richiesta e le sole note recuperate o scelte verranno inviati a {providerLabel[state.provider]}. Campaign Manager non invia automaticamente l’intero vault, asset, recovery o credenziali.</p>
       <button className="primary" onClick={() => void acceptPrivacy()}>Ho capito, continua</button>
     </section>}
 
