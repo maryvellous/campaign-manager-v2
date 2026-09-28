@@ -144,7 +144,7 @@ test('Anthropic adapter uses Messages API and extracts text blocks', async () =>
   assert.equal(answer, 'Risposta Claude');
   assert.equal(request.url, 'https://api.anthropic.com/v1/messages');
   const headers = request.init?.headers as Record<string, string>;
-  assert.equal(headers.authorization, 'Bearer anthropic-secret');
+  assert.equal(headers['x-api-key'], 'anthropic-secret');
   assert.equal(headers['anthropic-version'], '2023-06-01');
   const body = JSON.parse(String(request.init?.body));
   assert.equal(body.model, 'claude-sonnet-5');
@@ -225,13 +225,41 @@ test('AI service switches provider, persists it and requires fresh privacy conse
   await service.configure('anthropic', 'anthropic-key', 'claude-sonnet-5');
   assert.equal(service.state.provider, 'anthropic');
   assert.equal(service.state.model, 'claude-sonnet-5');
+  assert.deepEqual(service.state.configuredProviders.sort(), ['anthropic', 'openai']);
   assert.equal(service.state.privacyAccepted, false);
   await assert.rejects(service.send('test', { label: 'Campagna intera', text: '', sources: [] }), { code: 'permission_denied' });
   await service.acceptPrivacy();
   await service.send('test', { label: 'Campagna intera', text: '', sources: [] });
   assert.deepEqual(calls, ['anthropic']);
 
+  await service.activateProvider('openai');
+  assert.equal(service.state.provider, 'openai');
+  assert.equal(service.state.privacyAccepted, true);
+  await service.send('again', { label: 'Campagna intera', text: '', sources: [] });
+  assert.deepEqual(calls, ['anthropic', 'openai']);
+
   const saved = JSON.parse(await fs.readFile(path.join(dir, 'local', 'ai', 'preferences.json'), 'utf8'));
-  assert.equal(saved.provider, 'anthropic');
-  assert.equal(saved.model, 'claude-sonnet-5');
+  assert.equal(saved.activeProvider, 'openai');
+  assert.equal(saved.providers.anthropic.model, 'claude-sonnet-5');
+  assert.equal(saved.providers.openai.model, 'gpt-5.6-luna');
+});
+
+
+test('AI preferences migrate the old single-provider OpenAI shape without losing the key', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-ai-migration-'));
+  t.after(async () => fs.rm(dir, { recursive: true, force: true }));
+  const local = path.join(dir, 'local');
+  await fs.mkdir(path.join(local, 'ai'), { recursive: true });
+  await fs.writeFile(path.join(local, 'ai', 'preferences.json'), JSON.stringify({
+    provider: 'openai',
+    model: 'gpt-5.6-sol',
+    encryptedKey: 'encrypted-openai',
+    privacyAccepted: true,
+  }));
+  const store = new LocalStore(local);
+  const prefs = await store.readAiPreferences();
+  assert.equal(prefs.activeProvider, 'openai');
+  assert.equal(prefs.providers.openai?.model, 'gpt-5.6-sol');
+  assert.equal(prefs.providers.openai?.encryptedKey, 'encrypted-openai');
+  assert.equal(prefs.providers.openai?.privacyAccepted, true);
 });
