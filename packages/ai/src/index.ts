@@ -1,13 +1,13 @@
 export type AiProviderId = 'openai' | 'anthropic' | 'google' | 'deepseek';
 
 export type OpenAiModel = 'gpt-5.6-luna' | 'gpt-5.6-terra' | 'gpt-5.6-sol';
-export type AnthropicModel = 'claude-sonnet-5' | 'claude-opus-5-5' | 'claude-haiku-4-5-20251001';
+export type AnthropicModel = 'claude-sonnet-5' | 'claude-opus-5' | 'claude-fable-5';
 export type GoogleModel = 'gemini-3.8-flash' | 'gemini-3.5-flash-lite';
 export type DeepSeekModel = 'deepseek-flash' | 'deepseek-v4-pro';
 export type AiModel = OpenAiModel | AnthropicModel | GoogleModel | DeepSeekModel;
 
 export const OPENAI_MODELS: readonly OpenAiModel[] = ['gpt-5.6-luna', 'gpt-5.6-terra', 'gpt-5.6-sol'] as const;
-export const ANTHROPIC_MODELS: readonly AnthropicModel[] = ['claude-sonnet-5', 'claude-opus-5-5', 'claude-haiku-4-5-20251001'] as const;
+export const ANTHROPIC_MODELS: readonly AnthropicModel[] = ['claude-sonnet-5', 'claude-opus-5', 'claude-fable-5'] as const;
 export const GOOGLE_MODELS: readonly GoogleModel[] = ['gemini-3.8-flash', 'gemini-3.5-flash-lite'] as const;
 export const DEEPSEEK_MODELS: readonly DeepSeekModel[] = ['deepseek-flash', 'deepseek-v4-pro'] as const;
 
@@ -258,7 +258,7 @@ export class AnthropicProvider implements AiProvider {
     const { payload } = await runProviderRequest(this.transport, this.endpoint, {
       method: 'POST',
       headers: {
-        authorization: `Bearer ${apiKey}`,
+        'x-api-key': apiKey,
         'anthropic-version': '2023-06-01',
         'content-type': 'application/json',
       },
