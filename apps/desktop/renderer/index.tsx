@@ -87,7 +87,7 @@ function App() {
   const [searchQuery, setSearchQuery] = useState(''); const [searchResults, setSearchResults] = useState<Array<{ noteId: string; title: string; relativePath: string; score: number; matchKind: string; snippet?: string }>>([]);
   const [graphData, setGraphData] = useState<{ nodes: { noteId: string }[]; edges: Array<{ source: string; target: string; occurrences: number }> }>({ nodes: [], edges: [] });
   const [selectedGraphNode, setSelectedGraphNode] = useState<string>(); const [graphFilter, setGraphFilter] = useState('all'); const [graphQuery, setGraphQuery] = useState('');
-  const [graphCamera, setGraphCamera] = useState({ x: 0, y: 0, scale: 1 }); const graphPan = useRef<{ pointerId: number; clientX: number; clientY: number; x: number; y: number }>();
+  const [graphCamera, setGraphCamera] = useState({ x: 0, y: 0, scale: 1 }); const graphPan = useRef<{ pointerId: number; clientX: number; clientY: number; x: number; y: number } | undefined>(undefined);
   const [onboardingOpen, setOnboardingOpen] = useState(() => !onboardingSeen());
   const [appInfo, setAppInfo] = useState<{ version: string; platform: string }>({ version: '', platform: '' });
   const [panels, setPanels] = useState({ sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false });
