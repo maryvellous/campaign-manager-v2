@@ -83,7 +83,25 @@ else {
       boardService.bind(service.state.campaign);
       await boardService.remapNoteReferences(oldId, newId);
     });
-    window = new BrowserWindow({ width: 1200, height: 820, minWidth: 760, minHeight: 540, show: false, backgroundColor: '#1E1333', webPreferences: { preload: path.join(__dirname, 'preload.cjs'), contextIsolation: true, sandbox: true, nodeIntegration: false, webSecurity: true } });
+    window = new BrowserWindow({
+      width: 1200,
+      height: 820,
+      minWidth: 760,
+      minHeight: 540,
+      show: false,
+      backgroundColor: '#1E1333',
+      ...(process.platform === 'win32' ? {
+        titleBarStyle: 'hidden' as const,
+        titleBarOverlay: { color: '#1E1333', symbolColor: '#FFFFFF', height: 54 },
+      } : {}),
+      webPreferences: {
+        preload: path.join(__dirname, 'preload.cjs'),
+        contextIsolation: true,
+        sandbox: true,
+        nodeIntegration: false,
+        webSecurity: true,
+      },
+    });
     window.removeMenu();
     window.webContents.setWindowOpenHandler(() => ({ action: 'deny' }));
     window.webContents.on('will-navigate', event => event.preventDefault());
@@ -100,6 +118,7 @@ else {
           const command = input as Record<string, unknown>;
           switch (command.action) {
             case 'state': break;
+            case 'app:info': return { ok: true, data: { version: app.getVersion(), platform: process.platform } };
             case 'links': return { ok: true, data: await service.linkDetails() };
             case 'search': return { ok: true, data: await service.searchNotes(text(command.query, 2000)) };
             case 'rebuildSearch': await service.rebuildSearch(); break;
