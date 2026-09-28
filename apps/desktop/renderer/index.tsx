@@ -3,13 +3,14 @@ import { BoardWorkspace, type CharacterTokenRequest } from './board-workspace';
 import { LiveSessionView } from './live-session-view';
 import { AiSettingsPanel, AiWorkspace } from './ai-workspace';
 import { parseWikiLinks, resolveWikiLink } from '../../../packages/core/src/markdown';
-import { useCallback, useEffect, useRef, useState, type CSSProperties } from 'react';
+import { useCallback, useEffect, useMemo, useRef, useState, type CSSProperties, type PointerEvent as ReactPointerEvent, type WheelEvent as ReactWheelEvent } from 'react';
 import { createRoot } from 'react-dom/client';
 import type { AppState, DocumentSession } from '../application/campaign-service';
 import type { DesktopLiveState } from '../application/live-session-client';
 import type { AiState } from '../application/ai-service';
 import type { AiContextSelection } from '../../../packages/ai/src/index';
 import { Icon, Palette, PanelHandle, type IconName, type PaletteItem } from './shell-components';
+import { layoutGraph } from './graph-layout';
 import './style.css';
 import './board-workspace.css';
 import './live-session-view.css';
@@ -30,6 +31,40 @@ type Operation = { kind: 'folder' | 'rename' | 'move' | 'saveAs'; id: string; va
 type BoardTransfer =
   | { kind: 'card'; noteId: string; excerpt?: string; boards: Array<{ path: string; title: string }> }
   | { kind: 'character-token'; noteId: string; boards: Array<{ path: string; title: string }> };
+const ONBOARDING_KEY = 'campaign-manager:onboarding:v1';
+const isWindows = navigator.userAgent.includes('Windows');
+const onboardingSteps: Array<{ title: string; body: string; icon: IconName }> = [
+  { title: 'Le campagne restano sul tuo PC', body: 'Campaign Manager lavora su una normale cartella di file Markdown. Apri la cartella della tua campagna e i contenuti restano locali finché non scegli una funzione online.', icon: 'folder' },
+  { title: 'Note e collegamenti', body: 'Scrivi note, organizzale in cartelle e usa i wikilink [[così]]. Ricerca, Recenti e Preferiti ti aiutano a ritrovare subito quello che serve.', icon: 'note' },
+  { title: 'Grafo', body: 'Il Grafo visualizza le relazioni create dai wikilink. Puoi filtrare per cartella, cercare un nodo, fare zoom e concentrarti sui collegamenti di una nota.', icon: 'graph' },
+  { title: 'Board e Live', body: 'Le Board preparano mappe, card e token. Live condivide la scena con i giocatori; la Discord Activity si appoggia allo stesso flusso live quando la usi dentro Discord.', icon: 'board' },
+  { title: 'Assistente IA, se lo vuoi', body: 'L’Assistente è opzionale. Per usarlo configuri una tua API key OpenAI nelle Impostazioni; la chiave resta nel profilo locale dell’app e non viene salvata nella campagna.', icon: 'spark' },
+  { title: 'Hai sempre una guida a portata di mano', body: 'Compendio e Account restano funzioni future. Questa guida si può riaprire in qualsiasi momento da Impostazioni → Generali.', icon: 'settings' },
+];
+function Onboarding({ onClose }: { onClose: () => void }) {
+  const [step, setStep] = useState(0);
+  const current = onboardingSteps[step];
+  const finish = () => { localStorage.setItem(ONBOARDING_KEY, 'done'); onClose(); };
+  return <div className="onboarding-backdrop" role="presentation">
+    <section className="onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
+      <div className="onboarding-icon"><Icon name={current.icon} size={28} /></div>
+      <p className="eyebrow">GUIDA RAPIDA · {step + 1}/{onboardingSteps.length}</p>
+      <h1 id="onboarding-title">{current.title}</h1>
+      <p>{current.body}</p>
+      <div className="onboarding-progress" aria-hidden="true">{onboardingSteps.map((_, index) => <span key={index} className={index === step ? 'active' : ''} />)}</div>
+      <footer>
+        <button onClick={finish}>Salta guida</button>
+        <div className="actions">
+          <button disabled={step === 0} onClick={() => setStep(value => Math.max(0, value - 1))}>Indietro</button>
+          {step < onboardingSteps.length - 1
+            ? <button className="primary" onClick={() => setStep(value => value + 1)}>Avanti</button>
+            : <button className="primary" onClick={finish}>Inizia</button>}
+        </div>
+      </footer>
+    </section>
+  </div>;
+}
+
 function App() {
   const [modes, setModes] = useState<Record<string, boolean>>({}); const [wiki, setWiki] = useState<string>();
   const modesRef = useRef(modes); modesRef.current = modes; const readingPositions = useRef(new Map<string, number>());
@@ -45,7 +80,10 @@ function App() {
   const [titleEditing, setTitleEditing] = useState(false); const [titleText, setTitleText] = useState(''); const titleCommit = useRef(false);
   const [searchQuery, setSearchQuery] = useState(''); const [searchResults, setSearchResults] = useState<Array<{ noteId: string; title: string; relativePath: string; score: number; matchKind: string; snippet?: string }>>([]);
   const [graphData, setGraphData] = useState<{ nodes: { noteId: string }[]; edges: Array<{ source: string; target: string; occurrences: number }> }>({ nodes: [], edges: [] });
-  const [selectedGraphNode, setSelectedGraphNode] = useState<string>(); const [graphFilter, setGraphFilter] = useState('all');
+  const [selectedGraphNode, setSelectedGraphNode] = useState<string>(); const [graphFilter, setGraphFilter] = useState('all'); const [graphQuery, setGraphQuery] = useState('');
+  const [graphCamera, setGraphCamera] = useState({ x: 0, y: 0, scale: 1 }); const graphPan = useRef<{ pointerId: number; clientX: number; clientY: number; x: number; y: number }>();
+  const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem(ONBOARDING_KEY) !== 'done');
+  const [appInfo, setAppInfo] = useState<{ version: string; platform: string }>({ version: '', platform: '' });
   const [panels, setPanels] = useState({ sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false });
   const [viewport, setViewport] = useState(window.innerWidth); const panelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
   const [dropTarget, setDropTarget] = useState<string>(); const [conflictExpanded, setConflictExpanded] = useState(true);
@@ -76,7 +114,7 @@ function App() {
     const id = next.document?.sessionId || next.document?.draft?.id || next.document?.noteId; const switched = currentId.current !== id && !(pending.current > 0 && stateRef.current?.activeTabId === next.activeTabId);
     if (switched) { setWiki(undefined); remember(); setSelectedText(''); setBoardTransfer(undefined); setTitleEditing(false); setConflictExpanded(true); }
     if ((pending.current === 0 && !unsynced.current) || switched) { localBuffer.current = next.document?.markdown ?? ''; setContent(localBuffer.current); }
-    if (!sameCampaign) { undoStack.current.clear(); positions.current.clear(); readingPositions.current.clear(); setModes({}); modesRef.current = {}; setBacklinks([]); setActiveBoardPath(undefined); setCharacterTokenRequest(undefined); const u = next.ui ?? defaults; setPanels({ sidebarWidth: u.sidebarWidth, inspectorWidth: u.inspectorWidth, sidebarCollapsed: u.sidebarCollapsed, inspectorCollapsed: u.inspectorCollapsed }); setFilter(''); }
+    if (!sameCampaign) { undoStack.current.clear(); positions.current.clear(); readingPositions.current.clear(); setModes({}); modesRef.current = {}; setBacklinks([]); setActiveBoardPath(undefined); setCharacterTokenRequest(undefined); setSelectedGraphNode(undefined); setGraphFilter('all'); setGraphQuery(''); setGraphCamera({ x: 0, y: 0, scale: 1 }); const u = next.ui ?? defaults; setPanels({ sidebarWidth: u.sidebarWidth, inspectorWidth: u.inspectorWidth, sidebarCollapsed: u.sidebarCollapsed, inspectorCollapsed: u.inspectorCollapsed }); setFilter(''); }
     const returningToNotes = stateRef.current?.ui.view !== 'notes' && next.ui.view === 'notes';
     stateRef.current = next; currentId.current = id; setState(next);
     if (switched || returningToNotes) requestAnimationFrame(() => { const area = document.querySelector('.center-scroll'); if (area) area.scrollTop = readingPositions.current.get(id + ':' + !!modesRef.current[next.activeTabId ?? '']) ?? 0; const p = id && positions.current.get(id); if (p && editor.current) { editor.current.setSelectionRange(p.start, p.end); editor.current.scrollTop = p.scroll; } });
@@ -99,6 +137,7 @@ function App() {
     void window.campaign.command({ action: 'state' }).then(reply => { if (reply.state) apply(reply.state); });
     const unsubscribe = window.campaign.subscribe(apply); const unsubscribeLive = window.campaign.subscribeLive(setLive); const unsubscribeAi = window.campaign.subscribeAi(setAi); const close = window.campaign.beforeClose(() => { void command({ action: 'close' }); });
     void window.campaign.command({ action: 'live:state' }).then(reply => { if (reply.ok && reply.data) setLive(reply.data as DesktopLiveState); });
+    void window.campaign.command({ action: 'app:info' }).then(reply => { if (reply.ok && reply.data && typeof reply.data === 'object') setAppInfo(reply.data as { version: string; platform: string }); });
     const resize = () => setViewport(window.innerWidth); window.addEventListener('resize', resize);
     return () => { unsubscribe(); unsubscribeLive(); unsubscribeAi(); close(); window.removeEventListener('resize', resize); };
   }, []);
@@ -235,16 +274,57 @@ function App() {
   });
   if (view === 'recent') visible.sort((a, b) => ui.recentNotes.indexOf(a.id) - ui.recentNotes.indexOf(b.id));
   const selected = ui.selectedFolder || (!doc?.draft ? doc?.noteId : '') || '';
-  const graphOptions = ['all', ...new Set(entries.filter(e => e.kind === 'folder').map(e => e.id))] as const;
-  const graphNodeMap = new Map<string, { x: number; y: number }>();
-  graphData.nodes.forEach((node, index) => { graphNodeMap.set(node.noteId, { x: 150 + (index % 5) * 150 + (index % 2) * 26, y: 110 + Math.floor(index / 5) * 110 + (index % 3) * 22 }); });
-  const visibleGraphNodes = graphFilter === 'all' ? graphData.nodes : graphData.nodes.filter(node => {
-    const folder = node.noteId.includes('/') ? node.noteId.slice(0, node.noteId.lastIndexOf('/')) : '';
-    return folder === graphFilter || node.noteId.startsWith(graphFilter + '/');
-  });
-  const visibleGraphEdges = graphFilter === 'all'
-    ? graphData.edges
-    : graphData.edges.filter(edge => visibleGraphNodes.some(node => node.noteId === edge.source) || visibleGraphNodes.some(node => node.noteId === edge.target));
+  const graphOptions = ['all', ...new Set(entries.filter(e => e.kind === 'folder').map(e => e.id.split('/')[0]))] as const;
+  const graphNodeMap = useMemo(() => layoutGraph(graphData.nodes, graphData.edges), [graphData]);
+  const graphMatchesFolder = (noteId: string) => graphFilter === 'all' || noteId.startsWith(graphFilter + '/');
+  const graphQueryNormalized = graphQuery.trim().toLocaleLowerCase();
+  const graphMatchesQuery = (noteId: string) => !graphQueryNormalized || stem(noteId).toLocaleLowerCase().includes(graphQueryNormalized) || noteId.toLocaleLowerCase().includes(graphQueryNormalized);
+  const graphRelated = useMemo(() => {
+    const related = new Set<string>();
+    if (!selectedGraphNode) return related;
+    related.add(selectedGraphNode);
+    graphData.edges.forEach(edge => {
+      if (edge.source === selectedGraphNode) related.add(edge.target);
+      if (edge.target === selectedGraphNode) related.add(edge.source);
+    });
+    return related;
+  }, [graphData.edges, selectedGraphNode]);
+  const graphConnections = selectedGraphNode
+    ? graphData.edges.filter(edge => edge.source === selectedGraphNode || edge.target === selectedGraphNode)
+    : [];
+  const graphNodeColor = (noteId: string) => {
+    let folder = parent(noteId);
+    while (folder) {
+      const inherited = ui.folderColors?.[folder];
+      if (inherited) return inherited;
+      folder = parent(folder);
+    }
+    return '#b8adc9';
+  };
+  function changeGraphZoom(multiplier: number) {
+    setGraphCamera(camera => ({ ...camera, scale: Math.min(2.4, Math.max(0.55, camera.scale * multiplier)) }));
+  }
+  function graphWheel(event: ReactWheelEvent<SVGSVGElement>) {
+    event.preventDefault();
+    changeGraphZoom(event.deltaY > 0 ? 0.9 : 1.1);
+  }
+  function graphPointerDown(event: ReactPointerEvent<SVGSVGElement>) {
+    if (event.button !== 0 || (event.target as Element).closest('.graph-node')) return;
+    event.currentTarget.setPointerCapture(event.pointerId);
+    graphPan.current = { pointerId: event.pointerId, clientX: event.clientX, clientY: event.clientY, x: graphCamera.x, y: graphCamera.y };
+  }
+  function graphPointerMove(event: ReactPointerEvent<SVGSVGElement>) {
+    const start = graphPan.current;
+    if (!start || start.pointerId !== event.pointerId) return;
+    const rect = event.currentTarget.getBoundingClientRect();
+    const ratioX = 900 / Math.max(1, rect.width);
+    const ratioY = 520 / Math.max(1, rect.height);
+    setGraphCamera(camera => ({ ...camera, x: start.x + (event.clientX - start.clientX) * ratioX, y: start.y + (event.clientY - start.clientY) * ratioY }));
+  }
+  function graphPointerUp(event: ReactPointerEvent<SVGSVGElement>) {
+    if (graphPan.current?.pointerId === event.pointerId) graphPan.current = undefined;
+    if (event.currentTarget.hasPointerCapture(event.pointerId)) event.currentTarget.releasePointerCapture(event.pointerId);
+  }
   const commands: PaletteItem[] = [{ id: 'open', label: 'Apri cartella campagna…', kind: 'azione', run: () => void command({ action: 'choose' }) }];
   if (state?.campaign) commands.push(
     { id: 'new', label: 'Nuova nota', kind: 'azione', run: () => void command({ action: 'newNote' }) },
@@ -257,7 +337,7 @@ function App() {
     ...entries.filter(e => e.kind === 'note').map(e => ({ id: `note-${e.id}`, label: stem(e.id), detail: e.id, kind: 'note' as const, run: () => void command({ action: 'note', noteId: e.id }) }))
   );
   const sidebarVisible = !['live', 'assistant'].includes(view) && (view === 'boards' ? true : !panels.sidebarCollapsed) && viewport >= 760; const inspectorVisible = !['boards', 'live', 'assistant'].includes(view) && !panels.inspectorCollapsed && viewport >= 1050;
-  return <div className="app" style={{ '--sidebar-width': `${panels.sidebarWidth}px`, '--inspector-width': `${panels.inspectorWidth}px` } as CSSProperties}>
+  return <div className={`app${isWindows ? ' windows-frame' : ''}`} style={{ '--sidebar-width': `${panels.sidebarWidth}px`, '--inspector-width': `${panels.inspectorWidth}px` } as CSSProperties}>
     <header className="titlebar"><div className="brand"><span className="logo" aria-hidden="true">✦</span><span><strong>Campaign Manager</strong><small>{state?.campaign?.name || 'Le tue storie, in locale'}</small></span></div>
       <div className="history-controls"><button className="icon-button" aria-label="Indietro" disabled={busy || !activeTab || activeTab.historyIndex <= 0} onClick={() => void command({ action: 'history', direction: -1 })}><Icon name="back" /></button><button className="icon-button" aria-label="Avanti" disabled={busy || !activeTab || activeTab.historyIndex >= activeTab.history.length - 1} onClick={() => void command({ action: 'history', direction: 1 })}><Icon name="forward" /></button></div>
       <div className="breadcrumbs"><span>{state?.campaign?.name || 'Il prossimo capitolo comincia qui'}</span>{doc && <><span>/</span><strong>{title(doc)}</strong></>}</div>
@@ -294,12 +374,64 @@ function App() {
           {wiki && <section className="notice wiki-picker" aria-label="Destinazione collegamento"><strong>{resolveWikiLink(wiki, noteIds).status === 'ambiguous' ? 'Più note corrispondono a questo collegamento' : 'Questa nota non esiste ancora'}</strong><p>[[{wiki}]]</p>{resolveWikiLink(wiki, noteIds).candidates.map(id => <button key={id} onClick={async () => { if (await command({ action: 'note', noteId: id })) setWiki(undefined); }}><strong>{stem(id)}</strong><small>{id}</small></button>)}{resolveWikiLink(wiki, noteIds).status === 'missing' && <><p>Verrà creata {wiki.includes('/') ? wiki : [parent(doc.noteId), wiki].filter(Boolean).join('/')}. Le eventuali cartelle mancanti verranno create insieme alla nota.</p><button disabled={busy} onClick={async () => { if (await command({ action: 'createLinkedNote', target: wiki })) { setWiki(undefined); setModes(previous => ({ ...previous, [stateRef.current?.activeTabId ?? '']: false })); } }}>Crea nota</button></>}<button onClick={() => { setWiki(undefined); requestAnimationFrame(() => editor.current?.focus()); }}>Annulla collegamento</button></section>}
           {reading ? <MarkdownView markdown={content} noteId={doc.noteId} noteIds={noteIds} onWiki={openWiki} onExternal={url => void command({ action: 'external', url })} loadImage={loadImage} /> : <textarea ref={editor} className="editor" aria-label="Contenuto Markdown" placeholder="Comincia a scrivere la tua storia…" spellCheck={false} readOnly={busy} value={content} onSelect={remember} onScroll={remember} onChange={e => edit(e.target.value)} />}
 
-        </> : <div className="empty-document"><span className="empty-mark">✦</span><h1>La campagna è aperta.</h1><p>Scegli una nota o comincia una nuova pagina.</p><button className="primary" onClick={() => void command({ action: 'newNote' })}><Icon name="plus" size={16} />Nuova nota</button></div> : view === 'search' ? <section className="search-view"><div className="view-header"><h1>Ricerca</h1><button className="icon-button" aria-label="Ricostruisci indice" title="Ricostruisci indice" onClick={() => void command({ action: 'rebuildSearch' })}><Icon name="refresh" /></button></div><label className="search-box"><Icon name="search" size={16} /><input aria-label="Cerca note e contenuti" placeholder="Digita per cercare nelle note" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} /></label>{searchQuery.trim() ? <div className="search-results">{searchResults.length ? searchResults.map(result => <button key={result.noteId} className="search-result" onClick={() => void command({ action: 'note', noteId: result.noteId })}><span className="match-kind">{result.matchKind}</span><strong>{result.title}</strong><small>{result.relativePath}</small>{result.snippet && <p>{result.snippet}</p>}</button>) : <p className="empty-list">Nessun risultato per “{searchQuery.trim()}”.</p>}</div> : <div className="empty-list">Digita per cercare nelle note.</div>}</section> : view === 'graph' ? <section className="graph-view"><div className="view-header"><h1>Grafo</h1><div className="graph-filters"><label><span>Cartella</span><select aria-label="Filtro grafo" value={graphFilter} onChange={e => setGraphFilter(e.target.value)}>{graphOptions.map(option => <option key={option} value={option}>{option === 'all' ? 'Tutto' : option}</option>)}</select></label></div></div>{graphData.nodes.length ? <svg className="graph-canvas" viewBox="0 0 900 520" aria-label="Vista grafo">{visibleGraphEdges.map(edge => { const source = graphNodeMap.get(edge.source) ?? { x: 180, y: 180 }; const target = graphNodeMap.get(edge.target) ?? { x: 500, y: 320 }; return <path key={`${edge.source}-${edge.target}`} d={`M ${source.x} ${source.y} C ${source.x + 90} ${source.y}, ${target.x - 90} ${target.y}, ${target.x} ${target.y}`} className="graph-edge" />; })}{visibleGraphNodes.map(node => { const point = graphNodeMap.get(node.noteId) ?? { x: 160, y: 150 }; return <g key={node.noteId} className={selectedGraphNode === node.noteId ? 'graph-node selected' : 'graph-node'} onClick={() => setSelectedGraphNode(node.noteId)}><circle cx={point.x} cy={point.y} r={16} /><text x={point.x + 18} y={point.y + 4}>{node.noteId.split('/').at(-1)?.replace(/\.md$/iu, '')}</text></g>; })}</svg> : <div className="empty-list">Nessuna relazione nel grafo per questa campagna.</div>}{selectedGraphNode && <div className="graph-detail"><strong>{selectedGraphNode.split('/').at(-1)?.replace(/\.md$/iu, '')}</strong><small>{selectedGraphNode}</small><button onClick={() => void command({ action: 'note', noteId: selectedGraphNode })}>Apri nota</button></div>}</section> : view === 'settings' ? <section className="settings-view"><span className="eyebrow">IL TUO SPAZIO DI LAVORO</span><h1>Impostazioni</h1><section><h2>Campagna locale</h2><p className="local-path">{state.campaign.root}</p><div className="actions"><button onClick={() => void command({ action: 'revealRoot' })}>Apri in Esplora file</button><button onClick={() => updatePanels({ sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false })}>Ripristina disposizione</button><button onClick={() => void command({ action: 'closeCampaign' })}>Chiudi campagna</button></div></section><AiSettingsPanel state={ai} command={window.campaign.command} /><section><h2>Account</h2><p>Non serve un account per usare Campaign Manager.</p><p className="muted">Le funzioni online collegate a un account arriveranno più avanti.</p><span className="status-pill">In arrivo</span></section><small className="muted">Campaign Manager · V0.5</small></section> : <section className="placeholder-view"><Icon name={view === 'compendium' ? 'book' : 'search'} size={40} /><span className="status-pill">In arrivo</span><h1>{view === 'compendium' ? 'Compendio' : 'Ricerca'}</h1><p>{view === 'compendium' ? 'Qui potrai consultare l’enciclopedia e copiare le voci che ti servono nelle note della campagna.' : 'Qui potrai cercare nel contenuto delle note. Per trovare subito un file puoi usare il filtro nella sidebar o i comandi.'}</p><button onClick={() => void command({ action: 'view', view: 'notes' })}>Torna alle note</button></section>}
+        </> : <div className="empty-document"><span className="empty-mark">✦</span><h1>La campagna è aperta.</h1><p>Scegli una nota o comincia una nuova pagina.</p><button className="primary" onClick={() => void command({ action: 'newNote' })}><Icon name="plus" size={16} />Nuova nota</button></div> : view === 'search' ? <section className="search-view"><div className="view-header"><h1>Ricerca</h1><button className="icon-button" aria-label="Ricostruisci indice" title="Ricostruisci indice" onClick={() => void command({ action: 'rebuildSearch' })}><Icon name="refresh" /></button></div><label className="search-box"><Icon name="search" size={16} /><input aria-label="Cerca note e contenuti" placeholder="Digita per cercare nelle note" value={searchQuery} onChange={e => setSearchQuery(e.target.value)} /></label>{searchQuery.trim() ? <div className="search-results">{searchResults.length ? searchResults.map(result => <button key={result.noteId} className="search-result" onClick={() => void command({ action: 'note', noteId: result.noteId })}><span className="match-kind">{result.matchKind}</span><strong>{result.title}</strong><small>{result.relativePath}</small>{result.snippet && <p>{result.snippet}</p>}</button>) : <p className="empty-list">Nessun risultato per “{searchQuery.trim()}”.</p>}</div> : <div className="empty-list">Digita per cercare nelle note.</div>}</section> : view === 'graph' ? <section className="graph-view">
+          <div className="view-header"><div><span className="eyebrow">COLLEGAMENTI TRA LE NOTE</span><h1>Grafo</h1></div><div className="graph-toolbar">
+            <label className="graph-search"><Icon name="search" size={15} /><input aria-label="Cerca nodo nel grafo" placeholder="Cerca nodo…" value={graphQuery} onChange={event => setGraphQuery(event.target.value)} /></label>
+            <label className="graph-filter"><span>Cartella</span><select aria-label="Filtro grafo" value={graphFilter} onChange={event => setGraphFilter(event.target.value)}>{graphOptions.map(option => <option key={option} value={option}>{option === 'all' ? 'Tutto' : option}</option>)}</select></label>
+          </div></div>
+          {graphData.nodes.length ? <div className="graph-stage">
+            <div className="graph-camera-controls" aria-label="Controlli grafo">
+              <button className="icon-button" aria-label="Riduci grafo" onClick={() => changeGraphZoom(0.85)}>−</button>
+              <button onClick={() => setGraphCamera({ x: 0, y: 0, scale: 1 })}>Ricentra · {Math.round(graphCamera.scale * 100)}%</button>
+              <button className="icon-button" aria-label="Ingrandisci grafo" onClick={() => changeGraphZoom(1.15)}>+</button>
+            </div>
+            <svg className="graph-canvas" viewBox="0 0 900 520" aria-label="Vista grafo" onWheel={graphWheel} onPointerDown={graphPointerDown} onPointerMove={graphPointerMove} onPointerUp={graphPointerUp} onPointerCancel={graphPointerUp}>
+              <g transform={`translate(${graphCamera.x} ${graphCamera.y}) scale(${graphCamera.scale})`}>
+                {graphData.edges.map(edge => {
+                  const source = graphNodeMap[edge.source] ?? { x: 180, y: 180, degree: 0 };
+                  const target = graphNodeMap[edge.target] ?? { x: 500, y: 320, degree: 0 };
+                  const focused = !selectedGraphNode || edge.source === selectedGraphNode || edge.target === selectedGraphNode;
+                  const filtered = graphFilter !== 'all' && !graphMatchesFolder(edge.source) && !graphMatchesFolder(edge.target);
+                  return <line key={`${edge.source}-${edge.target}`} x1={source.x} y1={source.y} x2={target.x} y2={target.y} className={`graph-edge${focused ? '' : ' focus-muted'}${filtered ? ' filtered' : ''}`} />;
+                })}
+                {graphData.nodes.map(node => {
+                  const point = graphNodeMap[node.noteId] ?? { x: 450, y: 260, degree: 0 };
+                  const selectedNode = selectedGraphNode === node.noteId;
+                  const related = !selectedGraphNode || graphRelated.has(node.noteId);
+                  const filtered = !graphMatchesFolder(node.noteId);
+                  const queryMatch = graphMatchesQuery(node.noteId);
+                  const showLabel = selectedNode || (selectedGraphNode && related) || (graphQueryNormalized && queryMatch) || graphCamera.scale >= 1.2 || point.degree >= 4;
+                  const radius = Math.min(12, 6.5 + Math.sqrt(point.degree) * 1.35);
+                  return <g key={node.noteId} className={`graph-node${selectedNode ? ' selected' : ''}${related ? '' : ' focus-muted'}${filtered ? ' filtered' : ''}${graphQueryNormalized && !queryMatch ? ' query-muted' : ''}${graphQueryNormalized && queryMatch ? ' search-match' : ''}`} onClick={event => { event.stopPropagation(); setSelectedGraphNode(selectedNode ? undefined : node.noteId); }} role="button" tabIndex={0} aria-label={`${stem(node.noteId)}, ${point.degree} collegamenti`} onKeyDown={event => { if (event.key === 'Enter' || event.key === ' ') { event.preventDefault(); setSelectedGraphNode(selectedNode ? undefined : node.noteId); } }}>
+                    <circle cx={point.x} cy={point.y} r={radius} style={{ fill: graphNodeColor(node.noteId) }} />
+                    {showLabel && <text x={point.x + radius + 6} y={point.y + 4}>{stem(node.noteId)}</text>}
+                  </g>;
+                })}
+              </g>
+            </svg>
+            <div className="graph-hint">Trascina lo sfondo per spostarti · rotella per zoom · seleziona un nodo per isolare le relazioni</div>
+            {selectedGraphNode && <aside className="graph-detail">
+              <span className="eyebrow">NOTA SELEZIONATA</span><strong>{stem(selectedGraphNode)}</strong><small>{parent(selectedGraphNode) || 'Radice della campagna'}</small>
+              <p>{graphConnections.length} {graphConnections.length === 1 ? 'collegamento' : 'collegamenti'}</p>
+              {!!graphConnections.length && <div className="graph-related">{[...graphRelated].filter(id => id !== selectedGraphNode).slice(0, 6).map(id => <button key={id} onClick={() => setSelectedGraphNode(id)}>{stem(id)}</button>)}</div>}
+              <button className="primary" onClick={() => void command({ action: 'note', noteId: selectedGraphNode })}>Apri nota</button>
+              <button onClick={() => setSelectedGraphNode(undefined)}>Mostra tutto</button>
+            </aside>}
+          </div> : <div className="empty-list">Non ci sono ancora note da mostrare nel grafo.</div>}
+        </section> : view === 'settings' ? <section className="settings-view"><span className="eyebrow">IL TUO SPAZIO DI LAVORO</span><h1>Impostazioni</h1>
+          <section><span className="settings-section-label">GENERALI</span><h2>Campagna locale</h2><p className="local-path">{state.campaign.root}</p><p className="muted">La cartella della campagna è la fonte autorevole dei tuoi contenuti.</p><div className="actions"><button onClick={() => void command({ action: 'revealRoot' })}>Apri in Esplora file</button><button onClick={() => setOnboardingOpen(true)}>Rivedi guida iniziale</button><button onClick={() => void command({ action: 'closeCampaign' })}>Chiudi campagna</button></div></section>
+          <AiSettingsPanel state={ai} command={window.campaign.command} />
+          <section><span className="settings-section-label">LIVE & DISCORD</span><h2>Sessioni con i giocatori</h2><p>{live.status === 'idle' ? 'Nessuna sessione live attiva.' : 'La sessione Live è attiva o in preparazione.'}</p><p className="muted">Live usa le Board preparate per condividere scena e token. La Discord Activity è un accesso alternativo alla stessa sessione e non sostituisce la modalità web standalone.</p></section>
+          <section><span className="settings-section-label">ASPETTO</span><h2>Interfaccia</h2><p>Tema scuro Diaspro · pannelli ridimensionabili.</p><button onClick={() => updatePanels({ sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false })}>Ripristina disposizione pannelli</button></section>
+          <section><span className="settings-section-label">ACCOUNT</span><h2>Account</h2><p>Non serve un account per usare Campaign Manager.</p><p className="muted">Le funzioni online collegate a un account arriveranno più avanti.</p><span className="status-pill">In arrivo</span></section>
+          <section><span className="settings-section-label">INFORMAZIONI</span><h2>Campaign Manager</h2><p className="muted">Versione {appInfo.version || '…'} · applicazione desktop local-first{appInfo.platform === 'win32' ? ' · Windows' : ''}.</p></section>
+        </section> : <section className="placeholder-view"><Icon name={view === 'compendium' ? 'book' : 'search'} size={40} /><span className="status-pill">In arrivo</span><h1>{view === 'compendium' ? 'Compendio' : 'Ricerca'}</h1><p>{view === 'compendium' ? 'Qui potrai consultare l’enciclopedia e copiare le voci che ti servono nelle note della campagna.' : 'Qui potrai cercare nel contenuto delle note. Per trovare subito un file puoi usare il filtro nella sidebar o i comandi.'}</p><button onClick={() => void command({ action: 'view', view: 'notes' })}>Torna alle note</button></section>}
         </div><footer className="document-footer"><span>{doc ? doc.draft ? doc.protected ? 'Bozza protetta · file non ancora creato' : 'Bozza temporanea' : doc.state === 'clean' ? 'File Markdown sul disco' : doc.protected ? 'Bozza di recupero protetta' : 'Protezione bozza in corso…' : 'Tutti i tuoi contenuti restano in locale'}</span>{doc && <div className="actions"><button onClick={() => void command({ action: 'export' })}>Esporta</button><button onClick={() => void command({ action: 'discard' })}>Scarta modifiche</button><button disabled={!!doc.draft} onClick={() => void command({ action: 'trashResource', id: doc.noteId })}>Cestina nota</button></div>}</footer>
       </section>
       {inspectorVisible && <><PanelHandle label="Larghezza inspector" value={panels.inspectorWidth} min={240} max={360} direction={-1} onChange={v => updatePanels({ inspectorWidth: v })} /><aside className="inspector"><div className="sidebar-heading"><h2>Dettagli</h2><button className="icon-button" aria-label="Nascondi inspector" onClick={() => updatePanels({ inspectorCollapsed: true })}><Icon name="panel" size={16} /></button></div>{ui.selectedFolder ? <><span className="detail-icon"><Icon name="folder" size={25} /></span><h3>{ui.selectedFolder.split('/').at(-1)}</h3><p className="local-path">{ui.selectedFolder}</p><dl><dt>Note nella cartella</dt><dd>{entries.filter(e => e.kind === 'note' && e.id.startsWith(ui.selectedFolder + '/')).length}</dd></dl><div className="inspector-actions"><button onClick={() => void command({ action: 'newNote', parentFolder: ui.selectedFolder })}>Nuova nota qui</button><button onClick={() => begin('folder', ui.selectedFolder)}>Nuova sottocartella</button><button onClick={() => begin('rename', ui.selectedFolder)}>Rinomina cartella</button><button onClick={() => begin('move', ui.selectedFolder)}>Sposta cartella</button><button onClick={() => void command({ action: 'trashResource', id: ui.selectedFolder })}>Cestina cartella</button></div></> : doc ? <><span className="detail-icon"><Icon name="note" size={25} /></span><h3>{title(doc)}</h3><p className="local-path">{doc.draft ? doc.draft.parentFolder || 'Cartella principale' : doc.noteId}</p><dl><dt>Parole</dt><dd>{content.trim() ? content.trim().split(/\s+/u).length : 0}</dd><dt>Caratteri</dt><dd>{content.length}</dd><dt>Formato</dt><dd>Markdown</dd></dl><div className="inspector-actions"><button disabled={!!doc.draft} onClick={() => begin('move', doc.noteId)}>Sposta nota</button><button disabled={!!doc.draft} onClick={() => void chooseBoard(doc.noteId)}>Porta sulla board…</button><button disabled={!!doc.draft} onClick={() => void chooseBoardForCharacterToken(doc.noteId)}>Crea token da questa nota…</button><button disabled={!!doc.draft} onClick={() => openAssistant({ kind: 'note', noteId: doc.noteId })}>Chiedi all’IA su questa nota</button><button onClick={() => void command({ action: 'note', noteId: doc.noteId, newTab: true })} disabled={!!doc.draft}>Apri in nuova tab</button></div><div className="inspector-note"><h4>Collegamenti in uscita</h4>{!parseWikiLinks(content).length && <p>Nessun collegamento in uscita.</p>}{[...new Set(parseWikiLinks(content).map(link => link.target))].map(target => <button className="relation" key={target} onClick={() => openWiki(target)}><span>{target}</span><small>{({ resolved: 'Nota collegata', missing: 'Nota mancante', ambiguous: 'Più corrispondenze' })[resolveWikiLink(target, noteIds).status]}</small></button>)}<h4>Backlink</h4>{!backlinks.length && <p>Nessuna nota rimanda qui.</p>}{backlinks.map(id => <button className="relation" key={id} onClick={() => void command({ action: 'note', noteId: id })}><span>{stem(id)}</span><small>{id}</small></button>)}{linkWarning && <p role="status">{linkWarning}</p>}</div></> : <p className="empty-list">Seleziona una nota o una cartella per vederne i dettagli.</p>}</aside></>}
     </main>}
     {palette && <Palette items={commands} onClose={() => setPalette(false)} />}
+    {onboardingOpen && <Onboarding onClose={() => setOnboardingOpen(false)} />}
   </div>;
 }
 createRoot(document.getElementById('root')!).render(<App />);
