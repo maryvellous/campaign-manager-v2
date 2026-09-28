@@ -33,6 +33,12 @@ type BoardTransfer =
   | { kind: 'character-token'; noteId: string; boards: Array<{ path: string; title: string }> };
 const ONBOARDING_KEY = 'campaign-manager:onboarding:v1';
 const isWindows = navigator.userAgent.includes('Windows');
+function onboardingSeen(): boolean {
+  try { return localStorage.getItem(ONBOARDING_KEY) === 'done'; } catch { return false; }
+}
+function rememberOnboarding(): void {
+  try { localStorage.setItem(ONBOARDING_KEY, 'done'); } catch { /* onboarding still closes for this session */ }
+}
 const onboardingSteps: Array<{ title: string; body: string; icon: IconName }> = [
   { title: 'Le campagne restano sul tuo PC', body: 'Campaign Manager lavora su una normale cartella di file Markdown. Apri la cartella della tua campagna e i contenuti restano locali finché non scegli una funzione online.', icon: 'folder' },
   { title: 'Note e collegamenti', body: 'Scrivi note, organizzale in cartelle e usa i wikilink [[così]]. Ricerca, Recenti e Preferiti ti aiutano a ritrovare subito quello che serve.', icon: 'note' },
@@ -44,7 +50,7 @@ const onboardingSteps: Array<{ title: string; body: string; icon: IconName }> = 
 function Onboarding({ onClose }: { onClose: () => void }) {
   const [step, setStep] = useState(0);
   const current = onboardingSteps[step];
-  const finish = () => { localStorage.setItem(ONBOARDING_KEY, 'done'); onClose(); };
+  const finish = () => { rememberOnboarding(); onClose(); };
   return <div className="onboarding-backdrop" role="presentation">
     <section className="onboarding-dialog" role="dialog" aria-modal="true" aria-labelledby="onboarding-title">
       <div className="onboarding-icon"><Icon name={current.icon} size={28} /></div>
@@ -82,7 +88,7 @@ function App() {
   const [graphData, setGraphData] = useState<{ nodes: { noteId: string }[]; edges: Array<{ source: string; target: string; occurrences: number }> }>({ nodes: [], edges: [] });
   const [selectedGraphNode, setSelectedGraphNode] = useState<string>(); const [graphFilter, setGraphFilter] = useState('all'); const [graphQuery, setGraphQuery] = useState('');
   const [graphCamera, setGraphCamera] = useState({ x: 0, y: 0, scale: 1 }); const graphPan = useRef<{ pointerId: number; clientX: number; clientY: number; x: number; y: number }>();
-  const [onboardingOpen, setOnboardingOpen] = useState(() => localStorage.getItem(ONBOARDING_KEY) !== 'done');
+  const [onboardingOpen, setOnboardingOpen] = useState(() => !onboardingSeen());
   const [appInfo, setAppInfo] = useState<{ version: string; platform: string }>({ version: '', platform: '' });
   const [panels, setPanels] = useState({ sidebarWidth: 248, inspectorWidth: 265, sidebarCollapsed: false, inspectorCollapsed: false });
   const [viewport, setViewport] = useState(window.innerWidth); const panelTimer = useRef<ReturnType<typeof setTimeout> | undefined>(undefined);
