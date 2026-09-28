@@ -12,7 +12,7 @@ import { ioError } from './infrastructure/campaign-repository';
 import { LiveSessionClient } from './application/live-session-client';
 import { AiService } from './application/ai-service';
 import { AiContextError, prepareAiContext } from './application/ai-context';
-import type { AiContextSelection } from '../../packages/ai/src/index';
+import type { AiContextSelection, AiModel, AiProviderId } from '../../packages/ai/src/index';
 
 let window: BrowserWindow;
 let service: CampaignService;
@@ -129,11 +129,18 @@ else {
             }
             case 'ai:configure': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
-              return { ok: true, data: await aiService.configure(text(command.apiKey, 1000), text(command.model, 64) as Parameters<AiService['configure']>[1]) };
+              return {
+                ok: true,
+                data: await aiService.configure(
+                  text(command.provider, 32) as AiProviderId,
+                  text(command.apiKey, 1000),
+                  text(command.model, 64) as AiModel
+                )
+              };
             }
             case 'ai:setModel': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
-              return { ok: true, data: await aiService.setModel(text(command.model, 64) as Parameters<AiService['setModel']>[0]) };
+              return { ok: true, data: await aiService.setModel(text(command.model, 64) as AiModel) };
             }
             case 'ai:acceptPrivacy': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
