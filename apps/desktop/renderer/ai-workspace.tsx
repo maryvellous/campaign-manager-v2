@@ -17,8 +17,8 @@ const modelLabel: Record<AiModel, string> = {
   'gpt-5.6-terra': 'GPT-5.6 Terra',
   'gpt-5.6-sol': 'GPT-5.6 Sol',
   'claude-sonnet-5': 'Claude Sonnet 5',
-  'claude-opus-5-5': 'Claude Opus 5.5',
-  'claude-haiku-4-5-20251001': 'Claude Haiku 4.5',
+  'claude-opus-5': 'Claude Opus 5',
+  'claude-fable-5': 'Claude Fable 5',
   'gemini-3.8-flash': 'Gemini 3.8 Flash',
   'gemini-3.5-flash-lite': 'Gemini 3.5 Flash-Lite',
   'deepseek-flash': 'DeepSeek Flash',
@@ -34,15 +34,16 @@ export function AiSettingsPanel({ state, command }: { state: AiState; command: C
 
   useEffect(() => {
     setProvider(state.provider);
-    setModel(state.model);
-  }, [state.provider, state.model]);
+    setModel(state.providerModels[state.provider] ?? state.model);
+  }, [state.provider, state.model, state.providerModels]);
 
-  const configuredSelected = state.configured && provider === state.provider;
+  const providerConfigured = state.configuredProviders.includes(provider);
+  const providerActive = provider === state.provider && state.configured;
   const models = AI_PROVIDER_MODELS[provider];
 
   function chooseProvider(next: AiProviderId) {
     setProvider(next);
-    setModel(next === state.provider ? state.model : DEFAULT_AI_MODELS[next]);
+    setModel(state.providerModels[next] ?? DEFAULT_AI_MODELS[next]);
     setKey('');
     setMessage(undefined);
   }
@@ -53,16 +54,25 @@ export function AiSettingsPanel({ state, command }: { state: AiState; command: C
     try {
       const reply = await command({ action: 'ai:configure', provider, apiKey: key, model });
       if (!reply.ok) setMessage(reply.error?.message ?? 'Configurazione non riuscita.');
-      else { setKey(''); setMessage(`${providerLabel[provider]} configurato.`); }
+      else { setKey(''); setMessage(`${providerLabel[provider]} configurato e attivato.`); }
     } catch {
       setMessage('Configurazione non riuscita.');
     } finally { setBusy(false); }
   }
 
+  async function activate() {
+    setBusy(true); setMessage(undefined);
+    try {
+      const reply = await command({ action: 'ai:activateProvider', provider });
+      if (!reply.ok) setMessage(reply.error?.message ?? 'Cambio provider non riuscito.');
+      else setMessage(`${providerLabel[provider]} è ora il provider attivo.`);
+    } finally { setBusy(false); }
+  }
+
   async function changeModel(next: AiModel) {
     setModel(next);
-    if (!configuredSelected) return;
-    const reply = await command({ action: 'ai:setModel', model: next });
+    if (!providerConfigured) return;
+    const reply = await command({ action: 'ai:setModel', provider, model: next });
     if (!reply.ok) setMessage(reply.error?.message ?? 'Modello non aggiornato.');
     else setMessage('Modello aggiornato.');
   }
@@ -70,31 +80,37 @@ export function AiSettingsPanel({ state, command }: { state: AiState; command: C
   async function clear() {
     setBusy(true); setMessage(undefined);
     try {
-      const reply = await command({ action: 'ai:clearConfiguration' });
+      const reply = await command({ action: 'ai:clearConfiguration', provider });
       if (!reply.ok) setMessage(reply.error?.message ?? 'Configurazione non rimossa.');
-      else setMessage('Provider disattivato.');
+      else { setKey(''); setMessage(`${providerLabel[provider]} rimosso.`); }
     } finally { setBusy(false); }
   }
 
   return <section className="ai-settings">
     <div className="ai-settings-heading">
-      <div><h2>Assistente IA</h2><p className="muted">Provider supportati: OpenAI, Anthropic, Google Gemini e DeepSeek. La chiave resta nel profilo locale dell’app e non viene scritta nella campagna.</p></div>
-      <span className={'status-pill' + (state.configured ? ' ready' : '')}>{state.configured ? `Configurato · ${providerLabel[state.provider]}` : 'Non configurato'}</span>
+      <div>
+        <h2>Assistente IA</h2>
+        <p className="muted">Puoi salvare separatamente le API key di OpenAI, Anthropic, Google Gemini e DeepSeek. Le chiavi restano nel profilo locale dell’app e non vengono scritte nella campagna.</p>
+      </div>
+      <span className={'status-pill' + (state.configured ? ' ready' : '')}>{state.configured ? `Attivo · ${providerLabel[state.provider]}` : 'Nessun provider attivo'}</span>
+    </div>
+    <div className="ai-provider-tabs" role="tablist" aria-label="Provider IA">
+      {(Object.keys(providerLabel) as AiProviderId[]).map(id => <button type="button" role="tab" aria-selected={provider === id} className={provider === id ? 'active' : ''} key={id} onClick={() => chooseProvider(id)}>
+        <span>{providerLabel[id]}</span>
+        {state.configuredProviders.includes(id) && <small>{state.provider === id && state.configured ? 'Attivo' : 'Configurato'}</small>}
+      </button>)}
     </div>
     <div className="ai-settings-form">
-      <label><span>Provider</span><select value={provider} onChange={event => chooseProvider(event.target.value as AiProviderId)}>
-        <option value="openai">OpenAI</option>
-        <option value="anthropic">Anthropic</option>
-        <option value="google">Google Gemini</option>
-        <option value="deepseek">DeepSeek</option>
-      </select></label>
       <label><span>Modello</span><select value={model} onChange={event => void changeModel(event.target.value as AiModel)}>{models.map(value => <option value={value} key={value}>{modelLabel[value]}</option>)}</select></label>
-      {configuredSelected ? <button type="button" disabled={busy} onClick={() => void clear()}>Rimuovi configurazione</button> : <>
+      {providerConfigured ? <div className="actions">
+        {!providerActive && <button className="primary" type="button" disabled={busy} onClick={() => void activate()}>Usa {providerLabel[provider]}</button>}
+        <button type="button" disabled={busy} onClick={() => void clear()}>Rimuovi API key</button>
+      </div> : <>
         <label><span>API key {providerLabel[provider]}</span><input type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)} placeholder="Incolla la chiave API" /></label>
-        <button className="primary" type="button" disabled={busy || !key.trim()} onClick={() => void configure()}>{busy ? 'Salvataggio…' : `Configura ${providerLabel[provider]}`}</button>
+        <button className="primary" type="button" disabled={busy || !key.trim()} onClick={() => void configure()}>{busy ? 'Salvataggio…' : `Salva e usa ${providerLabel[provider]}`}</button>
       </>}
     </div>
-    {state.configured && !configuredSelected && <p className="muted">Attualmente è attivo {providerLabel[state.provider]}. Configurando {providerLabel[provider]} diventerà il provider attivo.</p>}
+    {providerConfigured && <p className="muted">La chiave di {providerLabel[provider]} è già salvata in modo cifrato. Per sostituirla, rimuovila e inserisci la nuova chiave.</p>}
     {message && <p className="ai-settings-message" role="status">{message}</p>}
   </section>;
 }
