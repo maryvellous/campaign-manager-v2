@@ -95,6 +95,27 @@ interface AiProvider {
 
 Non serve costruire una piattaforma universale di provider in V0.5. Si implementano soltanto gli adapter realmente supportati.
 
+Provider supportati:
+
+- OpenAI;
+- Anthropic;
+- Google Gemini;
+- DeepSeek.
+
+Ogni provider usa il proprio endpoint ufficiale e un adapter dedicato. La UI espone soltanto modelli esplicitamente supportati e validati per quel provider.
+
+## AI-CONF-002A — Configurazioni indipendenti per provider
+
+L'utente può configurare più provider contemporaneamente. Ogni provider conserva separatamente:
+
+- API key cifrata;
+- modello selezionato;
+- consenso privacy relativo all'invio a quel provider.
+
+Un solo provider è attivo alla volta per le richieste dell'Assistente. Passare da un provider già configurato a un altro non richiede di reinserire la chiave.
+
+Una configurazione V0.5 precedente nel formato single-provider OpenAI deve essere migrata localmente senza perdere la chiave esistente.
+
 ## AI-CONF-003 — Credenziale locale, non account Campaign Manager
 
 Se un provider richiede una API key, la chiave:
@@ -459,7 +480,7 @@ Una richiesta su una nota non invia automaticamente altre note non selezionate/r
 La V0.5 è completa quando:
 
 1. il prodotto resta usabile senza IA;
-2. provider e secret sono separati dal vault;
+2. provider e secret sono separati dal vault, con credenziali indipendenti per OpenAI, Anthropic, Google Gemini e DeepSeek;
 3. Q&A usa retrieval locale e mostra fonti reali;
 4. edit/new note richiedono anteprima e azione utente;
 5. nessun comando IA può cancellare/rinominare/spostare file;
