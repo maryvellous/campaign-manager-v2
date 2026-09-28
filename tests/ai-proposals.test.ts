@@ -33,7 +33,7 @@ async function setup(t: { after: (fn: () => Promise<void>) => void }, responses:
   const ai = new AiService(store, codec, provider);
   await ai.initialize();
   await ai.bindCampaign(campaign.state.campaign?.campaignId);
-  await ai.configure('test-key', 'gpt-5.6-luna');
+  await ai.configure('openai', 'test-key', 'gpt-5.6-luna');
   await ai.acceptPrivacy();
   t.after(async () => { ai.dispose(); await campaign.dispose(); await fs.rm(dir, { recursive: true, force: true }); });
   return { dir, root, local, store, campaign, ai };
