@@ -2,17 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { CampaignError } from '../../../packages/core/src/index';
 import {
   AiProviderError,
-  DEFAULT_OPENAI_MODEL,
-  OPENAI_MODELS,
+  AnthropicProvider,
+  DEFAULT_AI_MODELS,
+  DeepSeekProvider,
+  GoogleProvider,
   OpenAiProvider,
+  isAiModelForProvider,
+  isAiProviderId,
   type AiEditProposal,
   type AiMessage,
+  type AiModel,
   type AiNewNoteProposal,
   type AiPreparedContext,
   type AiProposal,
   type AiProvider,
   type AiProviderErrorCode,
-  type OpenAiModel,
+  type AiProviderId,
 } from '../../../packages/ai/src/index';
 import { LocalStore, type AiPreferences } from '../infrastructure/local-store';
 import { aiInstructions } from './ai-context';
@@ -34,8 +39,8 @@ export type AiStatus =
 export interface AiState {
   status: AiStatus;
   configured: boolean;
-  provider: 'openai';
-  model: OpenAiModel;
+  provider: AiProviderId;
+  model: AiModel;
   privacyAccepted: boolean;
   messages: AiMessage[];
   proposal?: AiProposal;
@@ -60,7 +65,7 @@ export class AiService {
     status: 'not_configured',
     configured: false,
     provider: 'openai',
-    model: DEFAULT_OPENAI_MODEL,
+    model: DEFAULT_AI_MODELS.openai,
     privacyAccepted: false,
     messages: [],
   };
@@ -68,17 +73,28 @@ export class AiService {
   onChange: () => void = () => undefined;
   private preferences: AiPreferences = {
     provider: 'openai',
-    model: DEFAULT_OPENAI_MODEL,
+    model: DEFAULT_AI_MODELS.openai,
     privacyAccepted: false,
   };
   private campaignId?: string;
   private controller?: AbortController;
+  private readonly providers: Record<AiProviderId, AiProvider>;
 
   constructor(
     readonly store: LocalStore,
     private readonly codec: AiSecretCodec,
-    private readonly provider: AiProvider = new OpenAiProvider()
-  ) {}
+    providerOverride?: AiProvider | Partial<Record<AiProviderId, AiProvider>>
+  ) {
+    const overrides: Partial<Record<AiProviderId, AiProvider>> = providerOverride && 'complete' in providerOverride
+      ? { openai: providerOverride as AiProvider }
+      : (providerOverride ?? {}) as Partial<Record<AiProviderId, AiProvider>>;
+    this.providers = {
+      openai: overrides.openai ?? new OpenAiProvider(),
+      anthropic: overrides.anthropic ?? new AnthropicProvider(),
+      google: overrides.google ?? new GoogleProvider(),
+      deepseek: overrides.deepseek ?? new DeepSeekProvider(),
+    };
+  }
 
   async initialize(): Promise<void> {
     this.preferences = await this.store.readAiPreferences();
@@ -86,7 +102,7 @@ export class AiService {
   }
 
   private projectConfiguration(): void {
-    this.state.provider = 'openai';
+    this.state.provider = this.preferences.provider;
     this.state.model = this.preferences.model;
     this.state.privacyAccepted = this.preferences.privacyAccepted;
     this.state.configured = Boolean(this.preferences.encryptedKey);
@@ -116,17 +132,18 @@ export class AiService {
     return this.state;
   }
 
-  async configure(apiKey: string, model: OpenAiModel): Promise<AiState> {
+  async configure(provider: AiProviderId, apiKey: string, model: AiModel): Promise<AiState> {
     const key = apiKey.trim();
     if (!key || key.length > 1000) throw new CampaignError('invalid_path', 'Chiave API non valida.');
-    if (!OPENAI_MODELS.includes(model)) throw new CampaignError('invalid_path', 'Modello IA non valido.');
+    if (!isAiProviderId(provider) || !isAiModelForProvider(provider, model)) throw new CampaignError('invalid_path', 'Provider o modello IA non valido.');
     if (!this.codec.available()) throw new CampaignError('permission_denied', 'Lo storage sicuro del sistema non è disponibile: la chiave API non verrà salvata in chiaro.');
 
+    const providerChanged = this.preferences.provider !== provider;
     this.preferences = {
-      provider: 'openai',
+      provider,
       model,
       encryptedKey: this.codec.encrypt(key),
-      privacyAccepted: this.preferences.privacyAccepted,
+      privacyAccepted: providerChanged ? false : this.preferences.privacyAccepted,
     };
     await this.store.writeAiPreferences(this.preferences);
     this.state.error = undefined;
@@ -136,8 +153,8 @@ export class AiService {
     return this.state;
   }
 
-  async setModel(model: OpenAiModel): Promise<AiState> {
-    if (!OPENAI_MODELS.includes(model)) throw new CampaignError('invalid_path', 'Modello IA non valido.');
+  async setModel(model: AiModel): Promise<AiState> {
+    if (!isAiModelForProvider(this.preferences.provider, model)) throw new CampaignError('invalid_path', 'Modello IA non valido per il provider configurato.');
     this.preferences = { ...this.preferences, model };
     await this.store.writeAiPreferences(this.preferences);
     this.state.model = model;
@@ -148,13 +165,13 @@ export class AiService {
   async clearConfiguration(): Promise<AiState> {
     this.controller?.abort();
     this.controller = undefined;
-    this.preferences = { provider: 'openai', model: DEFAULT_OPENAI_MODEL, privacyAccepted: false };
+    this.preferences = { provider: 'openai', model: DEFAULT_AI_MODELS.openai, privacyAccepted: false };
     await this.store.writeAiPreferences(this.preferences);
     this.state = {
       status: 'not_configured',
       configured: false,
       provider: 'openai',
-      model: DEFAULT_OPENAI_MODEL,
+      model: DEFAULT_AI_MODELS.openai,
       privacyAccepted: false,
       messages: this.state.messages,
       ...(this.state.proposal ? { proposal: this.state.proposal } : {}),
@@ -217,7 +234,8 @@ export class AiService {
     const controller = new AbortController();
     this.controller = controller;
     try {
-      const answer = await this.provider.complete(this.codec.decrypt(this.preferences.encryptedKey!), {
+      const provider = this.providers[this.preferences.provider];
+      const answer = await provider.complete(this.codec.decrypt(this.preferences.encryptedKey!), {
         model: this.preferences.model,
         messages: this.providerMessages(messages),
         instructions,
