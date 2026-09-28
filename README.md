@@ -34,7 +34,7 @@ Il collegamento resta privato: la proiezione player non contiene `characterNoteI
 
 Il Goal V06-2 non aggiunge oggi adapter o UI di integrazione fittizi. La specifica mantiene un confine futuro per provider personaggio reali, ma finché non esiste un contratto API concreto non vengono creati framework plugin, provider EcoGDR/BeFolder simulati o sincronizzazioni implicite.
 
-La V0.5 Assistente IA resta opzionale e local-first: retrieval controllato con fonti verificabili, proposte di modifica/new-note non autorevoli e applicazione soltanto dopo approvazione esplicita. La V0.4 Discord Activity è implementata, verificata in CI e collaudata dentro un vero client Discord fino a pairing master, consenso OAuth, autenticazione e ingresso nella live session. Il test manuale con più partecipanti reali nella stessa Activity resta un collaudo separato.
+La V0.5 Assistente IA resta opzionale e local-first: retrieval controllato con fonti verificabili, proposte di modifica/new-note non autorevoli e applicazione soltanto dopo approvazione esplicita. L'Assistente supporta configurazioni API separate per OpenAI, Anthropic, Google Gemini e DeepSeek; un solo provider è attivo alla volta e le chiavi restano cifrate fuori dal vault. La V0.4 Discord Activity è implementata, verificata in CI e collaudata dentro un vero client Discord fino a pairing master, consenso OAuth, autenticazione e ingresso nella live session. Il test manuale con più partecipanti reali nella stessa Activity resta un collaudo separato.
 
 ## Persistenza e isolamento
 
