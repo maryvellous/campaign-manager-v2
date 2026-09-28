@@ -138,9 +138,13 @@ else {
                 )
               };
             }
+            case 'ai:activateProvider': {
+              await aiService.bindCampaign(service.state.campaign?.campaignId);
+              return { ok: true, data: await aiService.activateProvider(text(command.provider, 32) as AiProviderId) };
+            }
             case 'ai:setModel': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
-              return { ok: true, data: await aiService.setModel(text(command.model, 64) as AiModel) };
+              return { ok: true, data: await aiService.setModel(text(command.provider, 32) as AiProviderId, text(command.model, 64) as AiModel) };
             }
             case 'ai:acceptPrivacy': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
@@ -148,7 +152,7 @@ else {
             }
             case 'ai:clearConfiguration': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
-              return { ok: true, data: await aiService.clearConfiguration() };
+              return { ok: true, data: await aiService.clearConfiguration(text(command.provider, 32) as AiProviderId) };
             }
             case 'ai:newConversation': {
               await aiService.bindCampaign(service.state.campaign?.campaignId);
