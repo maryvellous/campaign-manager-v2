@@ -49,7 +49,7 @@
 .onboarding-dialog footer{display:flex;align-items:center;justify-content:space-between;gap:12px;padding-top:18px;border-top:1px solid var(--line)}
 .settings-view{width:min(900px,100%);max-width:none;padding:38px 42px 70px}
 .settings-view>h1{margin-bottom:24px}
-.settings-view>section,.settings-view>.ai-settings{margin:0 0 12px;padding:22px 24px;border:1px solid var(--line);border-radius:14px;background:#ffffff025}
+.settings-view>section,.settings-view>.ai-settings{margin:0 0 12px;padding:22px 24px;border:1px solid var(--line);border-radius:14px;background:#ffffff05}
 .settings-view h2{margin:7px 0 8px}
 .settings-view p{margin:6px 0 12px}
 .settings-section-label{font-size:8px;letter-spacing:.16em;color:#ffffff70}
