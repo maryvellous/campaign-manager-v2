@@ -6,7 +6,7 @@ import { randomUUID, createHash } from 'node:crypto';
 import { CampaignError, type RecoveryDraft } from '../../../packages/core/src/index';
 import { ioError } from './campaign-repository';
 import { parseBoardDocument, validateBoardPath, type BoardRecoveryDraft } from '../application/board-types';
-import { DEFAULT_AI_MODELS, isAiModelForProvider, isAiProviderId, type AiMessage, type AiModel, type AiProposal, type AiProviderId, type AiThread } from '../../../packages/ai/src/index';
+import { isAiModelForProvider, isAiProviderId, type AiMessage, type AiModel, type AiProposal, type AiProviderId, type AiThread } from '../../../packages/ai/src/index';
 export interface RecentCampaign { campaignId: string; path: string; name: string }
 export interface Preferences { recent: RecentCampaign[]; lastPath?: string }
 export interface AiProviderPreferences { model: AiModel; encryptedKey: string; privacyAccepted: boolean }
