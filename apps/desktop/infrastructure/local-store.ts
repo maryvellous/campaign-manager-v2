@@ -6,10 +6,14 @@ import { randomUUID, createHash } from 'node:crypto';
 import { CampaignError, type RecoveryDraft } from '../../../packages/core/src/index';
 import { ioError } from './campaign-repository';
 import { parseBoardDocument, validateBoardPath, type BoardRecoveryDraft } from '../application/board-types';
-import { DEFAULT_OPENAI_MODEL, OPENAI_MODELS, type AiMessage, type AiProposal, type AiThread, type OpenAiModel } from '../../../packages/ai/src/index';
+import { isAiModelForProvider, isAiProviderId, type AiMessage, type AiModel, type AiProposal, type AiProviderId, type AiThread } from '../../../packages/ai/src/index';
 export interface RecentCampaign { campaignId: string; path: string; name: string }
 export interface Preferences { recent: RecentCampaign[]; lastPath?: string }
-export interface AiPreferences { provider: 'openai'; model: OpenAiModel; encryptedKey?: string; privacyAccepted: boolean }
+export interface AiProviderPreferences { model: AiModel; encryptedKey: string; privacyAccepted: boolean }
+export interface AiPreferences {
+  activeProvider: AiProviderId;
+  providers: Partial<Record<AiProviderId, AiProviderPreferences>>;
+}
 export class LocalStore {
   warning?: string;
   constructor(readonly root: string) {}
@@ -141,24 +145,50 @@ export class LocalStore {
   }
 
   async readAiPreferences(): Promise<AiPreferences> {
-    const fallback: AiPreferences = { provider: 'openai', model: DEFAULT_OPENAI_MODEL, privacyAccepted: false };
+    const fallback: AiPreferences = { activeProvider: 'openai', providers: {} };
     try {
       const value: unknown = JSON.parse(await fs.readFile(path.join(this.root, 'ai', 'preferences.json'), 'utf8'));
       if (!value || typeof value !== 'object' || Array.isArray(value)) throw new Error('Invalid AI preferences');
-      const input = value as Partial<AiPreferences>;
-      if (input.provider !== 'openai' || typeof input.model !== 'string' || !OPENAI_MODELS.includes(input.model as OpenAiModel)) throw new Error('Invalid AI provider');
-      if (input.encryptedKey !== undefined && typeof input.encryptedKey !== 'string') throw new Error('Invalid AI credential');
-      if (typeof input.privacyAccepted !== 'boolean') throw new Error('Invalid AI privacy state');
-      return { provider: 'openai', model: input.model as OpenAiModel, ...(input.encryptedKey ? { encryptedKey: input.encryptedKey } : {}), privacyAccepted: input.privacyAccepted };
+      const raw = value as Record<string, unknown>;
+
+      // Migration from the V0.5 single-provider shape.
+      if ('provider' in raw || 'model' in raw || 'encryptedKey' in raw) {
+        if (!isAiProviderId(raw.provider) || !isAiModelForProvider(raw.provider, raw.model)) throw new Error('Invalid legacy AI provider');
+        if (raw.encryptedKey !== undefined && typeof raw.encryptedKey !== 'string') throw new Error('Invalid legacy AI credential');
+        if (typeof raw.privacyAccepted !== 'boolean') throw new Error('Invalid legacy AI privacy state');
+        return {
+          activeProvider: raw.provider,
+          providers: raw.encryptedKey ? {
+            [raw.provider]: {
+              model: raw.model,
+              encryptedKey: raw.encryptedKey,
+              privacyAccepted: raw.privacyAccepted,
+            }
+          } : {},
+        };
+      }
+
+      if (!isAiProviderId(raw.activeProvider) || !raw.providers || typeof raw.providers !== 'object' || Array.isArray(raw.providers)) throw new Error('Invalid AI providers');
+      const providers: AiPreferences['providers'] = {};
+      for (const [provider, config] of Object.entries(raw.providers as Record<string, unknown>)) {
+        if (!isAiProviderId(provider) || !config || typeof config !== 'object' || Array.isArray(config)) throw new Error('Invalid AI provider entry');
+        const input = config as Record<string, unknown>;
+        if (!isAiModelForProvider(provider, input.model) || typeof input.encryptedKey !== 'string' || !input.encryptedKey || typeof input.privacyAccepted !== 'boolean') throw new Error('Invalid AI provider configuration');
+        providers[provider] = { model: input.model, encryptedKey: input.encryptedKey, privacyAccepted: input.privacyAccepted };
+      }
+      return { activeProvider: raw.activeProvider, providers };
     } catch (error) {
-      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.warning = 'Le impostazioni IA locali non sono leggibili: il provider resta disattivato. La campagna è intatta.';
+      if ((error as NodeJS.ErrnoException).code !== 'ENOENT') this.warning = 'Le impostazioni IA locali non sono leggibili: i provider restano disattivati. La campagna è intatta.';
       return fallback;
     }
   }
 
   async writeAiPreferences(preferences: AiPreferences): Promise<void> {
-    if (preferences.provider !== 'openai' || !OPENAI_MODELS.includes(preferences.model)) throw new CampaignError('invalid_path', 'Impostazioni IA non valide.');
-    if (preferences.encryptedKey !== undefined && typeof preferences.encryptedKey !== 'string') throw new CampaignError('invalid_path', 'Credenziale IA non valida.');
+    if (!isAiProviderId(preferences.activeProvider) || !preferences.providers || typeof preferences.providers !== 'object') throw new CampaignError('invalid_path', 'Impostazioni IA non valide.');
+    for (const [provider, config] of Object.entries(preferences.providers)) {
+      if (!isAiProviderId(provider) || !config || !isAiModelForProvider(provider, config.model)) throw new CampaignError('invalid_path', 'Impostazioni IA non valide.');
+      if (typeof config.encryptedKey !== 'string' || !config.encryptedKey || typeof config.privacyAccepted !== 'boolean') throw new CampaignError('invalid_path', 'Credenziale IA non valida.');
+    }
     await this.write(path.join(this.root, 'ai', 'preferences.json'), preferences);
   }
 

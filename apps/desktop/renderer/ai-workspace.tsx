@@ -1,41 +1,78 @@
 import { useEffect, useState, type FormEvent } from 'react';
 import type { AiState } from '../application/ai-service';
-import { OPENAI_MODELS, type AiContextSelection, type AiProposal, type OpenAiModel } from '../../../packages/ai/src/index';
+import { AI_PROVIDER_MODELS, DEFAULT_AI_MODELS, type AiContextSelection, type AiModel, type AiProposal, type AiProviderId } from '../../../packages/ai/src/index';
 
 type Reply = { ok: boolean; data?: unknown; error?: { code: string; message: string } };
 type Command = (input: Record<string, unknown>) => Promise<Reply>;
 
-const modelLabel: Record<OpenAiModel, string> = {
+const providerLabel: Record<AiProviderId, string> = {
+  openai: 'OpenAI',
+  anthropic: 'Anthropic',
+  google: 'Google Gemini',
+  deepseek: 'DeepSeek',
+};
+
+const modelLabel: Record<AiModel, string> = {
   'gpt-5.6-luna': 'GPT-5.6 Luna',
   'gpt-5.6-terra': 'GPT-5.6 Terra',
   'gpt-5.6-sol': 'GPT-5.6 Sol',
+  'claude-sonnet-5': 'Claude Sonnet 5',
+  'claude-opus-5': 'Claude Opus 5',
+  'claude-fable-5': 'Claude Fable 5',
+  'gemini-3.8-flash': 'Gemini 3.8 Flash',
+  'gemini-3.5-flash-lite': 'Gemini 3.5 Flash-Lite',
+  'deepseek-flash': 'DeepSeek Flash',
+  'deepseek-v4-pro': 'DeepSeek V4 Pro',
 };
 
 export function AiSettingsPanel({ state, command }: { state: AiState; command: Command }) {
   const [key, setKey] = useState('');
-  const [model, setModel] = useState<OpenAiModel>(state.model);
+  const [provider, setProvider] = useState<AiProviderId>(state.provider);
+  const [model, setModel] = useState<AiModel>(state.model);
   const [busy, setBusy] = useState(false);
   const [message, setMessage] = useState<string>();
 
-  useEffect(() => setModel(state.model), [state.model]);
+  useEffect(() => {
+    setProvider(state.provider);
+    setModel(state.providerModels[state.provider] ?? state.model);
+  }, [state.provider, state.model, state.providerModels]);
 
-  async function configure(event: FormEvent) {
-    event.preventDefault();
+  const providerConfigured = state.configuredProviders.includes(provider);
+  const providerActive = provider === state.provider && state.configured;
+  const models = AI_PROVIDER_MODELS[provider];
+
+  function chooseProvider(next: AiProviderId) {
+    setProvider(next);
+    setModel(state.providerModels[next] ?? DEFAULT_AI_MODELS[next]);
+    setKey('');
+    setMessage(undefined);
+  }
+
+  async function configure() {
     if (!key.trim()) return;
     setBusy(true); setMessage(undefined);
     try {
-      const reply = await command({ action: 'ai:configure', apiKey: key, model });
+      const reply = await command({ action: 'ai:configure', provider, apiKey: key, model });
       if (!reply.ok) setMessage(reply.error?.message ?? 'Configurazione non riuscita.');
-      else { setKey(''); setMessage('Provider configurato.'); }
+      else { setKey(''); setMessage(`${providerLabel[provider]} configurato e attivato.`); }
     } catch {
       setMessage('Configurazione non riuscita.');
     } finally { setBusy(false); }
   }
 
-  async function changeModel(next: OpenAiModel) {
+  async function activate() {
+    setBusy(true); setMessage(undefined);
+    try {
+      const reply = await command({ action: 'ai:activateProvider', provider });
+      if (!reply.ok) setMessage(reply.error?.message ?? 'Cambio provider non riuscito.');
+      else setMessage(`${providerLabel[provider]} è ora il provider attivo.`);
+    } finally { setBusy(false); }
+  }
+
+  async function changeModel(next: AiModel) {
     setModel(next);
-    if (!state.configured) return;
-    const reply = await command({ action: 'ai:setModel', model: next });
+    if (!providerConfigured) return;
+    const reply = await command({ action: 'ai:setModel', provider, model: next });
     if (!reply.ok) setMessage(reply.error?.message ?? 'Modello non aggiornato.');
     else setMessage('Modello aggiornato.');
   }
@@ -43,29 +80,40 @@ export function AiSettingsPanel({ state, command }: { state: AiState; command: C
   async function clear() {
     setBusy(true); setMessage(undefined);
     try {
-      const reply = await command({ action: 'ai:clearConfiguration' });
+      const reply = await command({ action: 'ai:clearConfiguration', provider });
       if (!reply.ok) setMessage(reply.error?.message ?? 'Configurazione non rimossa.');
-      else setMessage('Provider disattivato.');
+      else { setKey(''); setMessage(`${providerLabel[provider]} rimosso.`); }
     } finally { setBusy(false); }
   }
 
   return <section className="ai-settings">
     <div className="ai-settings-heading">
-      <div><h2>Assistente IA</h2><p className="muted">Provider supportato: OpenAI. La chiave resta nel profilo locale dell’app e non viene scritta nella campagna.</p></div>
-      <span className={'status-pill' + (state.configured ? ' ready' : '')}>{state.configured ? 'Configurato' : 'Non configurato'}</span>
+      <div>
+        <h2>Assistente IA</h2>
+        <p className="muted">Puoi salvare separatamente le API key di OpenAI, Anthropic, Google Gemini e DeepSeek. Le chiavi restano nel profilo locale dell’app e non vengono scritte nella campagna.</p>
+      </div>
+      <span className={'status-pill' + (state.configured ? ' ready' : '')}>{state.configured ? `Attivo · ${providerLabel[state.provider]}` : 'Nessun provider attivo'}</span>
     </div>
-    {state.configured ? <div className="ai-settings-form">
-      <label><span>Modello</span><select value={model} onChange={event => void changeModel(event.target.value as OpenAiModel)}>{OPENAI_MODELS.map(value => <option value={value} key={value}>{modelLabel[value]}</option>)}</select></label>
-      <button type="button" disabled={busy} onClick={() => void clear()}>Rimuovi configurazione</button>
-    </div> : <form className="ai-settings-form" onSubmit={configure}>
-      <label><span>API key OpenAI</span><input type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)} placeholder="Incolla la chiave API" /></label>
-      <label><span>Modello</span><select value={model} onChange={event => setModel(event.target.value as OpenAiModel)}>{OPENAI_MODELS.map(value => <option value={value} key={value}>{modelLabel[value]}</option>)}</select></label>
-      <button className="primary" type="submit" disabled={busy || !key.trim()}>{busy ? 'Salvataggio…' : 'Configura OpenAI'}</button>
-    </form>}
+    <div className="ai-provider-tabs" role="tablist" aria-label="Provider IA">
+      {(Object.keys(providerLabel) as AiProviderId[]).map(id => <button type="button" role="tab" aria-selected={provider === id} className={provider === id ? 'active' : ''} key={id} onClick={() => chooseProvider(id)}>
+        <span>{providerLabel[id]}</span>
+        {state.configuredProviders.includes(id) && <small>{state.provider === id && state.configured ? 'Attivo' : 'Configurato'}</small>}
+      </button>)}
+    </div>
+    <div className="ai-settings-form">
+      <label><span>Modello</span><select value={model} onChange={event => void changeModel(event.target.value as AiModel)}>{models.map(value => <option value={value} key={value}>{modelLabel[value]}</option>)}</select></label>
+      {providerConfigured ? <div className="actions">
+        {!providerActive && <button className="primary" type="button" disabled={busy} onClick={() => void activate()}>Usa {providerLabel[provider]}</button>}
+        <button type="button" disabled={busy} onClick={() => void clear()}>Rimuovi API key</button>
+      </div> : <>
+        <label><span>API key {providerLabel[provider]}</span><input type="password" autoComplete="off" value={key} onChange={event => setKey(event.target.value)} placeholder="Incolla la chiave API" /></label>
+        <button className="primary" type="button" disabled={busy || !key.trim()} onClick={() => void configure()}>{busy ? 'Salvataggio…' : `Salva e usa ${providerLabel[provider]}`}</button>
+      </>}
+    </div>
+    {providerConfigured && <p className="muted">La chiave di {providerLabel[provider]} è già salvata in modo cifrato. Per sostituirla, rimuovila e inserisci la nuova chiave.</p>}
     {message && <p className="ai-settings-message" role="status">{message}</p>}
   </section>;
 }
-
 const statusText: Partial<Record<AiState['status'], string>> = {
   thinking: 'Sto preparando la risposta…',
   cancelled: 'Richiesta annullata.',
@@ -235,7 +283,7 @@ export function AiWorkspace({
 
   return <section className="ai-workspace">
     <header className="ai-header">
-      <div><span className="eyebrow">ASSISTENTE IA</span><h1>Assistente</h1><p>OpenAI · {modelLabel[state.model]}</p></div>
+      <div><span className="eyebrow">ASSISTENTE IA</span><h1>Assistente</h1><p>{providerLabel[state.provider]} · {modelLabel[state.model]}</p></div>
       <button disabled={state.status === 'thinking' || state.messages.length === 0} onClick={() => void newConversation()}>Nuova conversazione</button>
     </header>
 
@@ -247,7 +295,7 @@ export function AiWorkspace({
 
     {!state.privacyAccepted && <section className="ai-privacy" role="note">
       <strong>Prima del primo invio</strong>
-      <p>Il testo necessario alla richiesta e le sole note recuperate o scelte verranno inviati a OpenAI. Campaign Manager non invia automaticamente l’intero vault, asset, recovery o credenziali.</p>
+      <p>Il testo necessario alla richiesta e le sole note recuperate o scelte verranno inviati a {providerLabel[state.provider]}. Campaign Manager non invia automaticamente l’intero vault, asset, recovery o credenziali.</p>
       <button className="primary" onClick={() => void acceptPrivacy()}>Ho capito, continua</button>
     </section>}
 

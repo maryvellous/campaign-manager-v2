@@ -3,7 +3,7 @@ import assert from 'node:assert/strict';
 import fs from 'node:fs/promises';
 import os from 'node:os';
 import path from 'node:path';
-import { AiProviderError, OpenAiProvider, type AiCompletionRequest, type AiProvider } from '../packages/ai/src/index';
+import { AiProviderError, AnthropicProvider, DeepSeekProvider, GoogleProvider, OpenAiProvider, type AiCompletionRequest, type AiProvider } from '../packages/ai/src/index';
 import { AiService, type AiSecretCodec } from '../apps/desktop/application/ai-service';
 import { LocalStore } from '../apps/desktop/infrastructure/local-store';
 
@@ -70,7 +70,7 @@ test('AI service keeps encrypted provider settings and thread outside the campai
 
   const campaignId = '11111111-1111-4111-8111-111111111111';
   await service.bindCampaign(campaignId);
-  await service.configure('sk-example-secret', 'gpt-5.6-terra');
+  await service.configure('openai', 'sk-example-secret', 'gpt-5.6-terra');
   assert.equal(service.state.configured, true);
   assert.equal(service.state.model, 'gpt-5.6-terra');
 
@@ -105,7 +105,7 @@ test('AI service requires privacy acknowledgement before the first remote reques
   const service = new AiService(new LocalStore(path.join(dir, 'local')), codec, provider);
   await service.initialize();
   await service.bindCampaign('22222222-2222-4222-8222-222222222222');
-  await service.configure('key', 'gpt-5.6-luna');
+  await service.configure('openai', 'key', 'gpt-5.6-luna');
   await assert.rejects(service.send('test', { label: 'Campagna intera', text: '', sources: [] }), { code: 'permission_denied' });
   assert.equal(calls, 0);
   assert.equal(service.state.messages.length, 0);
@@ -121,10 +121,145 @@ test('AI service sends prepared retrieval instructions and records only verified
   const service = new AiService(new LocalStore(path.join(dir, 'local')), codec, provider);
   await service.initialize();
   await service.bindCampaign('33333333-3333-4333-8333-333333333333');
-  await service.configure('key', 'gpt-5.6-luna');
+  await service.configure('openai', 'key', 'gpt-5.6-luna');
   await service.acceptPrivacy();
   const source = { noteId: 'NPC/Maya.md', title: 'Maya', relativePath: 'NPC/Maya.md' };
   await service.send('Chi è Maya?', { label: 'Nota · Maya', text: '=== NOTA: NPC/Maya.md ===\nMaya è la regina.', sources: [source] });
   assert.match(request?.instructions ?? '', /Maya è la regina/u);
   assert.deepEqual(service.state.messages.at(-1)?.sources, [source]);
+});
+
+
+test('Anthropic adapter uses Messages API and extracts text blocks', async () => {
+  let request: { url?: string; init?: RequestInit } = {};
+  const provider = new AnthropicProvider(async (input, init) => {
+    request = { url: String(input), init };
+    return new Response(JSON.stringify({ content: [{ type: 'text', text: 'Risposta Claude' }] }), { status: 200 });
+  });
+  const answer = await provider.complete('anthropic-secret', {
+    model: 'claude-sonnet-5',
+    instructions: 'Istruzioni',
+    messages: [{ id: 'm1', role: 'user', content: 'Ciao', createdAt: new Date(0).toISOString() }],
+  });
+  assert.equal(answer, 'Risposta Claude');
+  assert.equal(request.url, 'https://api.anthropic.com/v1/messages');
+  const headers = request.init?.headers as Record<string, string>;
+  assert.equal(headers['x-api-key'], 'anthropic-secret');
+  assert.equal(headers['anthropic-version'], '2023-06-01');
+  const body = JSON.parse(String(request.init?.body));
+  assert.equal(body.model, 'claude-sonnet-5');
+  assert.equal(body.system, 'Istruzioni');
+  assert.deepEqual(body.messages, [{ role: 'user', content: 'Ciao' }]);
+});
+
+test('Google adapter uses Gemini generateContent and maps assistant turns to model', async () => {
+  let request: { url?: string; init?: RequestInit } = {};
+  const provider = new GoogleProvider(async (input, init) => {
+    request = { url: String(input), init };
+    return new Response(JSON.stringify({
+      candidates: [{ content: { parts: [{ text: 'Risposta Gemini' }] } }],
+    }), { status: 200 });
+  });
+  const answer = await provider.complete('google-secret', {
+    model: 'gemini-3.8-flash',
+    instructions: 'Istruzioni',
+    messages: [
+      { id: 'm1', role: 'user', content: 'Ciao', createdAt: new Date(0).toISOString() },
+      { id: 'm2', role: 'assistant', content: 'Salve', createdAt: new Date(1).toISOString() },
+    ],
+  });
+  assert.equal(answer, 'Risposta Gemini');
+  assert.equal(request.url, 'https://generativelanguage.googleapis.com/v1beta/models/gemini-3.8-flash:generateContent');
+  assert.equal((request.init?.headers as Record<string, string>)['x-goog-api-key'], 'google-secret');
+  const body = JSON.parse(String(request.init?.body));
+  assert.deepEqual(body.systemInstruction, { parts: [{ text: 'Istruzioni' }] });
+  assert.deepEqual(body.contents, [
+    { role: 'user', parts: [{ text: 'Ciao' }] },
+    { role: 'model', parts: [{ text: 'Salve' }] },
+  ]);
+});
+
+test('DeepSeek adapter uses Chat Completions and extracts final answer', async () => {
+  let request: { url?: string; init?: RequestInit } = {};
+  const provider = new DeepSeekProvider(async (input, init) => {
+    request = { url: String(input), init };
+    return new Response(JSON.stringify({
+      choices: [{ message: { role: 'assistant', reasoning_content: 'interno', content: 'Risposta DeepSeek' } }],
+    }), { status: 200 });
+  });
+  const answer = await provider.complete('deepseek-secret', {
+    model: 'deepseek-flash',
+    instructions: 'Istruzioni',
+    messages: [{ id: 'm1', role: 'user', content: 'Ciao', createdAt: new Date(0).toISOString() }],
+  });
+  assert.equal(answer, 'Risposta DeepSeek');
+  assert.equal(request.url, 'https://api.deepseek.com/chat/completions');
+  assert.equal((request.init?.headers as Record<string, string>).authorization, 'Bearer deepseek-secret');
+  const body = JSON.parse(String(request.init?.body));
+  assert.equal(body.model, 'deepseek-flash');
+  assert.deepEqual(body.messages, [
+    { role: 'system', content: 'Istruzioni' },
+    { role: 'user', content: 'Ciao' },
+  ]);
+});
+
+test('AI service switches provider, persists it and requires fresh privacy consent', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-ai-provider-switch-'));
+  t.after(async () => fs.rm(dir, { recursive: true, force: true }));
+  const calls: string[] = [];
+  const fake = (name: string): AiProvider => ({ async complete() { calls.push(name); return name; } });
+  const codec: AiSecretCodec = { available: () => true, encrypt: value => value, decrypt: value => value };
+  const store = new LocalStore(path.join(dir, 'local'));
+  const service = new AiService(store, codec, {
+    openai: fake('openai'),
+    anthropic: fake('anthropic'),
+    google: fake('google'),
+    deepseek: fake('deepseek'),
+  });
+  await service.initialize();
+  await service.bindCampaign('44444444-4444-4444-8444-444444444444');
+  await service.configure('openai', 'openai-key', 'gpt-5.6-luna');
+  await service.acceptPrivacy();
+  assert.equal(service.state.privacyAccepted, true);
+
+  await service.configure('anthropic', 'anthropic-key', 'claude-sonnet-5');
+  assert.equal(service.state.provider, 'anthropic');
+  assert.equal(service.state.model, 'claude-sonnet-5');
+  assert.deepEqual(service.state.configuredProviders.sort(), ['anthropic', 'openai']);
+  assert.equal(service.state.privacyAccepted, false);
+  await assert.rejects(service.send('test', { label: 'Campagna intera', text: '', sources: [] }), { code: 'permission_denied' });
+  await service.acceptPrivacy();
+  await service.send('test', { label: 'Campagna intera', text: '', sources: [] });
+  assert.deepEqual(calls, ['anthropic']);
+
+  await service.activateProvider('openai');
+  assert.equal(service.state.provider, 'openai');
+  assert.equal(service.state.privacyAccepted, true);
+  await service.send('again', { label: 'Campagna intera', text: '', sources: [] });
+  assert.deepEqual(calls, ['anthropic', 'openai']);
+
+  const saved = JSON.parse(await fs.readFile(path.join(dir, 'local', 'ai', 'preferences.json'), 'utf8'));
+  assert.equal(saved.activeProvider, 'openai');
+  assert.equal(saved.providers.anthropic.model, 'claude-sonnet-5');
+  assert.equal(saved.providers.openai.model, 'gpt-5.6-luna');
+});
+
+
+test('AI preferences migrate the old single-provider OpenAI shape without losing the key', async t => {
+  const dir = await fs.mkdtemp(path.join(os.tmpdir(), 'cmv2-ai-migration-'));
+  t.after(async () => fs.rm(dir, { recursive: true, force: true }));
+  const local = path.join(dir, 'local');
+  await fs.mkdir(path.join(local, 'ai'), { recursive: true });
+  await fs.writeFile(path.join(local, 'ai', 'preferences.json'), JSON.stringify({
+    provider: 'openai',
+    model: 'gpt-5.6-sol',
+    encryptedKey: 'encrypted-openai',
+    privacyAccepted: true,
+  }));
+  const store = new LocalStore(local);
+  const prefs = await store.readAiPreferences();
+  assert.equal(prefs.activeProvider, 'openai');
+  assert.equal(prefs.providers.openai?.model, 'gpt-5.6-sol');
+  assert.equal(prefs.providers.openai?.encryptedKey, 'encrypted-openai');
+  assert.equal(prefs.providers.openai?.privacyAccepted, true);
 });

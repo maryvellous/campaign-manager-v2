@@ -2,17 +2,22 @@ import { randomUUID } from 'node:crypto';
 import { CampaignError } from '../../../packages/core/src/index';
 import {
   AiProviderError,
-  DEFAULT_OPENAI_MODEL,
-  OPENAI_MODELS,
+  AnthropicProvider,
+  DEFAULT_AI_MODELS,
+  DeepSeekProvider,
+  GoogleProvider,
   OpenAiProvider,
+  isAiModelForProvider,
+  isAiProviderId,
   type AiEditProposal,
   type AiMessage,
+  type AiModel,
   type AiNewNoteProposal,
   type AiPreparedContext,
   type AiProposal,
   type AiProvider,
   type AiProviderErrorCode,
-  type OpenAiModel,
+  type AiProviderId,
 } from '../../../packages/ai/src/index';
 import { LocalStore, type AiPreferences } from '../infrastructure/local-store';
 import { aiInstructions } from './ai-context';
@@ -34,8 +39,10 @@ export type AiStatus =
 export interface AiState {
   status: AiStatus;
   configured: boolean;
-  provider: 'openai';
-  model: OpenAiModel;
+  configuredProviders: AiProviderId[];
+  providerModels: Partial<Record<AiProviderId, AiModel>>;
+  provider: AiProviderId;
+  model: AiModel;
   privacyAccepted: boolean;
   messages: AiMessage[];
   proposal?: AiProposal;
@@ -59,26 +66,38 @@ export class AiService {
   state: AiState = {
     status: 'not_configured',
     configured: false,
+    configuredProviders: [],
+    providerModels: {},
     provider: 'openai',
-    model: DEFAULT_OPENAI_MODEL,
+    model: DEFAULT_AI_MODELS.openai,
     privacyAccepted: false,
     messages: [],
   };
 
   onChange: () => void = () => undefined;
   private preferences: AiPreferences = {
-    provider: 'openai',
-    model: DEFAULT_OPENAI_MODEL,
-    privacyAccepted: false,
+    activeProvider: 'openai',
+    providers: {},
   };
   private campaignId?: string;
   private controller?: AbortController;
+  private readonly providers: Record<AiProviderId, AiProvider>;
 
   constructor(
     readonly store: LocalStore,
     private readonly codec: AiSecretCodec,
-    private readonly provider: AiProvider = new OpenAiProvider()
-  ) {}
+    providerOverride?: AiProvider | Partial<Record<AiProviderId, AiProvider>>
+  ) {
+    const overrides: Partial<Record<AiProviderId, AiProvider>> = providerOverride && 'complete' in providerOverride
+      ? { openai: providerOverride as AiProvider }
+      : (providerOverride ?? {}) as Partial<Record<AiProviderId, AiProvider>>;
+    this.providers = {
+      openai: overrides.openai ?? new OpenAiProvider(),
+      anthropic: overrides.anthropic ?? new AnthropicProvider(),
+      google: overrides.google ?? new GoogleProvider(),
+      deepseek: overrides.deepseek ?? new DeepSeekProvider(),
+    };
+  }
 
   async initialize(): Promise<void> {
     this.preferences = await this.store.readAiPreferences();
@@ -86,10 +105,18 @@ export class AiService {
   }
 
   private projectConfiguration(): void {
-    this.state.provider = 'openai';
-    this.state.model = this.preferences.model;
-    this.state.privacyAccepted = this.preferences.privacyAccepted;
-    this.state.configured = Boolean(this.preferences.encryptedKey);
+    const provider = this.preferences.activeProvider;
+    const config = this.preferences.providers[provider];
+    this.state.provider = provider;
+    this.state.model = config?.model ?? DEFAULT_AI_MODELS[provider];
+    this.state.privacyAccepted = config?.privacyAccepted ?? false;
+    this.state.configured = Boolean(config?.encryptedKey);
+    this.state.configuredProviders = (Object.keys(this.preferences.providers) as AiProviderId[])
+      .filter(id => Boolean(this.preferences.providers[id]?.encryptedKey));
+    this.state.providerModels = Object.fromEntries(
+      (Object.entries(this.preferences.providers) as Array<[AiProviderId, NonNullable<AiPreferences['providers'][AiProviderId]>]>)
+        .map(([id, value]) => [id, value.model])
+    ) as Partial<Record<AiProviderId, AiModel>>;
     if (!this.state.configured) this.state.status = 'not_configured';
     else if (this.state.status === 'not_configured') this.state.status = 'ready';
   }
@@ -116,17 +143,22 @@ export class AiService {
     return this.state;
   }
 
-  async configure(apiKey: string, model: OpenAiModel): Promise<AiState> {
+  async configure(provider: AiProviderId, apiKey: string, model: AiModel): Promise<AiState> {
     const key = apiKey.trim();
     if (!key || key.length > 1000) throw new CampaignError('invalid_path', 'Chiave API non valida.');
-    if (!OPENAI_MODELS.includes(model)) throw new CampaignError('invalid_path', 'Modello IA non valido.');
+    if (!isAiProviderId(provider) || !isAiModelForProvider(provider, model)) throw new CampaignError('invalid_path', 'Provider o modello IA non valido.');
     if (!this.codec.available()) throw new CampaignError('permission_denied', 'Lo storage sicuro del sistema non è disponibile: la chiave API non verrà salvata in chiaro.');
 
     this.preferences = {
-      provider: 'openai',
-      model,
-      encryptedKey: this.codec.encrypt(key),
-      privacyAccepted: this.preferences.privacyAccepted,
+      activeProvider: provider,
+      providers: {
+        ...this.preferences.providers,
+        [provider]: {
+          model,
+          encryptedKey: this.codec.encrypt(key),
+          privacyAccepted: false,
+        },
+      },
     };
     await this.store.writeAiPreferences(this.preferences);
     this.state.error = undefined;
@@ -136,38 +168,68 @@ export class AiService {
     return this.state;
   }
 
-  async setModel(model: OpenAiModel): Promise<AiState> {
-    if (!OPENAI_MODELS.includes(model)) throw new CampaignError('invalid_path', 'Modello IA non valido.');
-    this.preferences = { ...this.preferences, model };
+  async activateProvider(provider: AiProviderId): Promise<AiState> {
+    if (!isAiProviderId(provider) || !this.preferences.providers[provider]?.encryptedKey) throw new CampaignError('not_found', 'Configura prima questo provider IA.');
+    this.controller?.abort();
+    this.controller = undefined;
+    this.preferences = { ...this.preferences, activeProvider: provider };
     await this.store.writeAiPreferences(this.preferences);
-    this.state.model = model;
+    this.state.error = undefined;
+    this.state.status = 'ready';
+    this.projectConfiguration();
     this.onChange();
     return this.state;
   }
 
-  async clearConfiguration(): Promise<AiState> {
+  async setModel(provider: AiProviderId, model: AiModel): Promise<AiState> {
+    if (!isAiProviderId(provider) || !isAiModelForProvider(provider, model)) throw new CampaignError('invalid_path', 'Modello IA non valido per il provider.');
+    const current = this.preferences.providers[provider];
+    if (!current) throw new CampaignError('not_found', 'Configura prima questo provider IA.');
+    this.preferences = {
+      ...this.preferences,
+      providers: {
+        ...this.preferences.providers,
+        [provider]: { ...current, model },
+      },
+    };
+    await this.store.writeAiPreferences(this.preferences);
+    this.projectConfiguration();
+    this.onChange();
+    return this.state;
+  }
+
+  async clearConfiguration(provider: AiProviderId = this.preferences.activeProvider): Promise<AiState> {
+    if (!isAiProviderId(provider)) throw new CampaignError('invalid_path', 'Provider IA non valido.');
     this.controller?.abort();
     this.controller = undefined;
-    this.preferences = { provider: 'openai', model: DEFAULT_OPENAI_MODEL, privacyAccepted: false };
+    const providers = { ...this.preferences.providers };
+    delete providers[provider];
+    const remaining = (Object.keys(providers) as AiProviderId[]).filter(id => Boolean(providers[id]?.encryptedKey));
+    const activeProvider = this.preferences.activeProvider === provider
+      ? (remaining[0] ?? 'openai')
+      : this.preferences.activeProvider;
+    this.preferences = { activeProvider, providers };
     await this.store.writeAiPreferences(this.preferences);
-    this.state = {
-      status: 'not_configured',
-      configured: false,
-      provider: 'openai',
-      model: DEFAULT_OPENAI_MODEL,
-      privacyAccepted: false,
-      messages: this.state.messages,
-      ...(this.state.proposal ? { proposal: this.state.proposal } : {}),
-    };
+    this.state.error = undefined;
+    this.state.status = providers[activeProvider]?.encryptedKey ? 'ready' : 'not_configured';
+    this.projectConfiguration();
     this.onChange();
     return this.state;
   }
 
   async acceptPrivacy(): Promise<AiState> {
-    if (!this.state.configured) throw new CampaignError('not_found', 'Configura prima un provider IA.');
-    this.preferences = { ...this.preferences, privacyAccepted: true };
+    const provider = this.preferences.activeProvider;
+    const current = this.preferences.providers[provider];
+    if (!current?.encryptedKey) throw new CampaignError('not_found', 'Configura prima un provider IA.');
+    this.preferences = {
+      ...this.preferences,
+      providers: {
+        ...this.preferences.providers,
+        [provider]: { ...current, privacyAccepted: true },
+      },
+    };
     await this.store.writeAiPreferences(this.preferences);
-    this.state.privacyAccepted = true;
+    this.projectConfiguration();
     this.onChange();
     return this.state;
   }
@@ -203,8 +265,9 @@ export class AiService {
 
   private ensureRemoteReady(): void {
     if (!this.campaignId) throw new CampaignError('not_found', 'Apri una campagna prima di usare l’assistente.');
-    if (!this.preferences.encryptedKey || !this.state.configured) throw new CampaignError('not_found', 'Configura prima un provider IA.');
-    if (!this.preferences.privacyAccepted) throw new CampaignError('permission_denied', 'Conferma prima l’invio dei dati necessari al provider IA.');
+    const config = this.preferences.providers[this.preferences.activeProvider];
+    if (!config?.encryptedKey || !this.state.configured) throw new CampaignError('not_found', 'Configura prima un provider IA.');
+    if (!config.privacyAccepted) throw new CampaignError('permission_denied', 'Conferma prima l’invio dei dati necessari al provider IA.');
     if (!this.codec.available()) throw new CampaignError('permission_denied', 'Lo storage sicuro del sistema non è disponibile.');
     if (this.state.status === 'thinking') throw new CampaignError('conflict', 'Attendi o annulla la richiesta in corso.');
   }
@@ -217,8 +280,11 @@ export class AiService {
     const controller = new AbortController();
     this.controller = controller;
     try {
-      const answer = await this.provider.complete(this.codec.decrypt(this.preferences.encryptedKey!), {
-        model: this.preferences.model,
+      const providerId = this.preferences.activeProvider;
+      const config = this.preferences.providers[providerId]!;
+      const provider = this.providers[providerId];
+      const answer = await provider.complete(this.codec.decrypt(config.encryptedKey), {
+        model: config.model,
         messages: this.providerMessages(messages),
         instructions,
         signal: controller.signal,

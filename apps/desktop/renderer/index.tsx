@@ -44,7 +44,7 @@ const onboardingSteps: Array<{ title: string; body: string; icon: IconName }> = 
   { title: 'Note e collegamenti', body: 'Scrivi note, organizzale in cartelle e usa i wikilink [[così]]. Ricerca, Recenti e Preferiti ti aiutano a ritrovare subito quello che serve.', icon: 'note' },
   { title: 'Grafo', body: 'Il Grafo visualizza le relazioni create dai wikilink. Puoi filtrare per cartella, cercare un nodo, fare zoom e concentrarti sui collegamenti di una nota.', icon: 'graph' },
   { title: 'Board e Live', body: 'Le Board preparano mappe, card e token. Live condivide la scena con i giocatori; la Discord Activity si appoggia allo stesso flusso live quando la usi dentro Discord.', icon: 'board' },
-  { title: 'Assistente IA, se lo vuoi', body: 'L’Assistente è opzionale. Per usarlo configuri una tua API key OpenAI nelle Impostazioni; la chiave resta nel profilo locale dell’app e non viene salvata nella campagna.', icon: 'spark' },
+  { title: 'Assistente IA, se lo vuoi', body: 'L’Assistente è opzionale. Puoi configurare OpenAI, Anthropic, Google Gemini o DeepSeek nelle Impostazioni; le chiavi restano nel profilo locale dell’app e non vengono salvate nella campagna.', icon: 'spark' },
   { title: 'Hai sempre una guida a portata di mano', body: 'Compendio e Account restano funzioni future. Questa guida si può riaprire in qualsiasi momento da Impostazioni → Generali.', icon: 'settings' },
 ];
 function Onboarding({ onClose }: { onClose: () => void }) {
@@ -78,7 +78,7 @@ function App() {
   const undoStack = useRef(new Map<string, { past: string[]; future: string[] }>());
   const [state, setState] = useState<ShellState>(); const stateRef = useRef<ShellState | undefined>(undefined);
   const [live, setLive] = useState<DesktopLiveState>({ status: 'idle', connected: false, acceptingJoins: true, participants: [], stateSeq: 0, presentation: 'waiting', activeElementIds: [], liveBoards: [] });
-  const [ai, setAi] = useState<AiState>({ status: 'not_configured', configured: false, provider: 'openai', model: 'gpt-5.6-luna', privacyAccepted: false, messages: [] });
+  const [ai, setAi] = useState<AiState>({ status: 'not_configured', configured: false, configuredProviders: [], providerModels: {}, provider: 'openai', model: 'gpt-5.6-luna', privacyAccepted: false, messages: [] });
   const [aiContext, setAiContext] = useState<AiContextSelection>({ kind: 'campaign' });
   const [content, setContent] = useState(''); const [error, setError] = useState<Reply['error']>();
   const [busy, setBusy] = useState(false); const actionBusy = useRef(false); const [lastCommand, setLastCommand] = useState<Record<string, unknown>>();
