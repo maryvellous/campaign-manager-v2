@@ -135,7 +135,7 @@ function contextLabel(context: AiContextSelection): string {
   return context.kind === 'note' ? `Nota · ${title}` : `Selezione · ${title}`;
 }
 
-function ChatMarkdown({ markdown, command }: { markdown: string; command: Command }) {
+export function ChatMarkdown({ markdown, command }: { markdown: string; command: Command }) {
   return <div className="ai-markdown">
     <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
       a: ({ href = '', children }) => /^https?:\/\//iu.test(href)
