@@ -65,7 +65,8 @@ try {
   await page.getByRole('textbox', { name: 'Titolo della nota', exact: true }).press('Enter');
   await page.getByRole('tab', { name: 'Meradyl', exact: true }).waitFor();
   assert.match(await readFile(path.join(vault, 'Indice.md'), 'utf8'), /\[\[Luoghi\/Meradyl\]\]/);
-  await page.getByRole('button', { name: 'Sposta nota', exact: true }).click();
+  await tree.getByRole('button', { name: 'Meradyl', exact: true }).click({ button: 'right' });
+  await page.getByRole('menu', { name: /Azioni Luoghi\/Meradyl\.md/ }).getByRole('menuitem', { name: 'Sposta…', exact: true }).click();
   await page.getByRole('combobox', { name: 'Cartella di destinazione', exact: true }).selectOption('');
   await page.getByRole('button', { name: 'Conferma', exact: true }).click();
   await expectNote('Meradyl.md');
