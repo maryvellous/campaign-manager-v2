@@ -178,13 +178,13 @@ export class CampaignService {
   }
   async save(): Promise<void> {
     const doc = this.state.document;
-    if (!doc || doc.state === 'clean') return;
+    if (!doc || (!doc.draft && doc.state === 'clean')) return;
     if (doc.state === 'conflict' || doc.state === 'missing' || this.state.rootMissing) { await this.protect(); return; }
     doc.state = 'saving'; this.onChange();
     const savedContent = doc.markdown;
     if (doc.draft && !draftWords(savedContent).length) { if (doc.recoveryKey) await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey); doc.recoveryKey = undefined; doc.state = 'clean'; doc.protected = true; return; }
     try {
-      const id = doc.draft ? [doc.draft.parentFolder, `${doc.draft.manualTitle || draftTitle(savedContent)}.md`].filter(Boolean).join('/') : doc.noteId;
+      const id = doc.draft ? [doc.draft.parentFolder, `${doc.draft.manualTitle || draftTitle(savedContent) || 'Nuova nota'}.md`].filter(Boolean).join('/') : doc.noteId;
       const note = await this.requiredRepo().saveNote(id, savedContent, doc.draft ? null : doc.baseRevision);
       if (doc.draft) { doc.noteId = note.noteId; doc.draft = undefined; const tab = this.activeTab()!; tab.history = [...tab.history.slice(0, tab.historyIndex + 1), note.noteId]; tab.historyIndex = tab.history.length - 1; this.state.entries = await this.requiredRepo().discover(); }
       this.touchNote(note.noteId);
@@ -283,10 +283,26 @@ export class CampaignService {
     finally { this.state.activeTabId = active; }
     await this.persistUi(); return allowed;
   }
+  async cancelDraft(): Promise<void> {
+    const tab = this.activeTab();
+    const doc = tab?.document;
+    if (!tab || !doc?.draft) throw new CampaignError('invalid_path', 'Nessuna nuova nota da annullare.');
+    if (doc.recoveryKey) await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey);
+    const index = this.state.tabs.indexOf(tab);
+    this.state.tabs.splice(index, 1);
+    this.state.activeTabId = this.state.tabs[Math.min(index, this.state.tabs.length - 1)]?.id;
+    this.state.recoveries = await this.store.listRecovery(this.requiredRepo().metadata.campaignId);
+    await this.persistUi();
+  }
   async discard(): Promise<void> {
     const doc = this.state.document;
-    if (doc?.recoveryKey) await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey);
-    this.state.document = undefined;
+    if (!doc) return;
+    if (doc.draft) { await this.cancelDraft(); return; }
+    if (doc.recoveryKey) await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey);
+    const disk = await this.requiredRepo().readNote(doc.noteId);
+    this.state.document = { ...disk, baseRevision: disk.revision, state: 'clean', protected: true };
+    this.state.recoveries = await this.store.listRecovery(this.requiredRepo().metadata.campaignId);
+    await this.persistUi();
   }
   async trash(adapter: (target: string) => Promise<void>): Promise<void> {
     if (!(await this.prepareLeave(false))) throw new CampaignError('conflict', 'Risolvi le modifiche prima di cestinare.');
@@ -314,14 +330,14 @@ export class CampaignService {
     this.requiredRepo();
     if (!(await this.leaveCurrent())) throw new CampaignError('conflict', 'Risolvi le modifiche prima di creare una nuova nota.');
     if (newTab || !this.activeTab()) { const tab = { id: randomUUID(), history: [] as string[], historyIndex: -1 }; this.state.tabs.push(tab); this.state.activeTabId = tab.id; }
-    this.state.document = { draft: { id: randomUUID(), parentFolder: folder }, noteId: '', markdown: '', baseRevision: '', state: 'clean', protected: true };
+    this.state.document = { draft: { id: randomUUID(), parentFolder: folder }, noteId: '', markdown: '', baseRevision: '', state: 'dirty', protected: true };
     this.state.ui.view = 'notes'; this.state.ui.selectedFolder = ''; await this.persistUi();
   }
   async setDraftTitle(title: string): Promise<void> {
     const doc = this.state.document; if (!doc?.draft) throw new CampaignError('invalid_path', 'Nessuna bozza aperta.');
     const name = title.replace(/\.md$/iu, ''); validateRelativePath(name);
     if (name.includes('/')) throw new CampaignError('invalid_path', 'Il titolo non può contenere un percorso.');
-    doc.draft.manualTitle = name; doc.error = undefined; if (doc.state !== 'clean') doc.state = 'dirty'; await this.protect();
+    doc.draft.manualTitle = name; doc.error = undefined; doc.state = 'dirty'; doc.protected = false; await this.protect();
   }
   async setView(view: View): Promise<void> {
     if (!['notes', 'search', 'graph', 'boards', 'live', 'assistant', 'compendium', 'recent', 'favorites', 'settings'].includes(view)) throw new CampaignError('invalid_path', 'Vista non valida.');
@@ -348,6 +364,14 @@ export class CampaignService {
   async closeTab(id: string, preserve = false): Promise<void> {
     const index = this.state.tabs.findIndex(t => t.id === id); if (index < 0) return;
     const original = this.state.activeTabId; this.state.activeTabId = id;
+    const doc = this.state.document;
+    if (doc?.draft && !doc.markdown.trim() && !doc.draft.manualTitle) {
+      if (doc.recoveryKey) await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey);
+      this.state.tabs.splice(index, 1);
+      this.state.activeTabId = original === id ? this.state.tabs[Math.min(index, this.state.tabs.length - 1)]?.id : original;
+      await this.persistUi();
+      return;
+    }
     try { if (!(await this.leaveCurrent(preserve))) throw new CampaignError('conflict', 'Questa tab contiene modifiche non salvate. Puoi restare o conservarne la bozza.'); }
     catch (error) { this.state.activeTabId = original; throw error; }
     this.state.tabs.splice(index, 1); this.state.activeTabId = original === id ? this.state.tabs[Math.min(index, this.state.tabs.length - 1)]?.id : original; await this.persistUi();

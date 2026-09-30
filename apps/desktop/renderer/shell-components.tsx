@@ -10,7 +10,7 @@ const paths: Record<IconName, string> = {
   book: 'M12 5v16 M12 5C9 2 5 2 2 4v15c4-2 7-1 10 2c3-3 6-4 10-2V4c-3-2-7-2-10 1',
   clock: 'M12 7v6l4 2 M22 12a10 10 0 1 1-20 0a10 10 0 1 1 20 0',
   star: 'm12 2 3 6 7 1-5 5 1 7-6-3-6 3 1-7-5-5 7-1z',
-  settings: 'M9 3h6l1 4 4 1 1 5-3 3-1 4-5 1-3-3-4-1-1-5 3-3z M15 12a3 3 0 1 1-6 0a3 3 0 1 1 6 0',
+  settings: 'M12 2v3 M12 19v3 M4.93 4.93l2.12 2.12 M16.95 16.95l2.12 2.12 M2 12h3 M19 12h3 M4.93 19.07l2.12-2.12 M16.95 7.05l2.12-2.12 M16 12a4 4 0 1 1-8 0a4 4 0 1 1 8 0',
   folder: 'M2 6h8l2 2h10v12H2z M2 6V4h7l2 2', plus: 'M12 4v16 M4 12h16', back: 'm14 5-7 7 7 7', forward: 'm10 5 7 7-7 7', close: 'm6 6 12 12 M6 18 18 6', chevron: 'm9 5 7 7-7 7', panel: 'M3 3h18v18H3z M15 3v18', more: 'M4 12h1 M11 12h1 M18 12h1', trash: 'M3 6h18 M9 3h6 M6 6l1 15h10l1-15 M10 9v8 M14 9v8', move: 'M4 12h16 m-5-5 5 5-5 5', rename: 'm4 15 11-11 5 5L9 20H4z M13 6l5 5', refresh: 'M20 11a8 8 0 1 0 2 4.5 M20 4v7h-7'
 };
 export function Icon({ name, size = 18 }: { name: IconName; size?: number }) { return <svg width={size} height={size} viewBox="0 0 24 24" aria-hidden="true" fill="none" stroke="currentColor" strokeWidth="1.65" strokeLinecap="round" strokeLinejoin="round"><path d={paths[name]} /></svg>; }

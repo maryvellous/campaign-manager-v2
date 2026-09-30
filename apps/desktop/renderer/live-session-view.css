@@ -9,3 +9,15 @@
 .live-header-status{display:flex;align-items:center;gap:8px}.live-header-status .danger.subtle{font-size:9px;padding:6px 9px;background:transparent;border-color:#8c4b5f;color:#e9bdc8}.live-end-card{grid-column:span 2;border-color:#8c4b5f66;background:#5a273922}.live-end-card .actions{display:flex;flex-wrap:wrap;gap:8px;margin-top:14px}.live-end-card .danger{background:#7a3248;color:#fff;border-color:#a65a72}@media(max-width:900px){.live-end-card{grid-column:auto}}@media(max-width:650px){.live-header-status{width:100%;justify-content:space-between}}
 
 .discord-activity-card{position:relative;overflow:hidden}.discord-activity-card:after{content:'◇';position:absolute;right:16px;bottom:-18px;font-size:72px;line-height:1;color:#ffffff08;pointer-events:none}.discord-pairing-code{display:inline-flex;margin:10px 0 14px;padding:10px 14px;border:1px solid #ffffff24;border-radius:12px;background:#1e1333;color:#fff;font-size:22px;font-weight:700;letter-spacing:.14em;font-variant-numeric:tabular-nums}.discord-activity-card>.actions{display:flex;gap:8px;flex-wrap:wrap}
+
+
+.live-start-flow{max-width:760px;width:min(760px,92%);align-items:stretch}
+.live-start-flow>h2,.live-start-flow>p,.live-start-flow>.live-empty-mark{text-align:center}
+.live-steps{list-style:none;margin:12px 0 18px;padding:0;display:grid;grid-template-columns:repeat(4,minmax(0,1fr));gap:9px}
+.live-steps li{display:flex;align-items:flex-start;gap:8px;padding:11px;border:1px solid var(--line);border-radius:11px;background:#ffffff03;text-align:left}
+.live-steps li>span{display:grid;place-items:center;width:22px;height:22px;flex:none;border-radius:50%;background:#ffffff0b;font-size:10px}.live-steps li.done>span{background:#98a78a33}
+.live-steps strong{display:block;font-size:10px}.live-steps small{display:block;margin-top:3px;color:var(--muted);font-size:9px;line-height:1.4}
+.live-start-board{max-width:460px;margin:0 auto 10px}.live-start-button{align-self:center}.live-start-note{color:var(--muted);font-size:10px!important;line-height:1.5}
+.live-no-board{display:flex;align-items:center;justify-content:center;gap:10px;flex-wrap:wrap;padding:16px;border:1px dashed #ffffff2b;border-radius:12px}.live-no-board p{margin:0}
+.discord-pairing-steps{margin:9px 0 12px;padding-left:20px;color:var(--muted);font-size:10px;line-height:1.65}
+@media(max-width:900px){.live-steps{grid-template-columns:1fr 1fr}}@media(max-width:620px){.live-steps{grid-template-columns:1fr}}

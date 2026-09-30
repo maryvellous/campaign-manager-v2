@@ -263,6 +263,11 @@ else {
               clipboard.writeText(liveService.state.joinCode);
               return { ok: true, data: liveService.state };
             }
+            case 'live:copyPlayerUrl': {
+              if (!liveService.state.playerUrl) throw new CampaignError('not_found', 'Nessun link giocatore disponibile.');
+              clipboard.writeText(liveService.state.playerUrl);
+              return { ok: true, data: liveService.state };
+            }
             case 'live:createDiscordPairing': {
               const result = await liveService.createActivityPairing();
               return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
@@ -456,8 +461,13 @@ else {
               if (command.key) content = service.state.recoveries.find(r => r.key === text(command.key, 100))?.draft.markdown;
               if (content !== undefined) await exportText(content); break;
             }
+            case 'cancelDraft': {
+              if (!service.state.document?.draft) throw new CampaignError('invalid_path', 'Nessuna nuova nota da annullare.');
+              const result = await dialog.showMessageBox(window, { type: 'warning', message: 'Annullare la creazione della nota?', detail: 'La bozza verrà chiusa senza creare alcun file.', buttons: ['Continua a scrivere', 'Annulla creazione'], defaultId: 0, cancelId: 0 });
+              if (result.response === 1) await service.cancelDraft(); break;
+            }
             case 'discard': {
-              const result = await dialog.showMessageBox(window, { type: 'warning', message: 'Scartare le modifiche locali?', detail: 'La bozza di recupero della nota aperta verrà rimossa. Il file sul disco resta invariato.', buttons: ['Resta', 'Scarta modifiche'], defaultId: 0, cancelId: 0 });
+              const result = await dialog.showMessageBox(window, { type: 'warning', message: 'Scartare le modifiche locali?', detail: 'La nota verrà ripristinata dalla versione attualmente salvata sul disco.', buttons: ['Resta', 'Scarta modifiche'], defaultId: 0, cancelId: 0 });
               if (result.response === 1) await service.discard(); break;
             }
             case 'trash': {
