@@ -263,6 +263,11 @@ else {
               clipboard.writeText(liveService.state.joinCode);
               return { ok: true, data: liveService.state };
             }
+            case 'live:copyPlayerUrl': {
+              if (!liveService.state.playerUrl) throw new CampaignError('not_found', 'Nessun link giocatore disponibile.');
+              clipboard.writeText(liveService.state.playerUrl);
+              return { ok: true, data: liveService.state };
+            }
             case 'live:createDiscordPairing': {
               const result = await liveService.createActivityPairing();
               return result.ok ? { ok: true, data: result.value } : { ok: false, error: { code: result.error.code.toLowerCase(), message: result.error.message } };
