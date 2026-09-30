@@ -14,6 +14,7 @@ try {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE'));
   desktop = await electron.launch({ args: ['.', `--user-data-dir=${path.join(temporary, 'profile')}`], cwd: process.cwd(), env });
   const page = await desktop.firstWindow(); const failures = []; const network = [];
+  const skipGuide = page.getByRole('button', { name: 'Salta guida', exact: true }); if (await skipGuide.isVisible().catch(() => false)) await skipGuide.click();
   page.on('pageerror', error => failures.push(error.message)); page.on('request', request => { if (/^https?:/.test(request.url())) network.push(request.url()); });
   await desktop.evaluate(({ dialog, shell }, root) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [root] }); shell.openExternal = async url => { globalThis.testExternal = url; }; }, vault);
   await page.getByRole('button', { name: 'Apri cartella…', exact: true }).first().click();
