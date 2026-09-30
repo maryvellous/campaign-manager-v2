@@ -1,6 +1,6 @@
 {
   "name": "campaign-manager-v2",
-  "version": "0.6.0",
+  "version": "0.7.0",
   "private": true,
   "type": "module",
   "main": "dist/main.cjs",
@@ -12,6 +12,7 @@
     "test:electron": "npm run build && node scripts/smoke.mjs",
     "test:goal2": "npm run build && node scripts/goal2-smoke.mjs",
     "test:goal3": "npm run build && node scripts/goal3-smoke.mjs",
+    "test:v07": "npm run build && node scripts/v07-smoke.mjs",
     "test:live-network": "node scripts/live-network-smoke.mjs",
     "package:win": "npm run build && npx --yes electron-builder@26.16.1 --win nsis --x64 --publish never"
   },
