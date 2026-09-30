@@ -364,6 +364,14 @@ export class CampaignService {
   async closeTab(id: string, preserve = false): Promise<void> {
     const index = this.state.tabs.findIndex(t => t.id === id); if (index < 0) return;
     const original = this.state.activeTabId; this.state.activeTabId = id;
+    const doc = this.state.document;
+    if (doc?.draft && !doc.markdown.trim() && !doc.draft.manualTitle) {
+      if (doc.recoveryKey) await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey);
+      this.state.tabs.splice(index, 1);
+      this.state.activeTabId = original === id ? this.state.tabs[Math.min(index, this.state.tabs.length - 1)]?.id : original;
+      await this.persistUi();
+      return;
+    }
     try { if (!(await this.leaveCurrent(preserve))) throw new CampaignError('conflict', 'Questa tab contiene modifiche non salvate. Puoi restare o conservarne la bozza.'); }
     catch (error) { this.state.activeTabId = original; throw error; }
     this.state.tabs.splice(index, 1); this.state.activeTabId = original === id ? this.state.tabs[Math.min(index, this.state.tabs.length - 1)]?.id : original; await this.persistUi();
