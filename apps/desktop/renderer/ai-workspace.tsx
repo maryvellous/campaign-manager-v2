@@ -1,4 +1,6 @@
 import { useEffect, useState, type FormEvent } from 'react';
+import ReactMarkdown from 'react-markdown';
+import remarkGfm from 'remark-gfm';
 import type { AiState } from '../application/ai-service';
 import { AI_PROVIDER_MODELS, DEFAULT_AI_MODELS, type AiContextSelection, type AiModel, type AiProposal, type AiProviderId } from '../../../packages/ai/src/index';
 
@@ -133,6 +135,15 @@ function contextLabel(context: AiContextSelection): string {
   return context.kind === 'note' ? `Nota · ${title}` : `Selezione · ${title}`;
 }
 
+function ChatMarkdown({ markdown, command }: { markdown: string; command: Command }) {
+  return <div className="ai-markdown">
+    <ReactMarkdown remarkPlugins={[remarkGfm]} skipHtml components={{
+      a: ({ href = '', children }) => /^https?:\/\//iu.test(href)
+        ? <a href={href} onClick={event => { event.preventDefault(); void command({ action: 'external', url: href }); }}>{children}<span aria-hidden="true"> ↗</span></a>
+        : <span>{children}</span>,
+    }}>{markdown}</ReactMarkdown>
+  </div>;
+}
 
 function ProposalPanel({
   proposal,
@@ -151,6 +162,7 @@ function ProposalPanel({
   const [parentFolder, setParentFolder] = useState(proposal.kind === 'new' ? proposal.parentFolder : '');
   const [busy, setBusy] = useState(false);
   const [error, setError] = useState<string>();
+  const [showDiff, setShowDiff] = useState(false);
 
   useEffect(() => {
     setEditing(false);
@@ -158,6 +170,7 @@ function ProposalPanel({
     setTitle(proposal.kind === 'new' ? proposal.title : '');
     setParentFolder(proposal.kind === 'new' ? proposal.parentFolder : '');
     setError(undefined);
+    setShowDiff(false);
   }, [proposal.id]);
 
   async function persistDraft(): Promise<boolean> {
@@ -200,18 +213,21 @@ function ProposalPanel({
     </div>
     {proposal.kind === 'edit' ? editing
       ? <label className="ai-proposal-editor"><span>Markdown proposto</span><textarea value={markdown} onChange={event => setMarkdown(event.target.value)} /></label>
-      : <div className="ai-proposal-diff"><section><strong>Prima</strong><pre>{proposal.originalMarkdown}</pre></section><section><strong>Proposta</strong><pre>{proposal.proposedMarkdown}</pre></section></div>
+      : showDiff
+        ? <div className="ai-proposal-diff"><section><strong>Prima</strong><ChatMarkdown markdown={proposal.originalMarkdown} command={command} /></section><section><strong>Proposta</strong><ChatMarkdown markdown={proposal.proposedMarkdown} command={command} /></section></div>
+        : <div className="ai-proposal-preview"><ChatMarkdown markdown={proposal.proposedMarkdown} command={command} /></div>
       : editing
         ? <div className="ai-proposal-editor">
           <label><span>Titolo</span><input value={title} onChange={event => setTitle(event.target.value)} /></label>
           <label><span>Cartella</span><select value={parentFolder} onChange={event => setParentFolder(event.target.value)}><option value="">Cartella principale</option>{folders.map(folder => <option key={folder} value={folder}>{folder}</option>)}</select></label>
           <label><span>Markdown</span><textarea value={markdown} onChange={event => setMarkdown(event.target.value)} /></label>
         </div>
-        : <div className="ai-new-preview"><dl><dt>Titolo</dt><dd>{proposal.title}</dd><dt>Cartella</dt><dd>{proposal.parentFolder || 'Cartella principale'}</dd></dl><pre>{proposal.markdown}</pre></div>}
+        : <div className="ai-new-preview"><dl><dt>Titolo</dt><dd>{proposal.title}</dd><dt>Cartella</dt><dd>{proposal.parentFolder || 'Cartella principale'}</dd></dl><ChatMarkdown markdown={proposal.markdown} command={command} /></div>}
     {error && <p className="ai-proposal-error" role="alert">{error}</p>}
     <div className="ai-proposal-actions">
-      {editing ? <button disabled={busy} onClick={() => void saveEdits()}>Fine modifica</button> : <button disabled={busy} onClick={() => setEditing(true)}>Modifica proposta</button>}
-      <button className="primary" disabled={busy} onClick={() => void apply()}>{proposal.kind === 'edit' ? 'Applica' : 'Crea nota'}</button>
+      {proposal.kind === 'edit' && !editing && <button disabled={busy} onClick={() => setShowDiff(value => !value)}>{showDiff ? 'Nascondi differenze' : 'Visualizza differenze'}</button>}
+      {editing ? <button disabled={busy} onClick={() => void saveEdits()}>Fine modifica</button> : <button disabled={busy} onClick={() => setEditing(true)}>Modifica Markdown</button>}
+      <button className="primary" disabled={busy} onClick={() => void apply()}>{proposal.kind === 'edit' ? 'Applica alla nota' : 'Crea nota'}</button>
       <button disabled={busy} onClick={() => void discard()}>Scarta</button>
     </div>
   </section>;
@@ -270,7 +286,12 @@ export function AiWorkspace({
     setLocalError(undefined);
     setPrompt('');
     const reply = await command({ action: 'ai:send', prompt: value, context });
-    if (!reply.ok) { setPrompt(value); setLocalError(reply.error?.message ?? 'Richiesta non riuscita.'); }
+    if (!reply.ok) { setPrompt(value); setLocalError(reply.error?.message ?? 'Richiesta non riuscita.'); return; }
+    const asksForEdit = context.kind === 'note' && /\b(modifica|riscrivi|correggi|aggiorna|sostituisci|aggiungi|rimuovi|accorcia|espandi)\b/iu.test(value);
+    if (asksForEdit && !state.proposal) {
+      const proposalReply = await command({ action: 'ai:proposeEdit', noteId: context.noteId });
+      if (!proposalReply.ok) setLocalError(proposalReply.error?.message ?? 'La risposta è pronta, ma non sono riuscito a preparare la modifica.');
+    }
   }
 
   if (!state.configured) return <section className="ai-empty">
@@ -299,23 +320,23 @@ export function AiWorkspace({
       <button className="primary" onClick={() => void acceptPrivacy()}>Ho capito, continua</button>
     </section>}
 
-    {notice && <section className="ai-apply-notice" role="status"><span>{notice.text}</span><button onClick={() => onOpenNote(notice.noteId)}>Apri nota</button></section>}
-    {state.proposal && <ProposalPanel proposal={state.proposal} folders={folders} command={command} onApplied={noteId => setNotice({ noteId, text: state.proposal?.kind === 'new' ? 'Nuova nota creata.' : 'Modifica applicata.' })} />}
+    {notice && <section className="ai-apply-notice" role="status"><span>✓ {notice.text}</span><button onClick={() => onOpenNote(notice.noteId)}>Apri nota</button></section>}
 
     <div className="ai-thread" aria-live="polite">
       {state.messages.length === 0 ? <div className="ai-thread-empty"><span aria-hidden="true">✦</span><h2>Da dove cominciamo?</h2><p>Fai una domanda sulla campagna, oppure apri una nota e usa “Chiedi all’IA” per limitarne il contesto.</p></div> : state.messages.map(message => <article className={'ai-message ' + message.role} key={message.id}>
         <span>{message.role === 'user' ? 'Tu' : 'Assistente'}</span>
-        <div>{message.content}</div>
-        {!!message.sources?.length && <div className="ai-sources"><small>Fonti usate</small>{message.sources.map(source => <button type="button" key={source.noteId} onClick={() => onOpenNote(source.noteId)}><strong>{source.title}</strong><span>{source.relativePath}</span></button>)}</div>}
+        {message.role === 'assistant' ? <ChatMarkdown markdown={message.content} command={command} /> : <div>{message.content}</div>}
+        {!!message.sources?.length && <details className="ai-sources"><summary>{message.sources.length} {message.sources.length === 1 ? 'nota consultata' : 'note consultate'}</summary>{message.sources.map(source => <button type="button" key={source.noteId} onClick={() => onOpenNote(source.noteId)}><strong>{source.title}</strong><span>{source.relativePath}</span></button>)}</details>}
       </article>)}
+      {state.proposal && <ProposalPanel proposal={state.proposal} folders={folders} command={command} onApplied={noteId => setNotice({ noteId, text: state.proposal?.kind === 'new' ? 'Nuova nota creata.' : 'Modifica applicata.' })} />}
       {(state.error || localError || statusText[state.status]) && state.status !== 'ready' && <div className={'ai-status ' + state.status} role="status">{localError ?? state.error ?? statusText[state.status]}</div>}
     </div>
 
     <form className="ai-composer" onSubmit={send}>
       <textarea aria-label="Messaggio per l’assistente" value={prompt} onChange={event => setPrompt(event.target.value)} placeholder={state.privacyAccepted ? 'Scrivi una domanda…' : 'Conferma prima l’invio al provider'} disabled={!state.privacyAccepted || state.status === 'thinking'} />
       <div className="ai-proposal-triggers">
-        <button type="button" disabled={!state.privacyAccepted || state.status === 'thinking' || !!state.proposal || state.messages.length === 0 || context.kind !== 'note'} onClick={() => void proposeEdit()}>Proponi modifica alla nota</button>
-        <button type="button" disabled={!state.privacyAccepted || state.status === 'thinking' || !!state.proposal || state.messages.length === 0} onClick={() => void proposeNew()}>Proponi nuova nota</button>
+        {context.kind === 'note' && <button type="button" disabled={!state.privacyAccepted || state.status === 'thinking' || !!state.proposal || state.messages.length === 0} onClick={() => void proposeEdit()}>Prepara modifica della nota</button>}
+        <button type="button" disabled={!state.privacyAccepted || state.status === 'thinking' || !!state.proposal || state.messages.length === 0} onClick={() => void proposeNew()}>Crea una nota dalla conversazione</button>
       </div>
       <div className="ai-composer-actions">
         <span>{state.status === 'thinking' ? 'Generazione in corso' : 'Nessuna modifica ai file viene applicata automaticamente.'}</span>
