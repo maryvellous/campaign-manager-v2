@@ -6,7 +6,7 @@ import os from 'node:os';
 import assert from 'node:assert/strict';
 const temporary = await mkdtemp(path.join(os.tmpdir(), 'cmv2-goal2-ui-'));
 const vault = path.join(temporary, 'Ala di prova'); await mkdir(vault);
-await writeFile(path.join(vault, 'Indice.md'), '# Indice\n[[Luoghi/La città perduta]]');
+await writeFile(path.join(vault, 'Indice.md'), '# Indice\n[[Luoghi/La città]]');
 let desktop;
 const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE'));
 try {
@@ -32,31 +32,31 @@ try {
   await page.locator('.sidebar-create').getByRole('button', { name: 'Nuova nota', exact: true }).click();
   const editor = page.getByRole('textbox', { name: 'Contenuto Markdown' }); await editor.waitFor();
   assert.deepEqual(await readdir(path.join(vault, 'Luoghi')), []);
-  await editor.fill('# La città perduta ');
+  await editor.fill('# La città ');
   await page.getByRole('button', { name: /Salva nota/ }).click();
-  await expectNote('Luoghi/La città perduta.md');
-  assert.equal(await readFile(path.join(vault, 'Luoghi', 'La città perduta.md'), 'utf8'), '# La città perduta ');
+  await expectNote('Luoghi/La città.md');
+  assert.equal(await readFile(path.join(vault, 'Luoghi', 'La città.md'), 'utf8'), '# La città ');
   await page.getByRole('button', { name: 'Aggiungi ai preferiti', exact: true }).first().click();
   await page.getByRole('navigation', { name: 'Navigazione principale' }).getByRole('button', { name: 'Preferiti', exact: true }).click();
-  await tree.getByRole('button', { name: 'La città perduta', exact: true }).waitFor();
+  await tree.getByRole('button', { name: 'La città', exact: true }).waitFor();
   assert.equal(await tree.getByRole('button', { name: 'Indice', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Note', exact: true }).click();
   // Right click uses the same resource actions as the visible three-dot menu.
-  await tree.getByRole('button', { name: 'La città perduta', exact: true }).click({ button: 'right' });
-  const contextMenu = page.getByRole('menu', { name: /Azioni Luoghi\/La città perduta\.md/ }); await contextMenu.waitFor();
+  await tree.getByRole('button', { name: 'La città', exact: true }).click({ button: 'right' });
+  const contextMenu = page.getByRole('menu', { name: /Azioni Luoghi\/La città\.md/ }); await contextMenu.waitFor();
   assert.equal(await contextMenu.getByRole('menuitem', { name: 'Rinomina', exact: true }).count(), 1);
   assert.equal(await contextMenu.getByRole('menuitem', { name: 'Chiedi all’IA', exact: true }).count(), 1);
   await page.keyboard.press('Escape');
   await tree.getByRole('button', { name: 'Indice', exact: true }).click();
   await page.getByRole('button', { name: 'Indietro', exact: true }).click();
-  await expectNote('Luoghi/La città perduta.md');
+  await expectNote('Luoghi/La città.md');
   await page.getByRole('button', { name: 'Avanti', exact: true }).click();
   await expectNote('Indice.md');
   // Ctrl-click explicitly opens another tab; repeated requests never duplicate it.
-  await tree.getByRole('button', { name: 'La città perduta', exact: true }).click({ modifiers: ['Control'] });
-  await page.getByRole('tab', { name: 'La città perduta', exact: true }).waitFor();
+  await tree.getByRole('button', { name: 'La città', exact: true }).click({ modifiers: ['Control'] });
+  await page.getByRole('tab', { name: 'La città', exact: true }).waitFor();
   assert.equal(await page.getByRole('tab').count(), 2);
-  await tree.getByRole('button', { name: 'La città perduta', exact: true }).click({ modifiers: ['Control'] });
+  await tree.getByRole('button', { name: 'La città', exact: true }).click({ modifiers: ['Control'] });
   assert.equal(await page.getByRole('tab').count(), 2);
   // Title rename is real and updates the resolved wikilink.
   await page.getByTitle('Rinomina nota', { exact: true }).click();
@@ -68,7 +68,7 @@ try {
   await page.getByRole('combobox', { name: 'Cartella di destinazione', exact: true }).selectOption('');
   await page.getByRole('button', { name: 'Conferma', exact: true }).click();
   await expectNote('Meradyl.md');
-  assert.equal(await readFile(path.join(vault, 'Meradyl.md'), 'utf8'), '# La città perduta ');
+  assert.equal(await readFile(path.join(vault, 'Meradyl.md'), 'utf8'), '# La città ');
   // Keyboard palette and honest cloud placeholders.
   await editor.press('Control+k');
   const search = page.getByRole('combobox', { name: 'Cerca un comando o una nota' }); await search.fill('Apri Compendio'); await search.press('Enter');
