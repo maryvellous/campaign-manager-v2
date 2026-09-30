@@ -9,7 +9,7 @@ type ElementList = { boardPath: string; boardId: string; title: string; elements
 type ActivityPairing = { pairingCode: string; expiresAt: number };
 type ActivityBinding = { bound: boolean; instanceId?: string; pairedAt?: number };
 
-export function LiveSessionView({ live, command }: { live: DesktopLiveState; command: Command }) {
+export function LiveSessionView({ live, command, initialBoardPath, onCreateBoard }: { live: DesktopLiveState; command: Command; initialBoardPath?: string; onCreateBoard?: () => void }) {
   const active = !!live.liveSessionId;
   const [boards, setBoards] = useState<LocalBoard[]>([]);
   const [selectedPath, setSelectedPath] = useState('');
@@ -26,7 +26,6 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
   const activeIds = useMemo(() => new Set(live.activeElementIds), [live.activeElementIds]);
 
   const loadBoards = useCallback(async () => {
-    if (!active) { setBoards([]); setSelectedPath(''); setElementList(undefined); return; }
     const reply = await command({ action: 'live:boards' });
     if (!reply.ok) { setMessage(reply.error?.message ?? 'Non riesco a leggere le board.'); return; }
     const next = (reply.data as LocalBoard[] | undefined) ?? [];
@@ -35,9 +34,11 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       const activeBoard = next.find(board => board.boardId === live.activeBoardId);
       if (activeBoard) return activeBoard.path;
       if (current && next.some(board => board.path === current)) return current;
+      if (initialBoardPath && next.some(board => board.path === initialBoardPath)) return initialBoardPath;
       return next[0]?.path ?? '';
     });
-  }, [active, command, live.activeBoardId]);
+    if (!active) setElementList(undefined);
+  }, [active, command, initialBoardPath, live.activeBoardId]);
 
   const loadElements = useCallback(async (path: string) => {
     if (!path) { setElementList(undefined); return; }
@@ -73,6 +74,17 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       if (!reply.ok) { setMessage(reply.error?.message ?? 'Operazione live non riuscita.'); return false; }
       if (reloadElements && selectedPath) await loadElements(selectedPath);
       return true;
+    } finally { setBusyAction(undefined); }
+  };
+
+  const startSession = async () => {
+    if (!selectedPath) return;
+    setBusyAction('start'); setMessage(undefined);
+    try {
+      const started = await command({ action: 'live:start' });
+      if (!started.ok) { setMessage(started.error?.message ?? 'Non riesco ad avviare la sessione.'); return; }
+      const published = await command({ action: 'live:publishBoard', path: selectedPath });
+      if (!published.ok) setMessage(published.error?.message ?? 'La sessione è partita, ma la board iniziale non è stata pubblicata.');
     } finally { setBusyAction(undefined); }
   };
 
@@ -123,17 +135,21 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       <div className="live-header-status">{active && <button className="danger subtle" onClick={() => setEndPrompt(true)}>Termina sessione</button>}<span className={`live-status ${live.connected ? 'online' : ''}`}>{active ? live.connected ? 'Relay connesso' : 'Riconnessione' : 'Nessuna sessione'}</span></div>
     </header>
 
-    {!active ? <div className="live-empty">
+    {!active ? <div className="live-empty live-start-flow">
       <span className="live-empty-mark">⌁</span>
-      <h2>Apri il tavolo ai giocatori.</h2>
-      <p>Avvia una sessione per ottenere un codice breve. Non serve un account né ai giocatori né al master.</p>
-      <button className="primary" disabled={live.status === 'starting'} onClick={() => void command({ action: 'live:start' })}>{live.status === 'starting' ? 'Avvio…' : 'Avvia sessione'}</button>
-      {live.error && <p className="live-error" role="alert">{live.error}</p>}
+      <h2>Prepara il tavolo e poi aprilo ai giocatori.</h2>
+      <ol className="live-steps"><li className={boards.length ? 'done' : ''}><span>1</span><div><strong>Prepara una board</strong><small>La scena che vuoi mostrare per prima.</small></div></li><li><span>2</span><div><strong>Avvia la live</strong><small>Viene creato il tavolo online.</small></div></li><li><span>3</span><div><strong>Fai entrare i giocatori</strong><small>Con link/codice oppure tramite Discord.</small></div></li><li><span>4</span><div><strong>Gestisci la scena</strong><small>Rivela elementi e assegna token durante la partita.</small></div></li></ol>
+      {!boards.length ? <div className="live-no-board"><p>Per iniziare una Live serve almeno una Board.</p>{onCreateBoard && <button className="primary" onClick={onCreateBoard}>Crea una board</button>}</div> : <>
+        <label className="live-board-picker live-start-board"><span>Board iniziale</span><select value={selectedPath} onChange={event => setSelectedPath(event.target.value)}>{boards.map(board => <option value={board.path} key={board.boardId}>{board.title}</option>)}</select></label>
+        <button className="primary live-start-button" disabled={!selectedPath || live.status === 'starting' || busyAction === 'start'} onClick={() => void startSession()}>{live.status === 'starting' || busyAction === 'start' ? 'Avvio…' : 'Avvia live con questa board'}</button>
+      </>}
+      <p className="live-start-note">La modalità web funziona da sola. Discord Activity è un modo alternativo per entrare nella stessa sessione.</p>
+      {(live.error || message) && <p className="live-error" role="alert">{live.error ?? message}</p>}
     </div> : <div className="live-grid">
       <section className="live-card join-card-dm">
         <span className="eyebrow">CODICE SESSIONE</span>
         <div className="join-code">{live.joinCode}</div>
-        <div className="actions"><button className="primary" onClick={() => void command({ action: 'live:copyJoinCode' })}>Copia codice</button><button onClick={() => void command({ action: 'live:rotateCode' })}>Genera nuovo codice</button></div>
+        <div className="actions"><button className="primary" onClick={() => void command({ action: 'live:copyJoinCode' })}>Copia codice</button>{live.playerUrl && <button onClick={() => void command({ action: 'live:copyPlayerUrl' })}>Copia link</button>}<button onClick={() => void command({ action: 'live:rotateCode' })}>Genera nuovo codice</button></div>
         <p>Un nuovo codice invalida soltanto quello precedente. Chi è già entrato resta nella sessione.</p>
         {live.playerUrl && <div className="live-player-url"><span>{live.playerUrl}</span><button onClick={() => void command({ action: 'external', url: live.playerUrl })}>Apri pagina giocatore</button></div>}
       </section>
@@ -146,15 +162,16 @@ export function LiveSessionView({ live, command }: { live: DesktopLiveState; com
       <section className="live-card discord-activity-card">
         <div className="live-card-heading"><div><span className="eyebrow">DISCORD ACTIVITY</span><h2>{activityBinding.bound ? 'Activity collegata' : 'Collega Discord'}</h2></div><span className={`live-status ${activityBinding.bound ? 'online' : ''}`}>{activityBinding.bound ? 'Collegata' : 'Non collegata'}</span></div>
         {activityBinding.bound ? <>
-          <p>Questa live è associata a una specifica istanza della Discord Activity. Il desktop resta l’unico host della sessione.</p>
+          <p>✓ Questa live è collegata alla Discord Activity. I giocatori possono entrare da Discord oppure continuare a usare il link web.</p>
           <button onClick={() => void loadActivityBinding()}>Aggiorna stato</button>
         </> : activityPairing && activityPairing.expiresAt > Date.now() ? <>
-          <p>Apri la Activity in Discord e inserisci questo codice master. È monouso e scade alle {new Date(activityPairing.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.</p>
+          <ol className="discord-pairing-steps"><li>Apri Campaign Manager come Activity in Discord.</li><li>Inserisci il codice master qui sotto.</li><li>Torna qui quando Discord conferma il collegamento.</li></ol>
           <div className="discord-pairing-code" aria-label={`Codice pairing ${activityPairing.pairingCode}`}>{activityPairing.pairingCode}</div>
-          <div className="actions"><button disabled={busyAction === 'discord-pairing'} onClick={() => void createActivityPairing()}>Rigenera</button><button onClick={() => void loadActivityBinding()}>Ho collegato l’Activity</button></div>
+          <p className="muted">Codice monouso, valido fino alle {new Date(activityPairing.expiresAt).toLocaleTimeString([], { hour: '2-digit', minute: '2-digit' })}.</p>
+          <div className="actions"><button disabled={busyAction === 'discord-pairing'} onClick={() => void createActivityPairing()}>Rigenera</button><button className="primary" onClick={() => void loadActivityBinding()}>Ho collegato l’Activity</button></div>
         </> : <>
-          <p>Genera un codice breve da inserire nella Discord Activity del master. Il codice serve solo al pairing dell’istanza e non sostituisce il codice giocatore web.</p>
-          <button className="primary" disabled={busyAction === 'discord-pairing' || !live.connected} onClick={() => void createActivityPairing()}>{busyAction === 'discord-pairing' ? 'Genero…' : 'Genera pairing'}</button>
+          <p>Discord è opzionale: collega questa stessa live all’Activity quando vuoi far entrare il gruppo direttamente dal canale vocale.</p>
+          <button className="primary" disabled={busyAction === 'discord-pairing' || !live.connected} onClick={() => void createActivityPairing()}>{busyAction === 'discord-pairing' ? 'Genero…' : 'Collega questa live a Discord'}</button>
         </>}
       </section>
 
