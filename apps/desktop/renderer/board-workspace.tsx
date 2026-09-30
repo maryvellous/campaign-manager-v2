@@ -887,6 +887,22 @@ export function BoardWorkspace({
             {linkedCharacterNoteId && <button disabled={currentElement.locked} onClick={() => setCharacterNoteLink(currentElement.elementId)}>Scollega</button>}
           </div>
         </section>}
+        {currentElement && selectedIds.length === 1 && <aside className="board-selection-inspector" aria-label="Proprietà elemento selezionato">
+          <header><div><span className="eyebrow">{currentElement.type.toUpperCase()}</span><strong>{currentElement.type === 'token' ? currentElement.name : currentElement.type === 'image' ? currentElement.assetPath.split('/').at(-1) : currentElement.type === 'text' ? 'Testo' : currentElement.type === 'card' ? currentElement.sourceTitle : 'Collegamento'}</strong></div><button className="icon-button" aria-label="Deseleziona elemento" onClick={() => setSelection([])}>×</button></header>
+          {isBoardBoxElement(currentElement) && <div className="board-inspector-grid">
+            <label><span>Larghezza</span><input type="number" min={20} value={Math.round(currentElement.width)} disabled={currentElement.locked} onChange={event => changeElement(currentElement.elementId, element => isBoardBoxElement(element) ? { ...element, width: Math.max(20, Number(event.target.value) || 20) } : element)} /></label>
+            <label><span>Altezza</span><input type="number" min={20} value={Math.round(currentElement.height)} disabled={currentElement.locked} onChange={event => changeElement(currentElement.elementId, element => isBoardBoxElement(element) ? { ...element, height: Math.max(20, Number(event.target.value) || 20) } : element)} /></label>
+          </div>}
+          {currentElement.type === 'token' && <label className="board-inspector-field"><span>Nome</span><input value={currentElement.name} disabled={currentElement.locked} onChange={event => changeElement(currentElement.elementId, element => element.type === 'token' ? { ...element, name: event.target.value || element.name } : element)} /></label>}
+          <div className="board-inspector-actions">
+            {currentElement.type === 'token' && <button onClick={() => tokenAvatarInput.current?.click()}>Cambia avatar…</button>}
+            <button onClick={toggleVisibility}>{currentElement.visibleByDefault ? 'Rendi privato' : 'Visibile ai giocatori'}</button>
+            <button onClick={toggleLock}>{currentElement.locked ? 'Sblocca' : 'Blocca'}</button>
+            <button onClick={() => zOrder('back')}>Porta sullo sfondo</button>
+            <button onClick={() => zOrder('front')}>Porta in primo piano</button>
+            <button className="danger" disabled={currentElement.locked} onClick={deleteSelection}>Elimina</button>
+          </div>
+        </aside>}
         <input ref={imageInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importImageElement(file); event.currentTarget.value = ''; }} />
         <input ref={tokenAvatarInput} hidden type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => { const file = event.target.files?.[0]; if (file) void importTokenAvatar(file); event.currentTarget.value = ''; }} />
         <div ref={viewport} className={`board-viewport tool-${tool}`} onPointerDown={viewportPointerDown} onWheel={zoom}
