@@ -184,7 +184,7 @@ export class CampaignService {
     const savedContent = doc.markdown;
     if (doc.draft && !draftWords(savedContent).length) { if (doc.recoveryKey) await this.store.removeRecovery(this.requiredRepo().metadata.campaignId, doc.recoveryKey); doc.recoveryKey = undefined; doc.state = 'clean'; doc.protected = true; return; }
     try {
-      const id = doc.draft ? [doc.draft.parentFolder, `${doc.draft.manualTitle || draftTitle(savedContent)}.md`].filter(Boolean).join('/') : doc.noteId;
+      const id = doc.draft ? [doc.draft.parentFolder, `${doc.draft.manualTitle || draftTitle(savedContent) || 'Nuova nota'}.md`].filter(Boolean).join('/') : doc.noteId;
       const note = await this.requiredRepo().saveNote(id, savedContent, doc.draft ? null : doc.baseRevision);
       if (doc.draft) { doc.noteId = note.noteId; doc.draft = undefined; const tab = this.activeTab()!; tab.history = [...tab.history.slice(0, tab.historyIndex + 1), note.noteId]; tab.historyIndex = tab.history.length - 1; this.state.entries = await this.requiredRepo().discover(); }
       this.touchNote(note.noteId);
