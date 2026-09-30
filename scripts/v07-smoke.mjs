@@ -58,7 +58,7 @@ try {
   await page.getByRole('button', { name: 'Live', exact: true }).click();
   await page.getByRole('heading', { name: 'Prepara il tavolo e poi aprilo ai giocatori.' }).waitFor();
   assert.equal(await page.locator('.live-steps li').count(), 4);
-  assert.equal(await page.getByRole('combobox').filter({ hasText: 'Scena prova' }).count() > 0 || await page.locator('.live-start-board select').inputValue() !== '', true);
+  assert.equal(await page.locator('.live-start-board select').inputValue(), 'Boards/Scena prova.board.json');
   await page.getByText('Discord Activity è un modo alternativo', { exact: false }).waitFor();
 
   assert.deepEqual(failures, []);
