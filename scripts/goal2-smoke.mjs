@@ -33,6 +33,7 @@ try {
   const editor = page.getByRole('textbox', { name: 'Contenuto Markdown' }); await editor.waitFor();
   assert.deepEqual(await readdir(path.join(vault, 'Luoghi')), []);
   await editor.fill('# La città perduta ');
+  await page.getByRole('button', { name: /Salva nota/ }).click();
   await expectNote('Luoghi/La città perduta.md');
   assert.equal(await readFile(path.join(vault, 'Luoghi', 'La città perduta.md'), 'utf8'), '# La città perduta ');
   await page.getByRole('button', { name: 'Aggiungi ai preferiti', exact: true }).first().click();
@@ -40,6 +41,12 @@ try {
   await tree.getByRole('button', { name: 'La città perduta', exact: true }).waitFor();
   assert.equal(await tree.getByRole('button', { name: 'Indice', exact: true }).count(), 0);
   await page.getByRole('button', { name: 'Note', exact: true }).click();
+  // Right click uses the same resource actions as the visible three-dot menu.
+  await tree.getByRole('button', { name: 'La città perduta', exact: true }).click({ button: 'right' });
+  const contextMenu = page.getByRole('menu', { name: /Azioni Luoghi\/La città perduta\.md/ }); await contextMenu.waitFor();
+  assert.equal(await contextMenu.getByRole('menuitem', { name: 'Rinomina', exact: true }).count(), 1);
+  assert.equal(await contextMenu.getByRole('menuitem', { name: 'Chiedi all’IA', exact: true }).count(), 1);
+  await page.keyboard.press('Escape');
   await tree.getByRole('button', { name: 'Indice', exact: true }).click();
   await page.getByRole('button', { name: 'Indietro', exact: true }).click();
   await expectNote('Luoghi/La città perduta.md');
@@ -76,13 +83,19 @@ try {
   await page.getByRole('button', { name: 'Mostra inspector', exact: true }).click();
   await page.getByRole('button', { name: 'Nascondi inspector', exact: true }).waitFor();
   await mkdir('work', { recursive: true }); await page.screenshot({ path: 'work/goal2-electron.png', fullPage: true });
+  // A started draft can be explicitly cancelled without creating a file.
+  const beforeCancel = (await readdir(vault)).sort();
+  await page.getByRole('button', { name: 'Nuova nota in nuova tab', exact: true }).click();
+  const cancelEditor = page.getByRole('textbox', { name: 'Contenuto Markdown' }); await cancelEditor.fill('bozza provvisoria');
+  await page.getByRole('button', { name: 'Annulla creazione', exact: true }).first().click();
+  assert.deepEqual((await readdir(vault)).sort(), beforeCancel);
   // Empty new tab can be closed without materializing a file.
   const before = (await readdir(vault)).sort();
   await page.getByRole('button', { name: 'Nuova nota in nuova tab', exact: true }).click();
   await page.getByRole('button', { name: 'Chiudi tab Nuova nota', exact: true }).click();
   assert.deepEqual((await readdir(vault)).sort(), before);
   assert.deepEqual(failures, []);
-  console.log('PASS Goal2: folder create, draft/materialize, favorites, history, unique tabs, real rename/move with links, palette keyboard, placeholders, inspector, empty draft.');
+  console.log('PASS Goal2: folder create, explicit draft save/cancel, context menu, favorites, history, unique tabs, real rename/move with links, palette keyboard, placeholders, inspector, empty draft.');
 } catch (error) { console.log('DEBUG TREE', await readdir(vault, { recursive: true })); if (desktop) { const pages = desktop.windows(); if (pages[0]) { console.log('DEBUG STATE', await pages[0].evaluate(() => window.campaign.command({ action: 'state' }))); await mkdir('work', { recursive: true }); await pages[0].screenshot({ path: 'work/goal2-failure.png' }); } } throw error; } finally { if (desktop) await desktop.close(); await rm(temporary, { recursive: true, force: true }); }
 
 
