@@ -179,6 +179,7 @@ export function BoardWorkspace({
   onCharacterTokenRequestHandled,
   activeBoardPath,
   onActiveBoardPathChange,
+  onStartLive,
 }: {
   command: Command;
   noteIds: string[];
@@ -186,6 +187,7 @@ export function BoardWorkspace({
   onCharacterTokenRequestHandled?: () => void;
   activeBoardPath?: string;
   onActiveBoardPathChange?: (boardPath?: string) => void;
+  onStartLive?: (boardPath: string) => void;
 }) {
   const [boards, setBoards] = useState<BoardListItem[]>([]);
   const [recoveries, setRecoveries] = useState<RecoveryItem[]>([]);
@@ -200,7 +202,7 @@ export function BoardWorkspace({
   const [message, setMessage] = useState<string>();
   const [textDraft, setTextDraft] = useState<{ x: number; y: number; text: string }>();
   const [textEditing, setTextEditing] = useState<{ elementId: string; text: string }>();
-  const [tokenDraft, setTokenDraft] = useState<{ x: number; y: number; name: string }>();
+  const [tokenDraft, setTokenDraft] = useState<{ x: number; y: number; name: string; avatar?: File }>();
   const [tokenEditing, setTokenEditing] = useState<{ elementId: string; name: string }>();
   const [characterNoteQuery, setCharacterNoteQuery] = useState('');
   const [characterTokenPlacement, setCharacterTokenPlacement] = useState<CharacterTokenRequest>();
@@ -626,9 +628,14 @@ export function BoardWorkspace({
     const reply = await command({ action: 'board:importImage', name: file.name, base64: bytesToBase64(new Uint8Array(buffer)) });
     if (!reply.ok) { setMessage(reply.error?.message); return; }
     const current = sessionRef.current; if (!current) return;
+    const rect = viewport.current?.getBoundingClientRect();
+    const camera = current.snapshot.document.camera;
+    const center = world ?? (rect ? { x: (rect.width / 2 - camera.x) / camera.zoom, y: (rect.height / 2 - camera.y) / camera.zoom } : { x: 480, y: 320 });
+    const scale = Math.min(1, 900 / Math.max(1, size.width), 650 / Math.max(1, size.height));
+    const width = Math.max(80, Math.round(size.width * scale)); const height = Math.max(60, Math.round(size.height * scale));
     const element: BoardImageElement = {
       type: 'image', elementId: crypto.randomUUID(), assetPath: (reply.data as { assetPath: string }).assetPath,
-      x: world?.x ?? 160, y: world?.y ?? 140, width: size.width, height: size.height,
+      x: center.x - width / 2, y: center.y - height / 2, width, height,
       z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false
     };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
@@ -676,12 +683,17 @@ export function BoardWorkspace({
     setSelection([element.elementId]); setTool('select');
   };
 
-  const commitTokenDraft = () => {
+  const commitTokenDraft = async () => {
     const current = sessionRef.current; const draft = tokenDraft;
-    if (!current || !draft) return;
+    if (!current || !draft?.name.trim()) return;
+    let assetPath: string | undefined;
+    if (draft.avatar) {
+      const reply = await command({ action: 'board:importImage', name: draft.avatar.name, base64: bytesToBase64(new Uint8Array(await draft.avatar.arrayBuffer())) });
+      if (!reply.ok) { setMessage(reply.error?.message ?? 'Non riesco a importare l’avatar.'); return; }
+      assetPath = (reply.data as { assetPath: string }).assetPath;
+    }
     setTokenDraft(undefined);
-    if (!draft.name.trim()) { setTool('select'); return; }
-    const element: BoardTokenElement = { type: 'token', elementId: crypto.randomUUID(), name: draft.name.trim(), x: draft.x, y: draft.y, width: 84, height: 84, z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false };
+    const element: BoardTokenElement = { type: 'token', elementId: crypto.randomUUID(), name: draft.name.trim(), ...(assetPath ? { assetPath } : {}), x: draft.x, y: draft.y, width: 84, height: 84, z: nextZ(current.snapshot.document), locked: false, visibleByDefault: false };
     applyDocument({ ...current.snapshot.document, elements: [...current.snapshot.document.elements, element] });
     setSelection([element.elementId]); setTool('select');
   };
@@ -821,7 +833,8 @@ export function BoardWorkspace({
   const allLocked = selection.length > 0 && selection.every(element => element.locked);
   const allVisible = selection.length > 0 && selection.every(element => element.visibleByDefault === true);
   const saveLabel = session?.state === 'clean' ? 'Salvata' : session?.state === 'saving' ? 'Salvataggio…' : session?.state === 'conflict' ? 'Conflitto' : session?.state === 'error' ? 'Errore' : 'Da salvare';
-  const toolLabels: Record<Tool, string> = { select: 'Seleziona', hand: 'Mano', text: 'Testo', image: 'Immagine', token: 'Token', link: 'Collegamento' };
+  const toolLabels: Record<Tool, string> = { select: '↖ Seleziona', hand: '✋ Sposta', text: 'T Testo', image: '▧ Immagine', token: '● Token', link: '↗ Collegamento' };
+  const toolHint = tool === 'text' ? 'Clicca sulla board per inserire un testo. Esc annulla.' : tool === 'token' ? 'Clicca sulla board per posizionare un token.' : tool === 'link' ? 'Scegli il primo e poi il secondo punto del collegamento.' : undefined;
 
   return <div className="boards-workspace">
     <aside className="boards-list">
@@ -833,9 +846,10 @@ export function BoardWorkspace({
       {!session ? <div className="board-empty"><span>◇</span><h1>Prepara una scena</h1><p>Le board restano nella cartella della campagna e funzionano offline.</p></div> : <>
         <header className="board-header">
           <div>{renaming ? <form onSubmit={event => { event.preventDefault(); void renameBoard(); }}><input autoFocus value={renameTitle} onChange={event => setRenameTitle(event.target.value)} onBlur={() => void renameBoard()} onKeyDown={event => { if (event.key === 'Escape') setRenaming(false); }} /></form> : <button className="board-title-button" onClick={() => { setRenameTitle(session.snapshot.title); setRenaming(true); }}><strong>{session.snapshot.title}</strong><small>{session.snapshot.path}</small></button>}</div>
-          <div className="board-header-actions"><span className={`board-save-state ${session.state}`}>{saveLabel}</span><button disabled={session.state === 'clean' || session.state === 'saving' || session.state === 'conflict'} onClick={() => void save()}>Salva <kbd>Ctrl S</kbd></button></div>
+          <div className="board-header-actions"><span className={`board-save-state ${session.state}`}>{saveLabel}</span>{onStartLive && <button onClick={() => onStartLive(session.snapshot.path)}>Avvia live con questa board</button>}<button disabled={session.state === 'clean' || session.state === 'saving' || session.state === 'conflict'} onClick={() => void save()}>Salva <kbd>Ctrl S</kbd></button></div>
         </header>
         {message && <div className="board-notice" role="status"><span>{message}</span>{!linkStart && <button onClick={() => setMessage(undefined)}>Chiudi</button>}</div>}
+        {toolHint && !message && <div className="board-tool-hint" role="status">{toolHint}</div>}
         {session.recovery && <div className="board-notice"><strong>È disponibile una recovery locale.</strong><div><button onClick={restoreRecovery}>Ripristina recovery</button><button onClick={() => void discardRecovery()}>Scarta recovery</button></div></div>}
         {session.state === 'conflict' && <div className="board-notice" role="alert"><strong>La board è cambiata anche sul disco.</strong><p>{session.error}</p><div><button onClick={() => void reloadDisk()}>Usa versione su disco</button><button onClick={() => void overwriteAfterConflict()}>Usa la mia versione</button></div></div>}
         {session.state === 'error' && <div className="board-notice" role="alert">{session.error}</div>}
@@ -884,6 +898,10 @@ export function BoardWorkspace({
             const file = event.dataTransfer.files?.[0]; if (!file) return;
             event.preventDefault(); void importImageElement(file, point);
           }}>
+          {!session.snapshot.document.elements.length && !textDraft && !tokenDraft && <div className="board-canvas-empty" onPointerDown={event => event.stopPropagation()}>
+            <strong>Questa board è vuota</strong><p>Aggiungi il primo elemento oppure trascina qui un’immagine o una nota.</p>
+            <div><button onClick={() => imageInput.current?.click()}>Aggiungi immagine</button><button onClick={() => setTool('text')}>Aggiungi testo</button><button onClick={() => setTool('token')}>Aggiungi token</button></div>
+          </div>}
           <div className="board-stage" style={{ transform: `translate(${session.snapshot.document.camera.x}px, ${session.snapshot.document.camera.y}px) scale(${session.snapshot.document.camera.zoom})` }}>
             {session.snapshot.document.elements.slice().sort(byZ).map(element => {
               if (element.type === 'link') return <BoardLinkVisual key={element.elementId} element={element} document={session.snapshot.document} selected={selectedIds.includes(element.elementId)} selectable={tool === 'select'}
@@ -915,7 +933,12 @@ export function BoardWorkspace({
             })}
             {marquee && <div className="board-marquee" style={{ left: Math.min(marquee.start.x, marquee.end.x), top: Math.min(marquee.start.y, marquee.end.y), width: Math.abs(marquee.end.x - marquee.start.x), height: Math.abs(marquee.end.y - marquee.start.y) }} />}
             {textDraft && <textarea className="board-text-draft" autoFocus style={{ left: textDraft.x, top: textDraft.y }} placeholder="Scrivi…" value={textDraft.text} onChange={event => setTextDraft({ ...textDraft, text: event.target.value })} onBlur={commitTextDraft} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTextDraft(undefined); setTool('select'); } if ((event.ctrlKey || event.metaKey) && event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />}
-            {tokenDraft && <input className="board-token-draft" autoFocus style={{ left: tokenDraft.x, top: tokenDraft.y }} placeholder="Nome token…" value={tokenDraft.name} onChange={event => setTokenDraft({ ...tokenDraft, name: event.target.value })} onBlur={commitTokenDraft} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTokenDraft(undefined); setTool('select'); } if (event.key === 'Enter') { event.preventDefault(); event.currentTarget.blur(); } }} />}
+            {tokenDraft && <div className="board-token-draft" style={{ left: tokenDraft.x, top: tokenDraft.y }} onPointerDown={event => event.stopPropagation()}>
+              <strong>Nuovo token</strong>
+              <input autoFocus placeholder="Nome token…" value={tokenDraft.name} onChange={event => setTokenDraft({ ...tokenDraft, name: event.target.value })} onKeyDown={event => { if (event.key === 'Escape') { event.preventDefault(); setTokenDraft(undefined); setTool('select'); } if (event.key === 'Enter' && tokenDraft.name.trim()) { event.preventDefault(); void commitTokenDraft(); } }} />
+              <label><span>Avatar opzionale</span><input type="file" accept=".png,.jpg,.jpeg,.webp,image/png,image/jpeg,image/webp" onChange={event => setTokenDraft({ ...tokenDraft, avatar: event.target.files?.[0] })} /></label>
+              <div><button onClick={() => { setTokenDraft(undefined); setTool('select'); }}>Annulla</button><button className="primary" disabled={!tokenDraft.name.trim()} onClick={() => void commitTokenDraft()}>Crea token</button></div>
+            </div>}
           </div>
         </div>
       </>}
