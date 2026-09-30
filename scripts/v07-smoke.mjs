@@ -17,6 +17,7 @@ try {
   const env = Object.fromEntries(Object.entries(process.env).filter(([key]) => key !== 'ELECTRON_RUN_AS_NODE'));
   desktop = await electron.launch({ args: ['.', `--user-data-dir=${path.join(temporary, 'profile')}`], cwd: process.cwd(), env });
   const page = await desktop.firstWindow(); const failures = []; page.on('pageerror', error => failures.push(error.message));
+  const skipGuide = page.getByRole('button', { name: 'Salta guida', exact: true }); if (await skipGuide.isVisible().catch(() => false)) await skipGuide.click();
   await desktop.evaluate(({ dialog }, root) => { dialog.showOpenDialog = async () => ({ canceled: false, filePaths: [root] }); dialog.showMessageBox = async () => ({ response: 1, checkboxChecked: false }); }, vault);
   await page.getByRole('button', { name: 'Apri cartella…', exact: true }).first().click();
 
