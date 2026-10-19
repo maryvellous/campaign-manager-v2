@@ -1,0 +1,55 @@
+name: Cleanup already-merged PR branches
+
+on:
+  workflow_dispatch:
+  push:
+    branches: [main]
+    paths:
+      - .github/workflows/cleanup-merged-branches.yml
+
+permissions:
+  contents: write
+  pull-requests: read
+
+jobs:
+  prune:
+    runs-on: ubuntu-latest
+    timeout-minutes: 15
+    steps:
+      - name: Prune only merged PR branches with unchanged original heads
+        uses: actions/github-script@v7
+        with:
+          script: |
+            const owner = context.repo.owner;
+            const repo = context.repo.repo;
+            const candidates = [{"branch":"feat/multi-ai-providers","pr":24},{"branch":"ux/onboarding-settings-graph-polish","pr":23},{"branch":"docs/discord-activity-verified","pr":22},{"branch":"fix/discord-auth-diagnostics","pr":21},{"branch":"windows-packaging","pr":19},{"branch":"v06-release-metadata","pr":18},{"branch":"v06-character-note-links","pr":17},{"branch":"v05-release-metadata","pr":16},{"branch":"v05-ai-proposals","pr":15},{"branch":"v05-ai-retrieval","pr":14},{"branch":"v05-ai-provider-workspace","pr":13},{"branch":"v04-release-metadata","pr":12},{"branch":"cloudflare-discord-client-var","pr":11},{"branch":"v04-discord-identity","pr":10},{"branch":"v04-discord-pairing","pr":9},{"branch":"v03-release-metadata","pr":8},{"branch":"v03-live-lifecycle-end","pr":7},{"branch":"v03-live-token-control","pr":6},{"branch":"v03-live-board-publish","pr":5},{"branch":"v03-live-session-join","pr":4},{"branch":"v02-board-cards-privacy","pr":3},{"branch":"v02-board-organization","pr":2},{"branch":"v02-board-foundation","pr":1}];
+            const deleted = [];
+            const skipped = [];
+            const metadata = (await github.rest.repos.get({owner,repo})).data;
+            if (metadata.default_branch !== 'main' || metadata.archived) {
+              core.setFailed('Wrong default branch or archived repository');
+              return;
+            }
+            for (const {branch,pr} of candidates) {
+              try {
+                const b = (await github.rest.repos.getBranch({owner,repo,branch})).data;
+                if (b.protected) { skipped.push(branch + ': protected'); continue; }
+                const p = (await github.rest.pulls.get({owner,repo,pull_number:pr})).data;
+                if (!p.merged_at || p.base.ref !== 'main' || p.head.ref !== branch || p.head.sha !== b.commit.sha) {
+                  skipped.push(branch + ': PR not merged to main or branch changed since merge');
+                  continue;
+                }
+                const open = await github.rest.pulls.list({owner,repo,state:'open',head:owner + ':' + branch});
+                if (open.data.length) { skipped.push(branch + ': has open PR'); continue; }
+                await github.rest.git.deleteRef({owner,repo,ref:'heads/' + branch});
+                deleted.push(branch);
+              } catch (e) {
+                if (e.status === 404) { skipped.push(branch + ': not found'); continue; }
+                throw e;
+              }
+            }
+            await core.summary.addHeading('Merged-PR branch cleanup')
+              .addRaw('Deleted: ' + (deleted.join(', ') || 'none') + '\n\n')
+              .addRaw('Skipped: ' + (skipped.join(', ') || 'none') + '\n')
+              .write();
+            core.info(JSON.stringify({deleted,skipped}));
